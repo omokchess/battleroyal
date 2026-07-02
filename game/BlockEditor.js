@@ -21,6 +21,7 @@
 
 import { BlockVM, VM_LIMITS, countBlocks, EVENTS } from './BlockVM.js';
 import { estimateBudget } from './BlockBudget.js';
+import { Sound } from './Sound.js';
 
 const C = { ev: '#c9a227', act: '#3a6ea5', ctl: '#c96f27', val: '#3a8f7a', op: '#5a8f3c', vr: '#b32d2d' };
 const CATN = { ev: '이벤트', act: '동작', ctl: '제어', val: '값', op: '연산', vr: '변수' };
@@ -134,7 +135,24 @@ function ensureStyles() {
   .be-orphan-badge{font-size:8px;color:#ff9e9e;margin-left:4px}
   .be-shake{animation:beShake .28s}
   @keyframes beShake{0%,100%{transform:translateX(0)}25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
-  #bePalette .be-blk{cursor:pointer;margin-bottom:6px}`;
+  #bePalette .be-blk{cursor:pointer;margin-bottom:6px}
+  .be-blk{touch-action:pan-y;user-select:none;-webkit-user-select:none}
+  /* snap ghost — a translucent silhouette of what will be inserted */
+  .be-ghost{opacity:.4;pointer-events:none;filter:saturate(.8)}
+  .be-ghost>*{pointer-events:none!important}
+  /* the block(s) picked up and following the cursor */
+  .be-floating{position:fixed;left:0;top:0;z-index:200;pointer-events:none;opacity:.9;transform:rotate(2.5deg);filter:drop-shadow(0 7px 10px rgba(0,0,0,.55))}
+  .be-floating .stack,.be-floating>*{align-items:flex-start}
+  .be-drag-src{opacity:.45}
+  /* value-slot drop feedback */
+  .be-slot-hot{outline:2px solid #ffe08a;outline-offset:1px;background:rgba(255,224,138,.28)!important;transform:scale(1.15);transition:transform .1s}
+  .be-slot-bad{animation:beShake .2s}
+  /* trash affordance (over palette) */
+  #bePalette.be-trash-hot{outline:2px dashed #ff7a7a;outline-offset:-3px;background:rgba(255,90,90,.08)}
+  .be-flip{transition:transform .16s ease}
+  @keyframes bePop{0%{transform:scale(1.05)}100%{transform:scale(1)}}
+  .be-pop{animation:bePop .16s ease-out}
+  @media (prefers-reduced-motion: reduce){ .be-flip{transition:none!important} .be-pop{animation:none!important} }`;
   document.head.appendChild(st);
 }
 
@@ -162,7 +180,8 @@ export class BlockEditor {
     this.onSave = onSave;
     this.stats = stats || { damage: 18, cooldownMs: 600 };
     document.getElementById('beBlockMax').textContent = VM_LIMITS[this.tier].maxBlocks;
-    if (!this.ws.querySelector('.stack')) { this.stack = document.createElement('div'); this.stack.className = 'stack'; this.ws.innerHTML = ''; this.ws.appendChild(this.stack); this._dz(this.stack); }
+    this.stack = this.ws.querySelector('.stack');
+    if (!this.stack) { this.stack = document.createElement('div'); this.stack.className = 'stack'; this.ws.innerHTML = ''; this.ws.appendChild(this.stack); this._dz(this.stack); }
     // Multi-context model: the weapon's main events + per-entity scripts + funcs.
     this.model = this._parseModel(ast);
     this.ctxKind = 'main'; this.ctxName = '';
@@ -290,17 +309,23 @@ export class BlockEditor {
     return slot;
   }
 
-  // ── drag hooks (HTML5 DnD, demo-style) ──
+  // ── drag hooks (pointer-based: ghost preview, reflow, touch, ESC) ──
   _hookDrag(headEl, rootEl) {
-    rootEl.draggable = true;
-    rootEl.addEventListener('dragstart', (e) => {
+    rootEl.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (e.target.closest('input,select,.be-del')) return;   // let controls work
+      if (this.drag) return;
       e.stopPropagation();
-      // sub-stack drag: carry this node + following siblings up to the next hat.
-      window._beMv = this._collectRun(rootEl);
-      window._bePal = null; window._beRep = null;
-      try { e.dataTransfer.setData('text/plain', ''); } catch {}
+      this._armPointer(e, (ev) => {
+        const isRep = rootEl.classList.contains('be-rep') || rootEl.classList.contains('be-bool');
+        const dup = ev.ctrlKey || ev.metaKey;
+        let nodes = isRep ? [rootEl] : this._collectRun(rootEl);
+        const origin = dup ? null : { parent: nodes[0].parentElement, next: nodes[nodes.length - 1].nextElementSibling };
+        if (dup) nodes = nodes.map((n) => n.cloneNode(true));   // clone; re-hooked after drop
+        this._startDrag(ev, { nodes, isReporter: isRep, fromStack: true, rehook: dup, origin });
+      });
     });
-    headEl.querySelectorAll('.be-sl').forEach(sl => sl.addEventListener('mousedown', e => e.stopPropagation()));
+    headEl.querySelectorAll('.be-sl').forEach((sl) => sl.addEventListener('pointerdown', (e) => e.stopPropagation()));
   }
 
   // Contiguous run: the block + siblings after it until the next hat (Scratch feel).
@@ -319,41 +344,191 @@ export class BlockEditor {
   }
   _isHat(node) { const id = node.dataset && node.dataset.id; return id && DEFS[id] && DEFS[id].hat; }
 
-  _dz(zone) {
-    zone.addEventListener('dragover', (e) => {
-      e.preventDefault(); e.stopPropagation();
-      if (window._beRep) return;    // reporter drags target slots, not stacks
-      const kids = [...zone.children].filter(k => k !== this.ind && !(window._beMv || []).includes(k));
-      let ref = null; const y = e.clientY;
-      for (const k of kids) { const r = k.getBoundingClientRect(); if (y < r.top + r.height / 2) { ref = k; break; } }
-      zone.insertBefore(this.ind, ref);
-    });
-    zone.addEventListener('drop', (e) => {
-      e.preventDefault(); e.stopPropagation();
-      if (window._beRep) { this.ind.remove(); return; }
-      let nodes = window._beMv;
-      if (window._bePal) nodes = [this._mk(window._bePal)];
-      window._beMv = null; window._bePal = null;
-      if (nodes) for (const nd of nodes) zone.insertBefore(nd, this.ind);
-      this.ind.remove(); this._refresh();
-    });
-    zone.addEventListener('dragleave', (e) => { if (e.target === zone) this.ind.remove(); });
+  // Drop zones (main stack + each C-mouth) are tagged so the pointer drag can
+  // find them by class; slots are already class-marked (.be-slot/.be-bslot).
+  _dz(zone) { zone.classList.add('be-dz'); }
+  _slotDrop(slot) { slot.classList.add('be-dz-slot'); }
+
+  // ── pointer drag machinery ─────────────────────────────────────────────────
+  /** Wait for an intentional drag: mouse = 5px move; touch = 200ms long-press
+   *  (a quick touch-move before that is a scroll gesture, so we bail). */
+  _armPointer(e, startFn) {
+    const sx = e.clientX, sy = e.clientY, touch = e.pointerType !== 'mouse';
+    let fired = false, timer = null;
+    const finish = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); if (timer) { clearTimeout(timer); timer = null; } };
+    const go = (ev) => { if (fired) return; fired = true; finish(); startFn(ev); };
+    const move = (ev) => {
+      const far = Math.hypot(ev.clientX - sx, ev.clientY - sy);
+      if (touch) { if (far > 12) finish(); return; }   // moved before long-press = scroll → abort
+      if (far > 5) go(ev);
+    };
+    const up = () => finish();
+    window.addEventListener('pointermove', move, { passive: true });
+    window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+    if (touch) timer = setTimeout(() => { timer = null; go(e); }, 200);
   }
 
-  // Reporter/boolean dropped into a slot.
-  _slotDrop(slot) {
-    slot.addEventListener('dragover', (e) => { if (window._beRep) { e.preventDefault(); e.stopPropagation(); slot.style.outline = '2px solid #ffd75e'; } });
-    slot.addEventListener('dragleave', () => { slot.style.outline = ''; });
-    slot.addEventListener('drop', (e) => {
-      const rep = window._beRep; if (!rep) return;
-      e.preventDefault(); e.stopPropagation(); slot.style.outline = '';
-      const def = DEFS[rep];
-      const wantBool = slot.dataset.slotType === 'bool';
-      if (wantBool !== !!def.bool) { slot.classList.add('be-shake'); setTimeout(() => slot.classList.remove('be-shake'), 300); window._beRep = null; return; } // type mismatch
-      slot.innerHTML = ''; const node = this._mk(rep); slot.appendChild(node);
-      window._beRep = null; window._beMv = null; this._refresh();
+  _startDrag(e, opt) {
+    const first = opt.nodes[0];
+    const r = first.getBoundingClientRect();
+    const float = document.createElement('div'); float.className = 'be-floating';
+    const holder = document.createElement('div'); holder.className = 'stack'; holder.style.gap = '2px';
+    const srcZone = opt.fromStack && !opt.rehook ? first.parentElement : null;
+    const lift = () => { for (const n of opt.nodes) holder.appendChild(n); };
+    if (srcZone) this._flip(srcZone, lift); else lift();   // source closes smoothly
+    float.appendChild(holder); document.body.appendChild(float);
+    this.drag = {
+      ...opt, float, holder,
+      offX: e.clientX - r.left, offY: e.clientY - r.top,
+      x: e.clientX, y: e.clientY, ghost: null, slot: null, drop: null, raf: 0, scroll: 0, over: null,
+    };
+    if (opt.rehook && opt.origin === null && opt.fromStack) {/* dup: originals stay in place */}
+    this._moveFloat();
+    this._pm = (ev) => this._dragMove(ev);
+    this._pu = () => this._dragEnd();
+    this._pk = (ev) => { if (ev.key === 'Escape') this._dragCancel(); };
+    window.addEventListener('pointermove', this._pm, { passive: false });
+    window.addEventListener('pointerup', this._pu); window.addEventListener('pointercancel', this._pu);
+    window.addEventListener('keydown', this._pk);
+    this._dragMove(e);
+  }
+
+  _moveFloat() { const d = this.drag; if (d) d.float.style.transform = `translate(${d.x - d.offX}px,${d.y - d.offY}px) rotate(2.5deg)`; }
+
+  _dragMove(e) {
+    const d = this.drag; if (!d) return;
+    if (e.cancelable) e.preventDefault();   // suppress touch scroll while dragging
+    d.x = e.clientX; d.y = e.clientY;
+    if (d.raf) return;
+    d.raf = requestAnimationFrame(() => {
+      d.raf = 0; if (!this.drag) return;
+      this._moveFloat();
+      this._autoScroll(d.x, d.y);
+      const pal = document.getElementById('bePalette');
+      const overPal = pal && this._within(pal, d.x, d.y);
+      if (overPal) { pal.classList.add('be-trash-hot'); this._clearGhost(); this._clearSlot(); return; }
+      if (pal) pal.classList.remove('be-trash-hot');
+      if (d.isReporter) this._hitSlot(d.x, d.y);
+      else this._hitStack(d.x, d.y);
     });
   }
+
+  _within(el, x, y) { const r = el.getBoundingClientRect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; }
+
+  // Nearest valid stack insertion within the snap radius → show the ghost there.
+  _hitStack(x, y) {
+    const R = 42; let best = null, bestD = R;
+    const zones = [this.stack, ...this.stack.querySelectorAll('.be-cinner')];
+    for (const zone of zones) {
+      const zr = zone.getBoundingClientRect();
+      if (x < zr.left - 30 || x > zr.right + 60) continue;
+      const kids = [...zone.children].filter((k) => k !== this.drag.ghost && k.nodeType === 1);
+      // candidate gap Ys: before each child + after the last one
+      const gaps = [];
+      for (const k of kids) { const r = k.getBoundingClientRect(); gaps.push({ yy: r.top, ref: k }); }
+      gaps.push({ yy: kids.length ? kids[kids.length - 1].getBoundingClientRect().bottom : zr.top + 6, ref: null });
+      for (const g of gaps) { const dd = Math.abs(y - g.yy); if (dd < bestD) { bestD = dd; best = { zone, ref: g.ref }; } }
+    }
+    if (best) this._showGhost(best.zone, best.ref); else this._clearGhost();
+  }
+
+  _hitSlot(x, y) {
+    const el = document.elementFromPoint(x, y);
+    const slot = el && el.closest('.be-slot,.be-bslot');
+    if (!slot || !this.stack.contains(slot)) { this._clearSlot(); return; }
+    if (slot === this.drag.slot) return;
+    this._clearSlot();
+    const wantBool = slot.dataset.slotType === 'bool';
+    const isBool = this.drag.nodes[0].classList.contains('be-bool');
+    if (slot.dataset.slotType !== 'num' && slot.dataset.slotType !== 'bool') return;   // only num/bool slots
+    if (wantBool !== isBool) { slot.classList.add('be-slot-bad'); setTimeout(() => slot.classList.remove('be-slot-bad'), 220); return; }
+    slot.classList.add('be-slot-hot'); this.drag.slot = slot;
+  }
+  _clearSlot() { if (this.drag && this.drag.slot) { this.drag.slot.classList.remove('be-slot-hot'); this.drag.slot = null; } }
+
+  _buildGhost() { const g = document.createElement('div'); g.className = 'be-ghost stack'; g.style.gap = '2px'; for (const n of this.drag.nodes) g.appendChild(n.cloneNode(true)); return g; }
+  _showGhost(zone, ref) {
+    const d = this.drag; const g = d.ghost || (d.ghost = this._buildGhost());
+    if (g.parentElement === zone && g.nextElementSibling === ref) return;
+    const oldZone = g.parentElement;
+    if (oldZone && oldZone !== zone) this._flip(oldZone, () => g.remove());
+    this._flip(zone, () => zone.insertBefore(g, ref));
+    d.drop = { zone, ref };
+  }
+  _clearGhost() { const d = this.drag; if (d && d.ghost && d.ghost.parentElement) { const z = d.ghost.parentElement; this._flip(z, () => d.ghost.remove()); } if (d) d.drop = null; }
+
+  // FLIP: animate a zone's children into their new positions with transform only.
+  _flip(zone, mutate) {
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const kids = [...zone.children].filter((k) => k.nodeType === 1 && k !== (this.drag && this.drag.ghost));
+    const before = reduce ? null : new Map(kids.map((k) => [k, k.getBoundingClientRect().top]));
+    mutate();
+    if (reduce) return;
+    for (const k of kids) {
+      if (!k.isConnected) continue;
+      const dy = before.get(k) - k.getBoundingClientRect().top;
+      if (Math.abs(dy) > 0.5) { k.classList.remove('be-flip'); k.style.transform = `translateY(${dy}px)`; void k.offsetHeight; k.classList.add('be-flip'); k.style.transform = ''; }
+    }
+  }
+
+  // Edge auto-scroll: accelerate toward the edge the cursor hovers near.
+  _autoScroll(x, y) {
+    const d = this.drag; const r = this.ws.getBoundingClientRect(); const M = 42;
+    let v = 0;
+    if (y < r.top + M) v = -Math.ceil((r.top + M - y) / M * 14);
+    else if (y > r.bottom - M) v = Math.ceil((y - (r.bottom - M)) / M * 14);
+    if (!v) { if (d.scroll) { cancelAnimationFrame(d.scroll); d.scroll = 0; } return; }
+    if (d.scroll) return;
+    const step = () => { if (!this.drag) return; this.ws.scrollTop += v; this.drag.scroll = requestAnimationFrame(step); };
+    d.scroll = requestAnimationFrame(step);
+  }
+
+  _endCleanup() {
+    const d = this.drag; if (!d) return;
+    if (d.raf) cancelAnimationFrame(d.raf); if (d.scroll) cancelAnimationFrame(d.scroll);
+    window.removeEventListener('pointermove', this._pm); window.removeEventListener('pointerup', this._pu);
+    window.removeEventListener('pointercancel', this._pu); window.removeEventListener('keydown', this._pk);
+    d.float.remove();
+    const pal = document.getElementById('bePalette'); if (pal) pal.classList.remove('be-trash-hot');
+    this._clearSlot();
+    this.drag = null;
+  }
+
+  _dragEnd() {
+    const d = this.drag; if (!d) return;
+    const pal = document.getElementById('bePalette');
+    const overPal = pal && this._within(pal, d.x, d.y);
+    const nodes = d.nodes;
+    if (overPal) { this._clearGhost(); this._endCleanup(); this._refresh(); return; }   // dropped on palette = discard
+    if (d.isReporter) {
+      if (d.slot) { d.slot.innerHTML = ''; d.slot.appendChild(nodes[0]); nodes[0].classList.add('be-pop'); this._pop(nodes[0]); this._snap(); this._endCleanup(); if (d.rehook) this._reimport(); else this._refresh(); return; }
+      // no valid slot: restore or discard
+      if (d.origin) d.origin.parent.insertBefore(nodes[0], d.origin.next);
+      this._endCleanup(); this._refresh(); return;
+    }
+    // stack drop
+    let target = d.drop;
+    if (!target) target = { zone: this.stack, ref: null };   // empty area → append as its own stack
+    if (d.ghost && d.ghost.parentElement) { target = { zone: d.ghost.parentElement, ref: d.ghost.nextElementSibling }; }
+    this._flip(target.zone, () => { for (const n of nodes) target.zone.insertBefore(n, target.ref); if (d.ghost && d.ghost.parentElement) d.ghost.remove(); });
+    for (const n of nodes) this._pop(n);
+    this._snap();
+    this._endCleanup();
+    if (d.rehook) this._reimport(); else this._refresh();
+  }
+
+  _dragCancel() {
+    const d = this.drag; if (!d) return;
+    this._clearGhost();
+    if (d.origin && !d.rehook) { for (const n of d.nodes) d.origin.parent.insertBefore(n, d.origin.next); }
+    this._endCleanup(); this._refresh();
+  }
+
+  _pop(node) { node.classList.remove('be-pop'); void node.offsetHeight; node.classList.add('be-pop'); setTimeout(() => node.classList.remove('be-pop'), 200); }
+  _snap() { try { Sound.play('hit'); } catch {} }
+  // Duplicate drops carry cloned DOM with no listeners → rebuild the context so
+  // every node is fully hooked again (AST is unchanged).
+  _reimport() { const evs = this._stackEvents(); this.stack.innerHTML = ''; this._importEvents(evs); this._refresh(); }
 
   // ── palette ──
   _renderPalette() {
@@ -371,8 +546,14 @@ export class BlockEditor {
       p.style.background = C[d.cat];
       for (const part of d.parts) p.appendChild(typeof part === 'string' ? document.createTextNode(' ' + part + ' ') : this._slot(part));
       p.querySelectorAll('.be-sl,input,select').forEach(x => { x.disabled = true; });
-      p.draggable = true;
-      p.addEventListener('dragstart', (e) => { if (d.rep || d.bool) { window._beRep = id; window._beMv = null; } else { window._bePal = id; window._beMv = null; window._beRep = null; } try { e.dataTransfer.setData('text/plain', id); } catch {} });
+      p.addEventListener('pointerdown', (e) => {
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        if (this.drag) return;
+        this._armPointer(e, (ev) => {
+          const node = this._mk(id);
+          this._startDrag(ev, { nodes: [node], isReporter: !!(d.rep || d.bool), fromStack: false, rehook: false, origin: null });
+        });
+      });
       p.addEventListener('click', () => { if (d.rep || d.bool) { this._status('값/조건 블록은 슬롯으로 드래그하세요.'); return; } this.stack.appendChild(this._mk(id)); this._refresh(); });
       pal.appendChild(p);
     }

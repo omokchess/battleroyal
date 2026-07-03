@@ -51,6 +51,11 @@ export class Game {
     // respawn deathmatch, unchanged). onMatchOver(results) is fired once on end.
     this.matchDurationMs = Number.isFinite(options.matchDurationMs) ? options.matchDurationMs : 0;
     this.killTarget = Number.isFinite(options.killTarget) ? options.killTarget : 0;
+    // Quick-play onboarding hold: freeze the whole host sim (physics, bots, zone,
+    // match timer) while the controls card is up, then release into a 3·2·1
+    // countdown — reading the card must not cost the player match time (P2).
+    this.matchHold = !!options.holdAtStart;
+    this.countdownUntil = 0;
     this.onMatchOver = typeof options.onMatchOver === 'function' ? options.onMatchOver : null;
     this.matchOver = false;
 
@@ -108,6 +113,15 @@ export class Game {
     this.zone = (this.roomConfig.storm)
       ? new PlatformerZone(this.mapWidth, this.mapHeight, this.roomConfig.arenaSize)
       : null;
+    if (this.zone && this.level?.oneWays?.length) {
+      // The lava must never swallow the highest platform — otherwise late
+      // cycles have NO safe ground and every fighter (bots included) is stuck
+      // in a forced drowning loop. Clamping here turns the endgame into a
+      // fight for the top perch instead. (minFloorY is a y-coordinate: larger
+      // = lower, so take the max of the default and "just under the top perch".)
+      const highestTop = Math.min(...this.level.oneWays.map(s => s.y));
+      this.zone.minFloorY = Math.max(this.zone.minFloorY, highestTop + 46);
+    }
 
     this.renderer = new Renderer(canvas);
     this.camera = new Camera();
@@ -215,14 +229,28 @@ export class Game {
 
       this._announce(this.dummyRoom ? '더미 연습장 입장' : (this.botMatch ? '봇 매치 시작!' : 'MATCH STARTED'));
 
-      // Preserve active ticking when Host's tab is backgrounded
+      // Preserve active ticking when Host's tab is backgrounded.
+      // Browsers throttle background intervals to ≥1s, so a fixed dt here made
+      // physics run in ~1/28 slow motion while every wall-clock system (zone
+      // rise, respawns, cooldowns, match timer) kept real time — bots couldn't
+      // possibly outrun the lava. Substep the REAL elapsed time instead so
+      // simulated time matches the clock no matter how hard we're throttled.
       this._visibilityChangeHandler = () => {
         if (document.hidden) {
           if (!this.backgroundIntervalId) {
+            this._bgLastTick = Date.now();
             this.backgroundIntervalId = setInterval(() => {
               const nowTime = Date.now();
-              const dt = 0.035; // Fixed ~30 FPS step
-              this._updateHostPhysics(dt, nowTime);
+              let elapsed = (nowTime - this._bgLastTick) / 1000;
+              this._bgLastTick = nowTime;
+              if (this.matchOver || this.matchHold || nowTime < this.countdownUntil) return;
+              elapsed = Math.min(elapsed, 3); // hard cap: never simulate a huge gap
+              const step = 0.035;             // ~30 FPS physics step
+              while (elapsed > 1e-4) {
+                const dt = Math.min(step, elapsed);
+                this._updateHostPhysics(dt, nowTime);
+                elapsed -= dt;
+              }
             }, 35);
           }
         } else {
@@ -234,6 +262,10 @@ export class Game {
         }
       };
       document.addEventListener('visibilitychange', this._visibilityChangeHandler);
+      // The tab can ALREADY be hidden when the match starts (e.g. launched from
+      // a backgrounded panel) — visibilitychange never fires then, leaving the
+      // sim frozen. Sync with the current state once.
+      this._visibilityChangeHandler();
     } else {
       // Guest client: Wait for HOST to reply with ROOM_JOINED
       this._announce('CONNECTING...');
@@ -393,7 +425,9 @@ export class Game {
 
       // Freeze the simulation once the round is over (the result screen holds
       // the final tableau); the render below keeps drawing the frozen scene.
-      if (!this.matchOver) this._updateHostPhysics(deltaTime, now);
+      // Also frozen while the onboarding card holds the match / countdown runs.
+      const holding = this.matchHold || now < this.countdownUntil;
+      if (!this.matchOver && !holding) this._updateHostPhysics(deltaTime, now);
 
       // Render frame
       this._renderFrame();
@@ -848,7 +882,26 @@ export class Game {
   /** Milliseconds left in the round (Infinity when there is no time limit). */
   matchTimeLeftMs(now = Date.now()) {
     if (!this.matchDurationMs) return Infinity;
+    // Held / counting down → the clock hasn't started; show the full duration.
+    if (this.matchHold || now < this.countdownUntil) return this.matchDurationMs;
     return Math.max(0, this.matchDurationMs - (now - (this.matchStartTime || now)));
+  }
+
+  /**
+   * Release the onboarding hold (quick-play): run a 3·2·1 countdown, then let
+   * the sim (and the match clock) start. Safe to call repeatedly — only the
+   * first call does anything, so re-opening the controls card changes nothing.
+   */
+  releaseMatchHold() {
+    if (!this.matchHold) return;
+    this.matchHold = false;
+    const now = Date.now();
+    this.countdownUntil = now + 3000;
+    this.matchStartTime = this.countdownUntil; // 2:00 starts when the fight does
+    this._announce('3');
+    setTimeout(() => { if (!this.matchOver) this._announce('2'); }, 1000);
+    setTimeout(() => { if (!this.matchOver) this._announce('1'); }, 2000);
+    setTimeout(() => { if (!this.matchOver) this._announce('⚔ 전투 시작!'); }, 3000);
   }
 
   /**
@@ -858,7 +911,9 @@ export class Game {
   _checkMatchEnd(now) {
     if (this.matchOver || (!this.matchDurationMs && !this.killTarget)) return;
     const timeUp = this.matchDurationMs && this.matchTimeLeftMs(now) <= 0;
-    const reached = this.killTarget && Object.values(this.players).some(p => !p.isDummy && p.kills >= this.killTarget);
+    // Kill-target instant win is HUMAN-only (P3): bots racking up kills no
+    // longer ends the round early — they only place on the timer scoreboard.
+    const reached = this.killTarget && Object.values(this.players).some(p => !p.isDummy && !p.isBot && p.kills >= this.killTarget);
     if (!timeUp && !reached) return;
 
     this.matchOver = true;
@@ -5040,6 +5095,15 @@ export class Game {
     // Storm zone: host owns an instance, clients keep the serialized payload.
     const z = this.zone;
     const storm = zoneRenderPayload(z);
+    // Lava-phase banner (P4). Detected here because BOTH host and clients pass
+    // through this frame path — clients never run zone.update(), they only
+    // receive the serialized phase.
+    const stormPhase = storm ? storm.phase : null;
+    if (stormPhase !== this._lastStormPhase) {
+      if (stormPhase === 'warning') this._announce('⚠ 곧 용암이 차오릅니다!');
+      else if (stormPhase === 'shrinking') this._announce('🔥 용암 상승 — 위로 올라가세요!');
+      this._lastStormPhase = stormPhase;
+    }
     const localP = this.players[this.localPlayerId];
     const zoneOutside = !!(z && localP && !localP.isDead &&
       zoneIsDamaging(z) && zoneIsOutside(z, localP.x, localP.y));

@@ -239,6 +239,22 @@ export class Renderer {
     if (state.zoneOutside) {
       const pulse = 0.55 + 0.45 * Math.sin(now / 120);
       this._drawZoneWarning(ctx, cw, ch, pulse);
+    } else if (state.storm && Number.isFinite(state.storm.floorY)) {
+      // Flood-proximity glow (P4): the lava is closing on the local player's
+      // feet — a red glow swells from the bottom of the screen roughly a second
+      // before contact, so "왜 죽었는지 모르는 죽음" doesn't happen.
+      const me = players[localPlayerId];
+      if (me && !me.isDead) {
+        const gap = state.storm.floorY - (me.y + (me.halfH || 20));
+        if (gap > 0 && gap < 140) {
+          const a = (1 - gap / 140) * 0.55;
+          const grad = ctx.createLinearGradient(0, ch * 0.55, 0, ch);
+          grad.addColorStop(0, 'rgba(255,64,32,0)');
+          grad.addColorStop(1, `rgba(255,64,32,${a.toFixed(3)})`);
+          ctx.fillStyle = grad;
+          ctx.fillRect(0, Math.floor(ch * 0.55), cw, Math.ceil(ch * 0.45));
+        }
+      }
     }
 
     // Desktop aim reticle at the cursor.
@@ -273,11 +289,11 @@ export class Renderer {
     fillRectWorld(-160, -80, leftX + 160, bottom + 160, 'rgba(132,30,24,0.50)');
     fillRectWorld(rightX, -80, mapW - rightX + 160, bottom + 160, 'rgba(132,30,24,0.50)');
 
-    const drawLineY = (y, color, dashed = false) => {
+    const drawLineY = (y, color, dashed = false, width = 3) => {
       const a = camera.toScreen(leftX, y, cw, ch);
       const b = camera.toScreen(rightX, y, cw, ch);
       ctx.strokeStyle = color;
-      ctx.lineWidth = Math.max(2, 3 * z);
+      ctx.lineWidth = Math.max(2, width * z);
       if (dashed) ctx.setLineDash([8 * z, 6 * z]);
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
@@ -285,7 +301,11 @@ export class Renderer {
       ctx.stroke();
       if (dashed) ctx.setLineDash([]);
     };
-    drawLineY(floorY, 'rgba(255,214,92,0.95)', false);
+    // Surface line blinks hard while the lava is actively moving (P4 — the
+    // boundary must be unmissable), steadier while parked.
+    const moving = storm.phase === 'warning' || storm.phase === 'shrinking';
+    const blink = moving ? 0.55 + 0.45 * Math.sin(now / 110) : 0.9;
+    drawLineY(floorY, `rgba(255,214,92,${blink})`, false, moving ? 5 : 3);
     if (storm.phase === 'warning' || storm.phase === 'shrinking') {
       if (Number.isFinite(storm.nextFloorY) && Math.abs(storm.nextFloorY - floorY) > 2) {
         drawLineY(storm.nextFloorY, 'rgba(255,245,157,0.85)', true);

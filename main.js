@@ -1203,10 +1203,13 @@ function doBotMatch() {
     activeGame = new Game(gameCanvas, netManager, localAppearance(), {
       botMatch: true, botFill: 4, botDifficulty: 'normal', roomConfig: demoConfig,
       matchDurationMs: 120000, killTarget: 12,
+      holdAtStart: true, // frozen behind the controls card; 시작하기 → 3·2·1 (P2)
       onMatchOver: (results) => showMatchResult(results)
     });
     activeGame.start((stats) => handleMatchEnd(stats));
     showOnboardCard('🎯 목표 — 2분 안에 최다 킬! (먼저 12킬 시 즉시 승리)');
+    // If the card can't show (missing DOM), never leave the match frozen.
+    if (!document.getElementById('onboardCard')) activeGame.releaseMatchHold?.();
   });
   netManager.on('onError', (err) => {
     if (btn) { btn.disabled = false; btn.innerHTML = '▶ 바로 플레이 <span class="text-[#d6ffe2] normal-case font-bold">(봇전 · 즉시 시작)</span>'; }
@@ -1258,7 +1261,13 @@ function showOnboardCard(objective) {
 function hideOnboardCard() {
   document.getElementById('onboardCard')?.classList.add('hidden');
 }
-document.getElementById('onboardCloseBtn')?.addEventListener('click', () => { Sound.play('uiConfirm'); hideOnboardCard(); });
+document.getElementById('onboardCloseBtn')?.addEventListener('click', () => {
+  Sound.play('uiConfirm');
+  hideOnboardCard();
+  // Quick-play holds the sim behind this card — dismissing it starts the 3·2·1
+  // countdown (no-op when the match is already running, e.g. pause-menu reopen).
+  activeGame?.releaseMatchHold?.();
+});
 document.getElementById('pauseHelpBtn')?.addEventListener('click', () => {
   Sound.play('ui');
   document.getElementById('pauseMenu')?.classList.add('hidden'); // close the menu behind it
@@ -2724,4 +2733,19 @@ accountUI.init({
   onEquip: () => {
     refreshWeaponCards();
   },
+});
+
+// Guest entry (P5): skip login entirely and drop straight into the lobby. No
+// auth state changes, so account-ui never yanks us back to the login screen.
+// Everything gameplay works offline; the shop/rank screens nudge a login on
+// their own ("게임 플레이는 로그인 없이도 가능합니다").
+document.getElementById('guestPlayBtn')?.addEventListener('click', () => {
+  Sound.play('uiConfirm');
+  bootScreen?.classList.add('hidden');
+  authScreen?.classList.add('hidden');
+  lobbyMenu.classList.remove('hidden');
+  if (typeof window.showLobbyHub === 'function') window.showLobbyHub();
+  if (nicknameInput && !nicknameInput.value.trim()) nicknameInput.value = '용사';
+  refreshWeaponCards();
+  startLobbyBrowsing();
 });

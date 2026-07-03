@@ -4409,7 +4409,7 @@ export class Renderer {
       ctx.fillRect(barX, barY, barW * hpPct, barH);
 
       if (p.weapon === 'bow') {
-        const maxStacks = SkillConfig.bow.maxStacks || 5;
+        const maxStacks = SkillConfig.bow?.maxStacks || 5;
         const stacks = Math.max(0, Math.min(maxStacks, Math.floor(p.arrowStacks || 0)));
         const stackText = `[${stacks} / ${maxStacks} 스택]`;
         const stackWidth = ctx.measureText(stackText).width;

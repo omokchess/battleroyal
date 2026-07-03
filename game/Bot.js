@@ -57,20 +57,14 @@ export const BOT_DIFFICULTY = {
   },
 };
 
-// Curated weapon pool so a bot match shows off weapon variety. Excludes the
-// instant-kill guns (sniper/matchlock) and the can't-walk sniper stance, plus
-// charge/aim weapons that play poorly without a human (greatsword, magicstaff,
-// guardian) — keeps bots readable and fun to fight.
-export const BOT_LOADOUT = [
-  'sword', 'spear', 'bow', 'katana', 'rapier',
-  'chakram', 'pistols', 'hammer', 'scythe', 'axe', 'gauntlet', 'harpoon',
-];
+// Bot weapon pool. Only the two built-ins remain (workshop weapons are the
+// live catalogue now); greatsword is excluded — its hold-to-charge F plays
+// poorly without a human, leaving a bot that never attacks.
+export const BOT_LOADOUT = ['sword'];
 
 // Rough projectile speeds (px/s) for aim lead. Melee weapons fall back to a
 // large value (≈ instant) so lead collapses to ~0 for them.
-const PROJ_SPEED = {
-  bow: 900, chakram: 620, pistols: 1100, harpoon: 760, spear: 700,
-};
+const PROJ_SPEED = {};
 
 const TAU = Math.PI * 2;
 function angDiff(a, b) {
@@ -282,13 +276,30 @@ export class BotBrain {
     const hw = p.halfW || 13;
     const probe = hw + 18;
 
-    // 1) Hazard (rising lava + closing walls): never advance into it.
+    // 1) Hazard (rising lava + closing walls): never advance into it — and when
+    //    the flood nears our footing, ABANDON the chase and climb: route to the
+    //    nearest platform still above the lava, then jump for it. The old
+    //    behaviour (hop in place once wading) drowned bots en masse whenever the
+    //    ground level flooded with no platform directly overhead.
     if (ctx.zoneDamaging) {
-      const safe = ctx.zoneSafeX(p.x);              // {min,max} safe x band
       const floorY = ctx.zoneFloorY;
-      if (footY >= floorY - 40) out.jump = true;     // standing in the flood → hop for higher ground
-      if (dir < 0 && p.x - probe <= safe.min) out.dir = 1;
-      else if (dir > 0 && p.x + probe >= safe.max) out.dir = -1;
+      if (footY >= floorY - 120) {                   // flood at/near our level → survival first
+        const perch = ctx.nearestSafePerch ? ctx.nearestSafePerch(p.x, footY) : null;
+        if (perch) {
+          const dxPerch = perch.x - p.x;
+          out.dir = Math.abs(dxPerch) > 24 ? (dxPerch > 0 ? 1 : -1) : 0;
+          // Under (or close enough to) the perch → jump for it, scaled to height.
+          if (Math.abs(dxPerch) < 90 && p.grounded && now >= this.jumpReadyAt) {
+            out.jump = true;
+            out.jumpStrength = Math.min(1, (footY - perch.y) / 220 + 0.45);
+          }
+        }
+        if (footY >= floorY - 40 && now >= this.jumpReadyAt) out.jump = true; // already wading — hop NOW
+      }
+      const safe = ctx.zoneSafeX(p.x);               // {min,max} safe x band
+      if (out.dir < 0 && p.x - probe <= safe.min) out.dir = 1;
+      else if (out.dir > 0 && p.x + probe >= safe.max) out.dir = -1;
+      dir = out.dir;                                 // later rules follow the survival heading
     }
 
     // 2) Map edge: don't walk off the left/right ends.

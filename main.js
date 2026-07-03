@@ -16,8 +16,7 @@ import * as accountUI from './ui/account-ui.js';
 import { isMobileDevice, isPhoneDevice } from './game/Device.js';
 import { normalizeRoomConfig, roomConfigBadges } from './game/RoomConfig.js';
 import { Sound } from './game/Sound.js';
-import { MotionEditor, loadStoredMotionSets, equippedMotionSetId, loadCanonicalWeaponCache, cacheCanonicalWeapon, equippedWorkshopWeapon, equipWorkshopWeapon, clearWorkshopWeapon, equippedWorkshopWeaponName } from './game/MotionEditor.js';
-import { setCanonicalWeapon } from './game/Motion.js';
+import { MotionEditor, loadStoredMotionSets, equippedMotionSetId, equippedWorkshopWeapon, equipWorkshopWeapon, clearWorkshopWeapon, equippedWorkshopWeaponName } from './game/MotionEditor.js';
 import { equippedStickLook } from './game/StickLook.js';
 
 // Dom Elements
@@ -834,7 +833,7 @@ function _previewPlaceMine(p, cfg, now) {
     ownerId: 'preview',
     x: p.dummy.x,
     y: p.dummy.y + 32,
-    armAt: now + (SkillConfig.minebag.armMs || 1000),
+    armAt: now + (SkillConfig.minebag?.armMs || 1000),
     expireAt: now + 2600
   });
 }
@@ -850,9 +849,9 @@ function _previewTracerMine(p, cfg, now) {
     x,
     y,
     armAt: now,
-    expireAt: now + (SkillConfig.minebag.tracerFuseMs || 2000)
+    expireAt: now + (SkillConfig.minebag?.tracerFuseMs || 2000)
   });
-  p.effects.push({ attackerId: 'preview', x, y, weapon: 'minebag', type: 'mine_blast', range: SkillConfig.minebag.blastRadius || 60, progress: 0, timestamp: now + (SkillConfig.minebag.tracerFuseMs || 2000), lifetime: 460 });
+  p.effects.push({ attackerId: 'preview', x, y, weapon: 'minebag', type: 'mine_blast', range: SkillConfig.minebag?.blastRadius || 60, progress: 0, timestamp: now + (SkillConfig.minebag?.tracerFuseMs || 2000), lifetime: 460 });
 }
 
 function _previewDodgeReload(p, cfg, now) {
@@ -1220,27 +1219,17 @@ function doBotMatch() {
 const quickPlayBtn = document.getElementById('quickPlayBtn');
 if (quickPlayBtn) quickPlayBtn.addEventListener('click', doBotMatch);
 
-// --- Stickman motion editor (Phase C) ----------------------------------------
-// Weapon-motion fallback chain (T1-E): bundle defaults are baked into Motion.js;
-// here we load the localStorage caches (cosmetic sets + per-weapon canonical), then
-// asynchronously refresh the canonical defs from Firestore (admin write / all read).
+// --- Stickman motion sets ------------------------------------------------------
+// Cosmetic motion sets from localStorage. The admin-canonical Firestore layer
+// (weapon_motions fetch/save + its cache) was removed with the admin motion
+// workshop: 검/대검 motions are baked into Motion.js, and workshop weapons carry
+// their own motion sets (distributed per match via ROOM_JOINED).
 loadStoredMotionSets();
-loadCanonicalWeaponCache();
-accountUI.fetchCanonicalWeaponMotions?.().then((map) => {
-  if (!map) return;
-  for (const weapon in map) { setCanonicalWeapon(weapon, map[weapon], { allowGameplay: true }); cacheCanonicalWeapon(weapon, map[weapon]); }
-}).catch(() => { /* offline → cache/bundle already loaded */ });
 
 let motionEditor = null;
 function ensureMotionEditor() {
   if (motionEditor) return motionEditor;
   motionEditor = new MotionEditor();
-  // Admin-only: a canonical save uploads the weapon's official motion to Firestore.
-  motionEditor.onSaveCanonical = async ({ weapon, set }) => {
-    if (!accountUI.isAdminUser?.()) return;
-    try { await accountUI.saveCanonicalWeaponMotion?.(weapon, set); }
-    catch (e) { console.warn('canonical weapon save failed (kept locally):', e?.message || e); }
-  };
   // Workshop save → publish to the shared catalog (fail-soft; stays equipped locally).
   motionEditor.onSaveWorkshop = async (def) => {
     try { await accountUI.publishMyWorkshopWeapon?.(def); }
@@ -1248,12 +1237,6 @@ function ensureMotionEditor() {
   };
   return motionEditor;
 }
-const motionBtn = document.getElementById('motionBtn');
-if (motionBtn) motionBtn.addEventListener('click', () => {
-  Sound.play('ui');
-  const weapon = document.querySelector('.weapon-card.selected')?.dataset.weapon || 'sword';
-  ensureMotionEditor().open(weapon, 'canonical');
-});
 // Workshop weapon creator (all users) — opens the editor in workshop mode.
 const workshopBtn = document.getElementById('workshopBtn');
 if (workshopBtn) workshopBtn.addEventListener('click', () => {
@@ -1286,6 +1269,10 @@ document.getElementById('pauseHelpBtn')?.addEventListener('click', () => {
 function showMatchResult(results) {
   const card = document.getElementById('matchResultCard');
   if (!card || !Array.isArray(results)) return;
+  // The round can end while the local player is mid-respawn — hide the death
+  // overlay so it never stacks under/over the scoreboard (its "0.5s" text would
+  // otherwise sit frozen behind the results).
+  document.getElementById('respawnOverlay')?.classList.add('hidden');
   const localR = results.find(r => r.isLocal);
   const headline = document.getElementById('matchResultHeadline');
   if (headline) {
@@ -1918,14 +1905,9 @@ function setupLobbyHub() {
 
   function openModule(mod) {
     const fromLeft = LEFT_MODULES.has(mod);   // 무기고/방 제작/랭킹 enter from the left
-    // Quick play (offline bot match) + motion editor reuse their existing (hidden
-    // legacy-layout) buttons' handlers — the hub card just forwards the click.
+    // Quick play (offline bot match) + weapon workshop reuse their existing
+    // (hidden legacy-layout) buttons' handlers — the hub card forwards the click.
     if (mod === 'quickplay') { document.getElementById('quickPlayBtn')?.click(); return; }
-    if (mod === 'motion') {
-      if (!accountUI.isAdminUser?.()) return;   // admin canonical editor — admin-only
-      document.getElementById('motionBtn')?.click();
-      return;
-    }
     if (mod === 'workshop') { document.getElementById('workshopBtn')?.click(); return; }  // user weapon workshop (all users)
     if (mod === 'shop') { openShellMove('상점', 'SHOP', 'shopModal', 'shopBtn', 'shopBody', fromLeft); return; }
     if (mod === 'rank') { openShellMove('랭킹', 'RANK', 'leaderboardModal', 'rankBtn', 'leaderboardBody', fromLeft); return; }

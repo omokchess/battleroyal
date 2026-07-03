@@ -164,12 +164,6 @@
               <div class="font-mono text-[10px] med-muted">OPTIONS</div>
               <div class="font-mono text-[10px] med-desc mt-1">음향 · 성능 · 조작</div>
             </button>
-            <button id="motionHubCard" type="button" data-module="motion" class="hidden med-parch med-ticks relative text-left p-3 cursor-pointer active:translate-y-px sm:col-span-2" style="box-shadow:inset 0 0 0 2px #7df09a">
-              <div class="flex items-start justify-between"><span class="font-mono text-[11px]" style="color:#4cae6a">[07]</span><span style="color:#7df09a">🎬 <span class="med-chip text-[9px] px-1.5 py-0.5 align-middle" style="color:#7df09a">ADMIN</span></span></div>
-              <div class="font-bold text-base mt-1">모션 공방</div>
-              <div class="font-mono text-[10px] med-muted">MOTION</div>
-              <div class="font-mono text-[10px] med-desc mt-1">내 스틱맨 캐릭터 · 동작 직접 제작 (관리자 전용)</div>
-            </button>
             <button type="button" data-module="workshop" class="med-parch med-ticks relative text-left p-3 cursor-pointer active:translate-y-px sm:col-span-2" style="box-shadow:inset 0 0 0 2px #ffb070">
               <div class="flex items-start justify-between"><span class="font-mono text-[11px]" style="color:#c98b53">[08]</span><span style="color:#ffb070">🔧</span></div>
               <div class="font-bold text-base mt-1">무기 공방</div>
@@ -264,10 +258,6 @@
         <!-- One-click bot match (offline, no room code / broker needed) -->
         <button id="quickPlayBtn" class="w-full mb-2 bg-gradient-to-r from-[#3aa856] to-[#1c6b33] hover:from-[#4cc96b] hover:to-[#175a2a] border-2 border-[#7df09a] text-white font-mono text-sm px-5 py-3.5 uppercase tracking-wider cursor-pointer font-extrabold active:scale-95 transition-transform shadow-[0_0_18px_rgba(80,240,140,0.35)]">
           ▶ 바로 플레이 <span class="text-[#d6ffe2] normal-case font-bold">(봇전 · 즉시 시작)</span>
-        </button>
-        <!-- Stickman motion editor entry -->
-        <button id="motionBtn" class="w-full mb-5 bg-[#14100b] hover:bg-[#1a2a1e] border-2 border-[#7df09a] text-[#7df09a] font-mono text-xs px-5 py-2.5 uppercase tracking-wider cursor-pointer font-bold active:scale-95 transition-transform">
-          🎬 내 캐릭터 · 모션 만들기 <span class="text-gray-400 normal-case">(스틱맨 에디터)</span>
         </button>
         <!-- Workshop weapon creator entry (legacy-layout; surfaced via the hub card) -->
         <button id="workshopBtn" class="hidden"></button>
@@ -837,7 +827,7 @@
           <div id="hudSkillBar" class="h-full w-full transition-all duration-100" style="background:#c9a227"></div>
         </div>
         <div class="flex justify-between items-center text-[10px] text-gray-300 mb-1">
-          <span><strong class="text-[#22d3ee]">SPACE</strong> 대시</span>
+          <span><strong class="text-[#22d3ee]">SHIFT</strong> 대시</span>
           <span id="hudDashState" class="text-white">준비!</span>
         </div>
         <div class="w-full bg-[#14100b] h-2 border border-gray-600 overflow-hidden">

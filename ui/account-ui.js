@@ -30,8 +30,6 @@ import {
   adminAddCoins,
   adminGrantAllItems,
   checkIsAdmin,
-  fetchWeaponMotions,
-  saveWeaponMotion,
   publishWorkshopWeapon,
   fetchPublishedWorkshopWeapons,
   fetchMyWorkshopWeapons,
@@ -148,10 +146,6 @@ export function isGoogleLinked() {
 export function isAdminUser() {
   return !!isAdmin;
 }
-
-/** Weapon-motion canonical store (pass-throughs to the Firestore data layer). */
-export function fetchCanonicalWeaponMotions() { return fetchWeaponMotions(); }
-export function saveCanonicalWeaponMotion(weaponKey, data) { return saveWeaponMotion(weaponKey, data); }
 
 // ── Workshop weapons (Tier 2). Every fetched def is RE-CLAMPED through the
 //    balance envelope so a tampered Firestore doc can never enter the game unsafe.
@@ -322,6 +316,18 @@ function readCredentials() {
   return { id, pw };
 }
 
+// Auth calls can hang forever on a bad network (the Firebase SDK retries its
+// streaming channels silently) — the UI must never sit on "가입 중..." with no
+// way out. Race every auth call against a timeout and tell the user what to do.
+const AUTH_TIMEOUT_MS = 12000;
+function withAuthTimeout(promise) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('auth-timeout')), AUTH_TIMEOUT_MS)),
+  ]);
+}
+const isAuthTimeout = (e) => String(e?.message || '').includes('auth-timeout');
+
 function wireStaticButtons() {
   // 아이디 + 비밀번호 로그인
   $('loginBtn')?.addEventListener('click', async () => {
@@ -329,10 +335,12 @@ function wireStaticButtons() {
     if (!c) return;
     showAuthNote('로그인 중...', 'text-gray-400');
     try {
-      await signInWithId(c.id, c.pw);
+      await withAuthTimeout(signInWithId(c.id, c.pw));
       // 성공 시 onAuthChange 가 로비로 전환
     } catch (e) {
-      showAuthNote(authErrorMessage(e));
+      showAuthNote(isAuthTimeout(e)
+        ? '네트워크 응답이 없어요. 연결을 확인하고 다시 시도해 주세요.'
+        : authErrorMessage(e));
     }
   });
 
@@ -342,12 +350,14 @@ function wireStaticButtons() {
     if (!c) return;
     showAuthNote('가입 중...', 'text-gray-400');
     try {
-      const session = await signUpWithId(c.id, c.pw);
+      const session = await withAuthTimeout(signUpWithId(c.id, c.pw));
       if (!session) {
         showAuthNote('가입 완료! "로그인"을 눌러주세요.', 'text-teal-300');
       }
     } catch (e) {
-      showAuthNote(authErrorMessage(e));
+      showAuthNote(isAuthTimeout(e)
+        ? '네트워크가 느려 확인하지 못했어요. 계정은 만들어졌을 수 있으니 같은 아이디로 로그인해 보세요.'
+        : authErrorMessage(e));
     }
   });
 

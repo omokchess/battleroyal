@@ -330,34 +330,8 @@ export async function checkIsAdmin() {
   }
 }
 
-// ── 무기 정본 모션 (weapon_motions) — 어드민 write / 전체 read ──────
-/** Fetch all canonical weapon motion definitions → { weapon: data }. */
-export async function fetchWeaponMotions() {
-  if (!firestore) return {};
-  try {
-    const snap = await getDocs(collection(firestore, 'weapon_motions'));
-    const out = {};
-    snap.docs.forEach(d => { const data = d.data()?.data; if (data) out[d.id] = data; });
-    return out;
-  } catch (error) {
-    console.error('[firebase] fetchWeaponMotions', error);
-    return {};   // fail-soft: callers fall back to localStorage cache / bundle
-  }
-}
-
-/** Admin upsert of one weapon's canonical motion set (Firestore rules gate write). */
-export async function saveWeaponMotion(weaponKey, data) {
-  const user = currentUser();
-  if (!firestore || !user) throw new Error('로그인 필요');
-  if (!weaponKey || typeof weaponKey !== 'string') throw new Error('weaponKey 필요');
-  const ref = doc(firestore, 'weapon_motions', weaponKey);
-  return runTransaction(firestore, async tx => {
-    const snap = await tx.get(ref);
-    const version = (snap.exists() ? Number(snap.data().version || 0) : 0) + 1;
-    tx.set(ref, { weapon_key: weaponKey, data, version, updated_at: serverTimestamp(), updated_by: user.uid });
-    return version;
-  });
-}
+// (The admin-canonical weapon_motions store was removed with the admin motion
+// workshop — 검/대검 motions ship in Motion.js; workshop weapons carry theirs.)
 
 // ── 공방 무기 (workshop_weapons) — 작성자 write / published 전체 read ─────
 const WS_COL = 'workshop_weapons';

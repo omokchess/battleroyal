@@ -2169,6 +2169,25 @@ export class Game {
       weaponOf: (p) => getEffectiveWeapon(p.weapon, p.buffType),
       solidBlocks: (x, y, r) => this._levelSolidBlocks(x, y, r),
       surfaceBelow: (x, fromY) => this._surfaceBelow(x, fromY),
+      // Nearest platform/solid TOP still above the flood — where a bot should
+      // climb when the lava nears its footing. Null when nothing is safe.
+      // Skips wall-like solids (much taller than wide — their tops aren't real
+      // footing) and anything the flood is about to swallow.
+      nearestSafePerch: (x, footY) => {
+        if (!damaging || !this.level) return null;
+        let best = null, bestScore = Infinity;
+        const consider = (s) => {
+          if (s.h > s.w * 3) return;                  // wall, not footing
+          const top = s.y;
+          if (top > floorY - 60) return;              // flooded / about to be
+          const cx = Math.max(s.x + 16, Math.min(x, s.x + s.w - 16));
+          const score = Math.abs(cx - x) + Math.max(0, footY - top) * 0.35;
+          if (score < bestScore) { bestScore = score; best = { x: cx, y: top }; }
+        };
+        for (const s of (this.level.oneWays || [])) consider(s);
+        for (const s of (this.level.solids || [])) consider(s);
+        return best;
+      },
       // True when the only thing under the feet here is a one-way platform (so a
       // drop-through actually moves the bot down toward a lower target).
       onOneWayOnly: (x, footY) => {
@@ -2734,25 +2753,11 @@ export class Game {
   _activateSkill(player, now) {
     if (!this._canUseSkill(player)) return;
 
+    // Only the two built-in weapons remain (workshop weapons drive their F via
+    // block gimmicks, not this switch).
     switch (player.weapon) {
       case 'sword': this._castSwordSkill(player, now); break;
-      case 'axe': this._startBuff(player, 'axe_rage', SkillConfig.axe.buffMs, now); break;
-      case 'bow': this._castRailgun(player, now); break;
-      case 'spear': this._throwSpear(player, now); break;
-      case 'gauntlet': this._startBuff(player, 'gauntlet_lance', SkillConfig.gauntlet.buffMs, now); break;
       case 'greatsword': this._startGreatswordCharge(player, now); break;
-      case 'scythe': this._castMeleeSkill(player, now); break;
-      case 'dagger': this._startDaggerQte(player, now); break;
-      case 'rapier': this._startBuff(player, 'rapier_riposte', SkillConfig.rapier.buffMs, now); break;
-      case 'hammer': this._castHammerSkill(player, now); break;
-      case 'katana': this._castKatanaSkill(player, now); break;
-      case 'sniper': this._fireSniperShot(player, now); break;
-      case 'chakram': this._throwChakramFan(player, now); break;
-      case 'pistols': this._firePistolBarrage(player, now); break;
-      case 'guardian': this._guardianSurge(player, now); break;
-      case 'harpoon': this._harpoonPull(player, now); break;
-      case 'minebag': this._detonateAllMines(player, now); break;
-      case 'flamethrower': this._throwFirePatch(player, now); break;
       default: break;
     }
   }
@@ -3270,7 +3275,7 @@ export class Game {
 
   _awardBowArrowStack(player) {
     if (!player || player.isDead || player.weapon !== 'bow') return;
-    const maxStacks = SkillConfig.bow.maxStacks || 5;
+    const maxStacks = SkillConfig.bow?.maxStacks || 5;
     player.arrowStacks = Math.min(maxStacks, (player.arrowStacks || 0) + 1);
   }
 
@@ -4346,7 +4351,7 @@ export class Game {
       }
       return;
     }
-    const sp = Math.max(SkillConfig.chakram.returnSpeed || 720, proj.speed * 0.95);
+    const sp = Math.max(SkillConfig.chakram?.returnSpeed || 720, proj.speed * 0.95);
     const ux = dx / dist, uy = dy / dist;
     proj.vx = ux * sp; proj.vy = uy * sp;
     proj.angle = Math.atan2(uy, ux);
@@ -4824,7 +4829,7 @@ export class Game {
         }
       }
       const dist = Math.hypot(proj.x - proj.startX, proj.y - proj.startY);
-      if (dist > (Weapons.guardian.seekRange || 130) * 1.5 || !target || target.isDead) {
+      if (dist > (Weapons.guardian?.seekRange || 130) * 1.5 || !target || target.isDead) {
         proj.phase = 'return';
       }
       return;
@@ -5478,7 +5483,7 @@ export class Game {
           else {
             const altLabel = local.weapon === 'sniper'
               ? 'BLINK'
-              : AuxSkillConfig[local.weapon]?.alt?.label || 'SKILL';
+              : AuxSkillConfig[local.weapon]?.alt?.label || '보조 스킬';
             label.innerHTML = `<strong class="text-[#22c55e]">R</strong> ${altLabel}`;
           }
         }
@@ -5511,7 +5516,7 @@ export class Game {
           teleportBar.style.width = `${clamp01(1 - leftMs / total) * 100}%`;
           teleportBar.style.background = '#4b5563';
         } else {
-          teleportState.textContent = local.weapon === 'katana' ? 'HOLD' : 'READY';
+          teleportState.textContent = local.weapon === 'katana' ? 'HOLD' : '준비!';
           teleportBar.style.width = '100%';
           teleportBar.style.background = local.weapon === 'magicstaff'
             ? '#a855f7'
@@ -5532,9 +5537,10 @@ export class Game {
         clickSkillRow.classList.remove('hidden');
         const label = clickSkillRow.querySelector('span');
         if (label) {
+          const tLabel = AuxSkillConfig[local.weapon]?.target?.label || '스킬';
           label.innerHTML = local.weapon === 'magicstaff'
             ? '<strong class="text-[#93c5fd]">LMB</strong> ICE'
-            : '<strong class="text-[#93c5fd]">LMB</strong> SKILL';
+            : `<strong class="text-[#93c5fd]">LMB</strong> ${tLabel}`;
         }
         const iceCd = local.weapon === 'magicstaff'
           ? local.magicCooldowns?.iceShard || 0
@@ -5547,7 +5553,7 @@ export class Game {
           clickSkillBar.style.width = `${clamp01(1 - iceCd / total) * 100}%`;
           clickSkillBar.style.background = '#4b5563';
         } else {
-          clickSkillState.textContent = local.weapon === 'magicstaff' ? 'TARGET' : 'READY';
+          clickSkillState.textContent = local.weapon === 'magicstaff' ? 'TARGET' : '준비!';
           clickSkillBar.style.width = '100%';
           clickSkillBar.style.background = local.weapon === 'magicstaff' ? '#93c5fd' : (Weapons[local.weapon]?.color || '#93c5fd');
         }
@@ -5908,9 +5914,9 @@ export class Game {
               snap.x,
               snap.y,
               angle,
-              snap.speed || Weapons.bow.speed,
-              snap.maxRange === null ? Infinity : (snap.maxRange ?? Weapons.bow.range),
-              snap.damage || Weapons.bow.damage,
+              snap.speed || Weapons.bow?.speed || 640,
+              snap.maxRange === null ? Infinity : (snap.maxRange ?? Weapons.bow?.range ?? Infinity),
+              snap.damage || Weapons.bow?.damage || 30,
               snap.kind || 'arrow'
             );
             // Keep the host's exact velocity so client extrapolation matches.

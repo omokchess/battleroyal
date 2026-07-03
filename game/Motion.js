@@ -161,7 +161,7 @@ const ATTACK_HEAVY = {               // hammer / greatsword / axe: big overhead 
   ],
   events: [{ t: 0.55, type: 'impact' }],
 };
-const ATTACK_RANGED = {              // bow / guns / chakram / staff: braced + recoil
+const ATTACK_RANGED = {              // workshop ranged weapons: braced + recoil
   duration: 0.3, loop: false,
   keyframes: [
     { t: 0,   pose: { spine: -90, legNearU: 78, legFarU: 100, armFarU: 110 } },
@@ -172,21 +172,56 @@ const ATTACK_RANGED = {              // bow / guns / chakram / staff: braced + r
   events: [{ t: 0.45, type: 'projectile' }],
 };
 
+// --- 검 (sword): bespoke quick diagonal slash --------------------------------
+// Fast three-beat cut: a short shoulder wind-up, a snappy cross-body slash on
+// the impact beat, then a light settle. Reads as "정확하고 가벼운 정석 검격".
+const ATTACK_SWORD = {
+  duration: 0.4, loop: false,
+  keyframes: [
+    { t: 0,    pose: { spine: -92, armFarU: 135, legNearU: 82, legFarU: 96 } },  // guard
+    { t: 0.25, pose: { spine: -97, armFarU: 155, legNearU: 88, legFarU: 90 } },  // wind-up (shoulder back)
+    { t: 0.45, pose: { spine: -82, armFarU: 62,  legNearU: 62, legFarU: 112 } }, // slash — weight onto front foot
+    { t: 0.62, pose: { spine: -85, armFarU: 78,  legNearU: 68, legFarU: 106 } }, // follow-through
+    { t: 1,    pose: { spine: -90, armFarU: 120, legNearU: 80, legFarU: 98 } },  // settle back to guard
+  ],
+  events: [{ t: 0.45, type: 'impact' }],
+};
+
+// --- 대검 (greatsword): bespoke charged cleave --------------------------------
+// The whole body coils under the blade's weight (deep knee bend, torso leaning
+// away), then unwinds through a huge overhead arc; the inertia drags the torso
+// past vertical before it recovers. Matches the hold-to-charge F identity.
+const ATTACK_GREATSWORD = {
+  duration: 0.78, loop: false,
+  keyframes: [
+    { t: 0,    pose: { spine: -86, armFarU: 145, legNearU: 84, legFarU: 94 } },  // ready
+    { t: 0.3,  pose: { spine: -68, armFarU: 178, legNearU: 96, legFarU: 78 } },  // deep coil — blade high behind
+    { t: 0.42, pose: { spine: -64, armFarU: 182, legNearU: 100, legFarU: 74 } }, // peak tension (charge feel)
+    { t: 0.56, pose: { spine: -112, armFarU: 42, legNearU: 60, legFarU: 116 } }, // CLEAVE — torso whips through
+    { t: 0.7,  pose: { spine: -104, armFarU: 55, legNearU: 64, legFarU: 112 } }, // inertia drag past the hit
+    { t: 1,    pose: { spine: -88, armFarU: 130, legNearU: 82, legFarU: 96 } },  // heave back upright
+  ],
+  events: [{ t: 0.56, type: 'impact' }],
+};
+
 // Sparse motion sets: each only overrides what differs from the base locomotion
 // (STICK_MOTIONS). Resolution falls back base → idle, so a set need only name its
-// signature moves. Registered (sanitized) at module load.
+// signature moves. Registered (sanitized) at module load. thrust/heavy/ranged
+// remain as generic flavours for workshop weapons to pick from.
 const BUILTIN_SETS = {
   default: {},
+  sword:      { attack: ATTACK_SWORD },
+  greatsword: { attack: ATTACK_GREATSWORD },
   thrust:  { attack: ATTACK_THRUST },
   heavy:   { attack: ATTACK_HEAVY },
   ranged:  { attack: ATTACK_RANGED },
 };
 
-// Weapon → motion-set id. Anything unlisted uses 'default'.
+// Weapon → motion-set id. Anything unlisted uses 'default'. Only the two
+// built-in weapons remain; workshop weapons ship their own motion sets.
 const WEAPON_SET_ID = {
-  spear: 'thrust', rapier: 'thrust', harpoon: 'thrust', dagger: 'thrust',
-  hammer: 'heavy', greatsword: 'heavy', axe: 'heavy',
-  bow: 'ranged', pistols: 'ranged', sniper: 'ranged', chakram: 'ranged', magicstaff: 'ranged',
+  sword: 'sword',
+  greatsword: 'greatsword',
 };
 
 // The live registry (built-ins + any user/AI sets registered at runtime).

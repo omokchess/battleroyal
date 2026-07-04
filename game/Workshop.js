@@ -40,7 +40,7 @@ export const ENVELOPE = {
 };
 
 export const VALID_STATUS = new Set(['none', 'slow', 'bleed', 'burn', 'stun']);
-export const POINT_BUDGET = 100;
+export const POINT_BUDGET = 70;
 
 const clampNum = (v, [lo, hi], dflt) => (Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : dflt);
 
@@ -91,17 +91,33 @@ export function statCost(stats) {
 }
 
 /**
- * Enforce the point budget: if the block costs more than POINT_BUDGET, bleed the
- * most fungible offensive stat (damage) down until it fits. Returns
- * { stats, cost, overBudget }.
+ * Enforce the point budget: if the block costs more than POINT_BUDGET, bleed
+ * stats down in priority order — damage first (most fungible), then cooldown up,
+ * status duration, knockback, range, move speed, max hp — until it fits. With
+ * the tighter 70-point budget, damage alone can't always cover a maxed build.
+ * Returns { stats, cost, overBudget }.
  */
 export function enforceBudget(stats) {
   const s = { ...stats };
-  let cost = statCost(s);
-  const over = cost > POINT_BUDGET;
+  const over = statCost(s) > POINT_BUDGET;
+  // [key, step, floor-or-ceiling accessor] — cooldown INCREASES (weaker = slower).
+  const bleed = [
+    ['damage', -1, () => s.damage > ENVELOPE.damage[0]],
+    ['cooldownMs', +25, () => s.cooldownMs < ENVELOPE.cooldownMs[1]],
+    ['statusDurationMs', -100, () => s.statusDurationMs > 0],
+    ['knockback', -5, () => s.knockback > ENVELOPE.knockback[0]],
+    ['range', -5, () => s.range > ENVELOPE.range[0]],
+    ['moveSpeed', -0.01, () => s.moveSpeed > ENVELOPE.moveSpeed[0]],
+    ['maxHp', -1, () => s.maxHp > ENVELOPE.maxHp[0]],
+  ];
   let guard = 0;
-  while (statCost(s) > POINT_BUDGET && s.damage > ENVELOPE.damage[0] && guard++ < 200) {
-    s.damage -= 1;
+  outer: while (statCost(s) > POINT_BUDGET && guard++ < 2000) {
+    for (const [key, step, can] of bleed) {
+      if (!can()) continue;
+      s[key] = Math.round((s[key] + step) * 100) / 100;
+      continue outer;   // re-check cost after every single decrement
+    }
+    break;   // nothing left to bleed
   }
   return { stats: s, cost: statCost(s), overBudget: over };
 }

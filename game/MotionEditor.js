@@ -20,7 +20,6 @@
 
 import { solveStickman, drawStickFromJoints, samplePose, STICK_NEUTRAL, WEAPON_STICK_COLOR } from './Stickman.js';
 import { resolveMotion, weaponSetId, sanitizeMotion, registerMotionSet, MOTION_LIMITS, setCanonicalWeapon } from './Motion.js';
-import { MOTION_PRESETS } from './MotionPresets.js';
 import { captureMotionFromWebcam } from './PoseCapture.js';
 import { equippedStickLook, saveStickLook } from './StickLook.js';
 import { clampWorkshopStats, statCost, enforceBudget, clampWorkshopWeapon, POINT_BUDGET } from './Workshop.js';
@@ -188,7 +187,6 @@ export class MotionEditor {
   _wire() {
     const $ = (id) => document.getElementById(id);
     $('meClose')?.addEventListener('click', () => this.close());
-    $('meAddKf')?.addEventListener('click', () => this._addKeyframe());
     $('meDelKf')?.addEventListener('click', () => this._delKeyframe());
     $('mePlay')?.addEventListener('click', () => this._togglePlay());
     // Frame-flip navigation (stick-fighter): page through keyframes one at a time.
@@ -454,13 +452,11 @@ export class MotionEditor {
       row.addEventListener('click', () => this._loadUserPreset(p.id));
       host.appendChild(row);
     }
-    // Built-in examples (starter library) — smaller, dimmed.
-    for (const p of MOTION_PRESETS) {
-      const b = document.createElement('button');
-      b.className = 'me-preset bg-[#14100b] hover:bg-gray-800 border border-[#7df09a]/40 text-[#7df09a]/70 text-[9px] px-1.5 py-0.5 cursor-pointer active:scale-95';
-      b.textContent = '예시·' + p.name;
-      b.addEventListener('click', () => this._loadPreset(p.id));
-      host.appendChild(b);
+    if (!this.userPresets.length) {
+      const hint = document.createElement('span');
+      hint.className = 'text-[9px] text-gray-500';
+      hint.textContent = '아직 없음 — 모션을 만들고 태그를 골라 💾 프리셋 저장';
+      host.appendChild(hint);
     }
   }
   _equipPreset(id) {
@@ -485,25 +481,6 @@ export class MotionEditor {
     const nm = document.getElementById('meName'); if (nm) nm.value = p.name;
     const ts = document.getElementById('mePresetTag'); if (ts) ts.value = p.tag;
     this._setStatus(`내 프리셋 "${p.name}" [${TAG_LABEL[p.tag]}] 을 불러왔습니다. 수정 후 다시 저장하세요.`);
-    this._renderAll();
-  }
-
-  _loadPreset(id) {
-    const preset = MOTION_PRESETS.find(p => p.id === id);
-    if (!preset) return;
-    this.motion = sanitizeMotion(preset.motion, undefined, { allowGameplay: true });
-    if (this.motion.keyframes.length > MAX_KF) this.motion.keyframes = this.motion.keyframes.slice(0, MAX_KF);
-    if (!this.motion.events.some(e => e.type === 'impact')) {
-      this.motion.events.push({ t: (HIT_WINDOW.start + HIT_WINDOW.end) / 2, type: 'impact' });
-    }
-    for (const e of this.motion.events) if (e.type === 'impact') e.t = clamp(e.t, HIT_WINDOW.start, HIT_WINDOW.end);
-    this.selKf = 0;
-    this.scrubT = this.motion.keyframes[0]?.t || 0;
-    this.playing = false;
-    const dur = document.getElementById('meDuration'); if (dur) dur.value = String(this.motion.duration);
-    const dv = document.getElementById('meDurationVal'); if (dv) dv.textContent = this.motion.duration.toFixed(2) + 's';
-    const nm = document.getElementById('meName'); if (nm && !nm.value.trim()) nm.value = preset.name;
-    this._setStatus(`프리셋 "${preset.name}" 적용됨. 그대로 저장하거나 관절을 끌어 다듬으세요.`);
     this._renderAll();
   }
 

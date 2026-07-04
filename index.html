@@ -959,11 +959,10 @@
                 <span class="text-gray-300">프레임 <b id="meFrameLabel" class="text-[#ffd24a]">1 / 1</b></span>
                 <button id="meNextFrame" class="bg-[#14100b] hover:bg-gray-800 border border-[#c9a227] text-[#c9a227] px-2.5 py-1 cursor-pointer active:scale-95" title="다음 프레임 (→)">▶</button>
               </div>
-              <!-- ＋키프레임 (연두 박스 위치) -->
-              <button id="meAddKf" class="w-full bg-[#1c6b33]/40 hover:bg-[#1c6b33]/70 border-2 border-[#7df09a] text-[#7df09a] text-[12px] py-2.5 uppercase font-bold cursor-pointer active:scale-95">＋ 키프레임</button>
-              <button id="meNewFrame" class="w-full bg-[#14100b] hover:bg-gray-800 border border-[#7df09a]/60 text-[#7df09a] text-[10px] py-1.5 cursor-pointer active:scale-95" title="현재 포즈를 이어받은 새 프레임">＋ 새 프레임 (포즈 이어받기)</button>
+              <!-- ＋새 프레임 (연두 박스 위치): 지금 포즈를 이어받아 다음 장을 만든다 -->
+              <button id="meNewFrame" class="w-full bg-[#1c6b33]/40 hover:bg-[#1c6b33]/70 border-2 border-[#7df09a] text-[#7df09a] text-[12px] py-2.5 uppercase font-bold cursor-pointer active:scale-95" title="현재 포즈를 이어받은 새 프레임">＋ 새 프레임</button>
               <div class="grid grid-cols-2 gap-1.5">
-                <button id="meDelKf" class="bg-[#14100b] hover:bg-gray-800 border border-red-500 text-red-300 text-[10px] py-1.5 uppercase cursor-pointer active:scale-95">－ 키프레임</button>
+                <button id="meDelKf" class="bg-[#14100b] hover:bg-gray-800 border border-red-500 text-red-300 text-[10px] py-1.5 uppercase cursor-pointer active:scale-95">－ 프레임 삭제</button>
                 <button id="mePlay" class="bg-[#14100b] hover:bg-gray-800 border border-[#45f3ff] text-[#45f3ff] text-[10px] py-1.5 uppercase cursor-pointer active:scale-95">▶ 재생</button>
               </div>
               <button id="meOnion" class="w-full bg-[#14100b] hover:bg-gray-800 border border-[#6f8cff] text-[#9fb0ff] text-[10px] py-1.5 cursor-pointer active:scale-95" title="이전 프레임 잔상(오니언스킨) 켜기/끄기">🧅 잔상 (이전 프레임)</button>
@@ -977,7 +976,7 @@
           </div>
 
           <!-- BOTTOM (빨간 영역): everything else, packed to avoid scrolling -->
-          <div class="shrink-0 grid grid-cols-3 gap-x-4 gap-y-1.5 content-start overflow-y-auto" style="max-height:48%">
+          <div class="shrink-0 grid grid-cols-3 gap-x-4 gap-y-1.5 content-start overflow-y-auto" style="max-height:50%">
             <!-- col1: weapon -->
             <div class="flex flex-col gap-1.5">
               <div class="flex items-center gap-2">
@@ -1046,18 +1045,34 @@
             <div id="meStatsPanel" class="col-span-3 hidden border-t border-[#ffb070]/40 pt-1.5">
               <div class="flex items-center justify-between mb-1.5">
                 <span class="text-[11px] text-[#ffb070] uppercase font-bold">🔧 무기 스탯 (봉투 내)</span>
-                <span class="text-[10px] text-gray-400">예산 <b id="meBudgetVal" class="text-[#7df09a]">0</b>/100</span>
+                <span class="text-[10px] text-gray-400">예산 <b id="meBudgetVal" class="text-[#7df09a]">0</b>/70</span>
               </div>
               <div class="w-full h-2 bg-[#0d0a06] border border-gray-700 mb-2"><div id="meBudgetBar" class="h-full bg-[#7df09a]" style="width:0%"></div></div>
-              <div class="grid grid-cols-4 gap-x-3 gap-y-1.5 text-[10px] text-gray-300">
-                <label class="flex items-center gap-1">데미지<input id="ms_damage" type="range" min="4" max="55" step="1" class="flex-1 min-w-0"/><span id="ms_damage_v" class="w-6 text-right text-[#e8d5a3]">18</span></label>
-                <label class="flex items-center gap-1">쿨타임<input id="ms_cooldownMs" type="range" min="250" max="2500" step="10" class="flex-1 min-w-0"/><span id="ms_cooldownMs_v" class="w-8 text-right text-[#e8d5a3]">600</span></label>
-                <label class="flex items-center gap-1">체력<input id="ms_maxHp" type="range" min="70" max="160" step="1" class="flex-1 min-w-0"/><span id="ms_maxHp_v" class="w-6 text-right text-[#e8d5a3]">100</span></label>
-                <label class="flex items-center gap-1">이속<input id="ms_moveSpeed" type="range" min="0.7" max="1.35" step="0.01" class="flex-1 min-w-0"/><span id="ms_moveSpeed_v" class="w-6 text-right text-[#e8d5a3]">1.0</span></label>
-                <label class="flex items-center gap-1">사거리<input id="ms_range" type="range" min="30" max="300" step="5" class="flex-1 min-w-0"/><span id="ms_range_v" class="w-6 text-right text-[#e8d5a3]">70</span></label>
-                <label class="flex items-center gap-1">넉백<input id="ms_knockback" type="range" min="0" max="200" step="5" class="flex-1 min-w-0"/><span id="ms_knockback_v" class="w-6 text-right text-[#e8d5a3]">0</span></label>
-                <label class="flex items-center gap-1">상태<select id="ms_status" class="bg-[#14100b] border border-gray-600 text-white px-1 py-0.5 flex-1 min-w-0"><option value="none">없음</option><option value="slow">둔화</option><option value="bleed">출혈</option><option value="burn">화상</option><option value="stun">기절</option></select></label>
-                <label class="flex items-center gap-1">지속<input id="ms_statusDurationMs" type="range" min="0" max="3000" step="100" class="flex-1 min-w-0"/><span id="ms_statusDurationMs_v" class="w-8 text-right text-[#e8d5a3]">0</span></label>
+              <!-- 관계별 그룹: ⚔공격 / 🛡생존·이동 / ☠상태효과 -->
+              <div class="grid grid-cols-3 gap-2 text-[10px] text-gray-300">
+                <div class="border border-[#ff7a5a]/40 rounded p-1.5">
+                  <div class="text-[9px] text-[#ff7a5a] uppercase font-bold mb-1">⚔ 공격</div>
+                  <div class="grid grid-cols-2 gap-x-2 gap-y-1">
+                    <label class="flex items-center gap-1">데미지<input id="ms_damage" type="range" min="4" max="55" step="1" class="flex-1 min-w-0"/><span id="ms_damage_v" class="w-6 text-right text-[#e8d5a3]">18</span></label>
+                    <label class="flex items-center gap-1">쿨타임<input id="ms_cooldownMs" type="range" min="250" max="2500" step="10" class="flex-1 min-w-0"/><span id="ms_cooldownMs_v" class="w-8 text-right text-[#e8d5a3]">600</span></label>
+                    <label class="flex items-center gap-1">사거리<input id="ms_range" type="range" min="30" max="300" step="5" class="flex-1 min-w-0"/><span id="ms_range_v" class="w-6 text-right text-[#e8d5a3]">70</span></label>
+                    <label class="flex items-center gap-1">넉백<input id="ms_knockback" type="range" min="0" max="200" step="5" class="flex-1 min-w-0"/><span id="ms_knockback_v" class="w-6 text-right text-[#e8d5a3]">0</span></label>
+                  </div>
+                </div>
+                <div class="border border-[#7df09a]/40 rounded p-1.5">
+                  <div class="text-[9px] text-[#7df09a] uppercase font-bold mb-1">🛡 생존 · 이동</div>
+                  <div class="grid gap-y-1">
+                    <label class="flex items-center gap-1">체력<input id="ms_maxHp" type="range" min="70" max="160" step="1" class="flex-1 min-w-0"/><span id="ms_maxHp_v" class="w-6 text-right text-[#e8d5a3]">100</span></label>
+                    <label class="flex items-center gap-1">이속<input id="ms_moveSpeed" type="range" min="0.7" max="1.35" step="0.01" class="flex-1 min-w-0"/><span id="ms_moveSpeed_v" class="w-6 text-right text-[#e8d5a3]">1.0</span></label>
+                  </div>
+                </div>
+                <div class="border border-[#b48cff]/40 rounded p-1.5">
+                  <div class="text-[9px] text-[#b48cff] uppercase font-bold mb-1">☠ 상태효과</div>
+                  <div class="grid gap-y-1">
+                    <label class="flex items-center gap-1">종류<select id="ms_status" class="bg-[#14100b] border border-gray-600 text-white px-1 py-0.5 flex-1 min-w-0"><option value="none">없음</option><option value="slow">둔화</option><option value="bleed">출혈</option><option value="burn">화상</option><option value="stun">기절</option></select></label>
+                    <label class="flex items-center gap-1">지속<input id="ms_statusDurationMs" type="range" min="0" max="3000" step="100" class="flex-1 min-w-0"/><span id="ms_statusDurationMs_v" class="w-8 text-right text-[#e8d5a3]">0</span>ms</label>
+                  </div>
+                </div>
               </div>
               <button id="meBlockBtn" class="w-full mt-2 bg-[#14100b] hover:bg-gray-800 border border-[#45f3ff] text-[#45f3ff] text-[10px] py-2 uppercase cursor-pointer active:scale-95">⚙ 기믹 코딩 (블록) <span id="meBlockCount" class="text-gray-400 normal-case"></span></button>
             </div>

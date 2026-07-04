@@ -146,6 +146,7 @@ export class MotionEditor {
     this.selKf = 0;
     this.playing = false;
     this.scrubT = 0;
+    this.onion = true;          // stick-fighter onion skin: show the previous frame faintly
     this.dragHandle = null;
     this.dragKfIndex = -1;
     this.dragImpact = false;
@@ -162,6 +163,20 @@ export class MotionEditor {
     $('meAddKf')?.addEventListener('click', () => this._addKeyframe());
     $('meDelKf')?.addEventListener('click', () => this._delKeyframe());
     $('mePlay')?.addEventListener('click', () => this._togglePlay());
+    // Frame-flip navigation (stick-fighter): page through keyframes one at a time.
+    $('mePrevFrame')?.addEventListener('click', () => this._gotoFrame(-1));
+    $('meNextFrame')?.addEventListener('click', () => this._gotoFrame(1));
+    $('meNewFrame')?.addEventListener('click', () => this._newFrameCarry());
+    $('meOnion')?.addEventListener('click', () => { this.onion = !this.onion; this._syncOnionBtn(); this._renderPreview(); });
+    // ←/→ flip frames while the editor is open (not while typing / block editor up).
+    window.addEventListener('keydown', (e) => {
+      if (!this.root || this.root.classList.contains('hidden')) return;
+      const be = document.getElementById('blockEditor');
+      if (be && !be.classList.contains('hidden')) return;
+      if (/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName || '')) return;
+      if (e.key === 'ArrowLeft') { this._gotoFrame(-1); e.preventDefault(); }
+      else if (e.key === 'ArrowRight') { this._gotoFrame(1); e.preventDefault(); }
+    });
     $('meReset')?.addEventListener('click', () => this._loadTemplate());
     $('meSave')?.addEventListener('click', () => this._save());
     $('meCapture')?.addEventListener('click', () => this._capture());
@@ -242,6 +257,7 @@ export class MotionEditor {
       this._updateBlockCount();
     }
     this._loadTemplate();
+    this._syncOnionBtn();
     this.root.classList.remove('hidden');
   }
 
@@ -400,6 +416,19 @@ export class MotionEditor {
 
     const scale = 46;
     const cx = W / 2, cyCenter = H - 30 - scale * 1.28; // body centre so feet sit on the ground line
+
+    // Onion skin: the PREVIOUS frame's pose, drawn faint + blue behind the current
+    // one, so you can see what the stickman did last and build the next pose from it.
+    if (this.onion && !this.playing && this.motion.keyframes[this.selKf] && this.selKf > 0) {
+      const prev = this.motion.keyframes[this.selKf - 1];
+      if (prev) {
+        const pj = solveStickman({ ...STICK_NEUTRAL, ...prev.pose }, scale, cx, cyCenter, 1, { rawNearArm: true, weapon: this.weapon });
+        ctx.save(); ctx.globalAlpha = 0.3;
+        drawStickFromJoints(ctx, pj.joints, pj.headR, { color: '#6f8cff', accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory });
+        ctx.restore();
+      }
+    }
+
     const pose = this._displayPose();
     const { joints, headR } = solveStickman(pose, scale, cx, cyCenter, 1, { rawNearArm: true, weapon: this.weapon });
     const color = this.look.color || WEAPON_STICK_COLOR[this.weapon] || '#cdd3da';
@@ -601,6 +630,34 @@ export class MotionEditor {
     this.dragHandle = null; this.dragImpact = false; this.dragKfIndex = -1; this.dragHitbox = null;
   }
 
+  // --- Frame flip (stick-fighter) --------------------------------------------
+  /** Flip to the previous/next keyframe (a "page"), keeping its authored pose. */
+  _gotoFrame(delta) {
+    const n = this.motion?.keyframes.length || 0; if (!n) return;
+    this.playing = false;
+    if (document.getElementById('mePlay')) document.getElementById('mePlay').textContent = '▶ 재생';
+    this.selKf = clamp(this.selKf + delta, 0, n - 1);
+    this.scrubT = this.motion.keyframes[this.selKf].t;
+    this._renderAll();
+  }
+  /** Add a new frame AFTER the current one that inherits the current pose exactly,
+   *  so you continue the motion from where it was (stick-fighter frame carry). */
+  _newFrameCarry() {
+    const kfs = this.motion.keyframes;
+    if (kfs.length >= MAX_KF) { this._setStatus(`키프레임은 최대 ${MAX_KF}개입니다.`); return; }
+    const cur = kfs[this.selKf]; if (!cur) { this._addKeyframe(); return; }
+    const next = kfs[this.selKf + 1];
+    let t = next ? (cur.t + next.t) / 2 : Math.min(1, cur.t + 0.12);
+    while (kfs.some(k => Math.abs(k.t - t) < 0.02) && t < 0.999) t += 0.03;
+    const kf = { t: clamp(t, 0, 1), pose: { ...STICK_NEUTRAL, ...cur.pose } };   // carry the current pose forward
+    kfs.push(kf); kfs.sort((a, b) => a.t - b.t);
+    this.selKf = kfs.indexOf(kf); this.scrubT = kf.t; this.playing = false;
+    this._setStatus('새 프레임 — 이전 포즈를 그대로 이어받았습니다. 관절을 조금씩 바꿔 다음 동작을 만드세요.');
+    this._renderAll();
+  }
+  _syncOnionBtn() { const b = document.getElementById('meOnion'); if (b) { b.style.opacity = this.onion ? '1' : '0.4'; b.style.borderColor = this.onion ? '#6f8cff' : '#555'; } }
+  _updateFrameLabel() { const el = document.getElementById('meFrameLabel'); if (el) el.textContent = `${(this.motion?.keyframes.length ? this.selKf + 1 : 0)} / ${this.motion?.keyframes.length || 0}`; }
+
   // --- Keyframe ops ----------------------------------------------------------
   _addKeyframe() {
     const kfs = this.motion.keyframes;
@@ -710,6 +767,7 @@ export class MotionEditor {
   _renderAll() {
     const btn = document.getElementById('meAddHitbox');
     if (btn) btn.textContent = this._hb() ? '－ 제거' : '＋ 추가';
+    this._updateFrameLabel();
     this._renderPreview(); this._renderTimeline();
   }
 }

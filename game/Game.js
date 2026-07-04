@@ -1151,6 +1151,9 @@ export class Game {
       pull: ({ distance }) => { const n = near(); if (!n) return; const a = n.dir + Math.PI; this._displace(n.target, Math.cos(a) * distance, Math.sin(a) * distance); },
       spawnPlacement: () => { /* placements land in a later pass; no-op keeps it safe for now */ },
       particle: (id) => this.effects.push({ attackerId: player.id, x: player.x, y: player.y, weapon: '', type: id === 'explosion' ? 'mine_blast' : 'danger_pop', progress: 0, timestamp: now, lifetime: 360 }),
+      // 모션 재생 [태그] — cosmetic: broadcast a trigger; every client resolves the
+      // tag from the player's synced weapon def and plays the pose overlay.
+      playMotion: ({ tag }) => this.effects.push({ attackerId: player.id, x: player.x, y: player.y, weapon: '', type: 'stick_motion', tag, progress: 0, timestamp: now, lifetime: 700 }),
       sfx: (id) => { if (player.id === this.localPlayerId) Sound.play(String(id)); },
       shake: (level) => { if (this.camera?.startShake) this.camera.startShake(level === 'strong' ? 14 : 7, 220); },
       cooldownGate: () => { /* the weapon's clamped cooldownMs already floors fire rate */ },

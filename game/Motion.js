@@ -306,11 +306,43 @@ export class StickAnimator {
     return this.state[id];
   }
 
+  /** Fire a one-shot motion overlay on a player (모션 재생 block). Cosmetic only —
+   *  it takes over the visible pose for the motion's duration, then releases. */
+  trigger(id, motion, now) {
+    if (!motion || !Array.isArray(motion.keyframes) || !motion.keyframes.length) return;
+    const s = this._for(id);
+    s.ovMotion = motion; s.ovStart = now;
+    s.ovUntil = now + Math.min(3000, (motion.duration || 0.5) * 1000);
+  }
+
+  /** Scan synced effects for stick_motion triggers (host pushes them; every
+   *  client resolves tag → motion from that player's synced weapon def). Each
+   *  trigger fires once per effect timestamp. */
+  consumeTriggers(effects, players, now) {
+    for (const e of effects || []) {
+      if (!e || e.type !== 'stick_motion' || !e.attackerId) continue;
+      const s = this._for(e.attackerId);
+      if (s.lastTrig === e.timestamp) continue;
+      s.lastTrig = e.timestamp;
+      const p = players[e.attackerId];
+      const m = p && p.workshopWeapon && p.workshopWeapon.motionSet && p.workshopWeapon.motionSet[e.tag];
+      this.trigger(e.attackerId, m, now);
+    }
+  }
+
   /** Advance + sample a player's pose this frame. Returns { pose, motionName }. */
   sample(player, now) {
     const s = this._for(player.id);
     const dt = s.last ? Math.min(0.05, (now - s.last) / 1000) : 0;
     s.last = now;
+
+    // Active overlay (모션 재생) wins over locomotion AND attack — it is an
+    // explicit, block-triggered pose. Ends on its own duration.
+    if (s.ovUntil && now < s.ovUntil && s.ovMotion) {
+      const ph = Math.min(0.999, (now - s.ovStart) / 1000 / (s.ovMotion.duration || 0.5));
+      s.motion = 'overlay';
+      return { pose: samplePose(s.ovMotion, ph), motionName: 'overlay' };
+    }
 
     const setId = sanitizeMotionSetId(player.motionSetId) || weaponSetId(player.weapon);
     const moving = Math.abs(player.vx || 0) > 30;

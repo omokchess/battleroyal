@@ -62,6 +62,7 @@ const DEFS = {
   particle: { cat: 'act', op: 'particle', parts: ['파티클', s('id', 'sel', 'explosion', ['explosion', 'danger_pop'])] },
   sfx: { cat: 'act', op: 'sfx', parts: ['사운드', s('id', 'sel', 'shoot', ['shoot', 'hit', 'slash', 'slam', 'explosion'])] },
   shake: { cat: 'act', op: 'shake', parts: ['화면 흔들림', s('level', 'sel', 'weak', ['weak', 'strong'])] },
+  playMotion: { cat: 'act', op: 'playMotion', parts: ['모션 재생', s('tag', 'sel', 'skill', ['attack|공격', 'run|걷기', 'idle|대기', 'jump|점프', 'dash|대시', 'skill|스킬', 'hurt|피격', 'kill|처치'])] },
   // ── entity-scoped actions (scope 'entity') ──
   setVelocity: { cat: 'act', scope: 'entity', op: 'setVelocity', parts: ['속도 설정 각도', s('angle', 'num', 0), '속도', s('speed', 'num', 400)] },
   homing: { cat: 'act', scope: 'entity', op: 'homing', parts: ['유도 회전', s('turnDeg', 'num', 200), '°/s'] },
@@ -295,7 +296,12 @@ export class BlockEditor {
     }
     const slot = document.createElement('span'); slot.className = 'be-slot'; slot.dataset.a = part.a; slot.dataset.slotType = part.t;
     let inp;
-    if (part.t === 'sel') { inp = document.createElement('select'); inp.className = 'be-sl'; inp.innerHTML = part.o.map(o => `<option>${o}</option>`).join(''); inp.value = part.d; }
+    if (part.t === 'sel') {
+      inp = document.createElement('select'); inp.className = 'be-sl';
+      // options are 'value' or 'value|라벨' (AST stores the value key).
+      inp.innerHTML = part.o.map(o => { const [v, l] = String(o).split('|'); return `<option value="${v}">${l || v}</option>`; }).join('');
+      inp.value = part.d;
+    }
     else if (part.t === 'check') { inp = document.createElement('input'); inp.type = 'checkbox'; inp.checked = !!part.d; }
     else if (part.t === 'text') { inp = document.createElement('input'); inp.className = 'be-sl'; inp.value = part.d ?? ''; }
     else { inp = document.createElement('input'); inp.className = 'be-sl'; inp.value = part.d ?? 0; }

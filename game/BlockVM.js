@@ -41,7 +41,7 @@ const CONTROL_OPS = new Set(['if', 'repeat', 'repeatVar', 'while', 'wait', 'stop
 const ACTION_OPS = new Set([
   'spawnMelee', 'spawnProjectile', 'spawnArea', 'applyStatus', 'knockback',
   'heal', 'dash', 'teleport', 'jump', 'pull', 'spawnPlacement',
-  'particle', 'sfx', 'shake', 'cooldownGate', 'setVar',
+  'particle', 'sfx', 'shake', 'cooldownGate', 'setVar', 'playMotion',
   // Entity-scoped actions (valid inside an `entities` script; the host supplies
   // the entity-acting api, so they are no-ops in the owner-script context).
   'setVelocity', 'homing', 'setGravity', 'setLifetime', 'removeSelf', 'split',
@@ -65,6 +65,8 @@ const VALUE_OPS = new Set([
 // Per-entity lifecycle events for the `entities` section (BlockVM 2.0 axis ①).
 export const ENTITY_EVENTS = new Set(['onSpawn', 'onEntityTick', 'onEntityHit', 'onWallHit', 'onExpire']);
 const STATUS_TYPES = new Set(['bleed', 'burn', 'slow', 'stun']);
+// The fixed motion-tag vocabulary (모션 재생 block) — must match Workshop's motionSet slots.
+const MOTION_TAG_KEYS = new Set(['attack', 'run', 'idle', 'jump', 'dash', 'skill', 'hurt', 'kill']);
 
 const clampNum = (v, lo, hi) => (Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : lo);
 
@@ -324,6 +326,7 @@ export class BlockVM {
         tag: s.tag || '', max: clampNum(Math.floor(this._num(s.max, ctx, S)) || 3, 1, 6),
       }); return;
       case 'particle': api.particle?.(s.id || 'explosion'); return;
+      case 'playMotion': api.playMotion?.({ tag: MOTION_TAG_KEYS.has(s.tag) ? s.tag : 'skill' }); return;
       case 'sfx': api.sfx?.(s.id || 'hit'); return;
       case 'shake': api.shake?.(String(s.level || 'weak')); return;
       case 'cooldownGate': api.cooldownGate?.({ key: s.key || 'g', seconds: clampNum(this._num(s.seconds, ctx, S), 0, 10) }); return;

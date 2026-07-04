@@ -220,6 +220,9 @@ export class Renderer {
     if (state.projectiles && state.projectiles.length) this._drawProjectiles(ctx, camera, cw, ch, state.projectiles, state.players || {});
 
     const players = state.players || {};
+    // 모션 재생 block triggers: resolve tag→motion from each player's synced
+    // weapon def and fire the one-shot pose overlay (idempotent per effect).
+    this._stick.consumeTriggers(state.effects || [], players, now);
     const activeAttacks = this._getActiveAttacks(state.effects || []);
     for (const id in players) {
       const p = players[id];

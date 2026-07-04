@@ -992,10 +992,15 @@
                 <button id="meDelWeapon" class="bg-[#14100b] hover:bg-gray-800 border border-red-500 text-red-300 text-[10px] px-2 py-1 cursor-pointer active:scale-95 whitespace-nowrap">🗑 삭제</button>
               </div>
             </div>
-            <!-- col2: presets -->
+            <!-- col2: my preset library (tagged motions) -->
             <div>
-              <div class="text-[10px] text-gray-300 uppercase mb-1">프리셋 (눌러 적용)</div>
-              <div id="mePresets" class="flex flex-wrap gap-1"></div>
+              <div class="flex items-center gap-1.5 mb-1">
+                <span class="text-[10px] text-gray-300 uppercase">내 프리셋</span>
+                <select id="mePresetTag" class="bg-[#14100b] border border-gray-600 text-white text-[10px] px-1 py-0.5" title="이 모션이 게임에서 쓰일 자리 (블록코딩의 모션 재생 태그)"></select>
+                <button id="mePresetSave" class="bg-[#14100b] hover:bg-gray-800 border border-[#ffd24a] text-[#ffd24a] text-[10px] px-2 py-0.5 cursor-pointer active:scale-95" title="지금 만든 모션을 이 태그의 프리셋으로 저장">💾 프리셋 저장</button>
+              </div>
+              <div id="mePresets" class="flex flex-wrap gap-1 max-h-16 overflow-y-auto"></div>
+              <div class="text-[9px] text-gray-500 mt-0.5 leading-tight">★=장착(무기 저장 시 태그로 함께 실림) · 클릭=불러와 수정 · 태그: 공격/걷기/대기/점프는 자동 적용, 대시/스킬/피격/처치는 블록의 <b class="text-[#45f3ff]">모션 재생</b>으로 발동</div>
             </div>
             <!-- col3: appearance -->
             <div class="border-l border-gray-700 pl-3">

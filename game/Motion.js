@@ -317,12 +317,22 @@ export class StickAnimator {
     const airborne = player.grounded === false;
     const vy = player.vy || 0;
 
+    // Equipped workshop weapon: its tagged motions (fixed vocabulary, sanitized by
+    // clampWorkshopWeapon) override the set's slots — 걷기/대기/점프/공격 태그가
+    // 자동 적용되는 경로. Purely cosmetic; combat reads hitboxes elsewhere.
+    const wsSet = player.workshopWeapon && player.workshopWeapon.motionSet;
+    const tagMotion = (name) => {
+      if (!wsSet) return null;
+      const m = wsSet[name] || (name === 'fall' ? wsSet.jump : null);   // fall falls back to the jump tag
+      return (m && Array.isArray(m.keyframes) && m.keyframes.length) ? m : null;
+    };
+
     // Attack trigger: lastAttackTime advanced this frame → (re)start the swing,
     // using the resolved attack motion's own duration for impact alignment.
     if (player.lastAttackTime && player.lastAttackTime !== s.prevAttack) {
       s.prevAttack = player.lastAttackTime;
       s.attackStart = now;
-      s.attackDur = resolveMotion(setId, 'attack').duration || 0.42;
+      s.attackDur = (tagMotion('attack') || resolveMotion(setId, 'attack')).duration || 0.42;
       s.attackUntil = now + s.attackDur * 1000;
     }
     const attacking = now < s.attackUntil;
@@ -333,7 +343,7 @@ export class StickAnimator {
     else if (moving) motionName = 'run';
     else motionName = 'idle';
 
-    const motion = resolveMotion(setId, motionName);
+    const motion = tagMotion(motionName) || resolveMotion(setId, motionName);
     if (motionName !== s.motion) { s.motion = motionName; s.phase = 0; }
 
     let speedMul = 1;

@@ -38,6 +38,24 @@ const STAT_KEYS = ['damage', 'cooldownMs', 'maxHp', 'moveSpeed', 'range', 'knock
 // Editable weapons (those whose stick attack reads clearly). Kept short on purpose.
 const EDITOR_WEAPONS = ['sword', 'spear', 'hammer', 'katana', 'axe', 'rapier', 'bow', 'scythe'];
 
+// Fixed motion-tag vocabulary (the bridge between authored motions and gameplay /
+// blockcoding). Keys are the engine slot names; labels are what users see.
+// attack/run/idle/jump auto-apply via the StickAnimator; dash/skill/hurt/kill are
+// trigger tags fired by block programs (모션 재생 블록).
+export const MOTION_TAGS = [
+  { key: 'attack', label: '공격' }, { key: 'run', label: '걷기' },
+  { key: 'idle', label: '대기' }, { key: 'jump', label: '점프' },
+  { key: 'dash', label: '대시' }, { key: 'skill', label: '스킬' },
+  { key: 'hurt', label: '피격' }, { key: 'kill', label: '처치' },
+];
+const TAG_LABEL = Object.fromEntries(MOTION_TAGS.map(t => [t.key, t.label]));
+
+// User-authored motion presets: [{ id, name, tag, motion, equipped }]. Saved
+// locally; the equipped one per tag is bundled into the workshop weapon def.
+const STORE_PRESETS = 'psd_motion_presets';
+const loadUserPresets = () => { try { const a = JSON.parse(localStorage.getItem(STORE_PRESETS) || '[]'); return Array.isArray(a) ? a : []; } catch { return []; } };
+const saveUserPresets = (list) => { try { localStorage.setItem(STORE_PRESETS, JSON.stringify(list)); } catch {} };
+
 // User-uploaded weapon images (cosmetic), persisted locally. Each is
 // { id:'custom:…', name, src(dataURL), size(length multiplier) }.
 const CUSTOM_WEAPONS_KEY = 'psd_custom_weapons';
@@ -144,6 +162,7 @@ export class MotionEditor {
     this.tctx = this.timeline?.getContext('2d');
 
     this.weapon = 'sword';
+    this.userPresets = loadUserPresets();       // user-authored tagged motion presets
     this.customWeapons = loadCustomWeapons();   // user-uploaded weapon images (local)
     this._wimgCache = {};                       // id → HTMLImageElement
     this.mode = 'canonical';           // 'canonical' (admin) | 'workshop' (user weapon)
@@ -209,17 +228,12 @@ export class MotionEditor {
       c.size = clamp(parseFloat(e.target.value) || 2, 0.6, 4.5); saveCustomWeapons(this.customWeapons); this._renderPreview();
     });
     $('meDelWeapon')?.addEventListener('click', () => this._delCustomWeapon());
-    // Preset library (Phase D, no-ML path): click a preset to retarget it onto
-    // the current stick instantly; the user can then tweak + save as usual.
-    const presets = $('mePresets');
-    if (presets) {
-      presets.innerHTML = MOTION_PRESETS.map(p =>
-        `<button data-preset="${p.id}" class="me-preset bg-[#14100b] hover:bg-gray-800 border border-[#7df09a] text-[#7df09a] text-[10px] px-2 py-1 cursor-pointer active:scale-95">${p.name}</button>`
-      ).join('');
-      presets.querySelectorAll('.me-preset').forEach(btn => {
-        btn.addEventListener('click', () => this._loadPreset(btn.dataset.preset));
-      });
-    }
+    // Preset library: the user's own tagged motions (save current → library;
+    // click → load; ★ = equipped for its tag; built-ins remain as 예시).
+    const tagSel = $('mePresetTag');
+    if (tagSel) tagSel.innerHTML = MOTION_TAGS.map(t => `<option value="${t.key}">${t.label}</option>`).join('');
+    $('mePresetSave')?.addEventListener('click', () => this._savePreset());
+    this._renderPresetList();
     // Appearance controls (Phase E): live-apply + persist the equipped look.
     const applyLook = (patch) => {
       this.look = saveStickLook({ ...this.look, ...patch });
@@ -399,6 +413,81 @@ export class MotionEditor {
   /** Retarget a library preset onto the current stick (Phase D no-ML path). The
    *  preset is sanitized + its impact re-clamped into the window, exactly like
    *  any other motion, then becomes the working motion to tweak or save. */
+  // --- User preset library (tagged motions → workshop weapon / blockcoding) ---
+  /** Save the CURRENT editor motion as a named, tagged preset. The newest preset
+   *  of a tag is auto-equipped (one equipped per tag → bundled into the weapon). */
+  _savePreset() {
+    const tag = document.getElementById('mePresetTag')?.value || 'attack';
+    const raw = (document.getElementById('meName')?.value || '').trim() || `${TAG_LABEL[tag]} 모션`;
+    const motion = sanitizeMotion(this.motion, undefined, { allowGameplay: true });
+    if (!motion.keyframes.length) { this._setStatus('저장할 키프레임이 없습니다.'); return; }
+    if (this.userPresets.length >= 40) { this._setStatus('프리셋은 최대 40개입니다. 안 쓰는 것을 삭제해 주세요.'); return; }
+    for (const p of this.userPresets) if (p.tag === tag) p.equipped = false;   // one equipped per tag
+    this.userPresets.push({ id: 'p' + Date.now().toString(36), name: raw.slice(0, 20), tag, motion, equipped: true });
+    saveUserPresets(this.userPresets);
+    this._renderPresetList();
+    this._setStatus(`프리셋 "${raw}" 저장됨 [${TAG_LABEL[tag]}] — ★장착 상태. 무기 저장 시 이 태그로 함께 실립니다.`);
+  }
+  /** The equipped motion per tag — bundled into the workshop weapon's motionSet. */
+  _equippedTagMotions() {
+    const out = {};
+    for (const p of this.userPresets) if (p.equipped && p.motion) out[p.tag] = p.motion;
+    return out;
+  }
+  _renderPresetList() {
+    const host = document.getElementById('mePresets'); if (!host) return;
+    host.innerHTML = '';
+    // My presets: [★][name][tag chip][✕]
+    for (const p of this.userPresets) {
+      const row = document.createElement('span');
+      row.className = 'inline-flex items-center gap-1 bg-[#14100b] border px-1.5 py-0.5 text-[10px] cursor-pointer active:scale-95';
+      row.style.borderColor = p.equipped ? '#ffd24a' : '#3f3f46';
+      const star = document.createElement('b'); star.textContent = p.equipped ? '★' : '☆';
+      star.style.color = p.equipped ? '#ffd24a' : '#555'; star.title = '이 태그에 장착 (무기 저장 시 함께 실림)';
+      star.addEventListener('click', (e) => { e.stopPropagation(); this._equipPreset(p.id); });
+      const nm = document.createElement('span'); nm.textContent = p.name; nm.className = 'text-gray-200';
+      const chip = document.createElement('span'); chip.textContent = TAG_LABEL[p.tag] || p.tag;
+      chip.className = 'text-[9px] px-1 rounded'; chip.style.cssText += 'background:#1c6b33;color:#aef0c0';
+      const del = document.createElement('span'); del.textContent = '✕'; del.className = 'text-gray-500 hover:text-red-400 px-0.5';
+      del.addEventListener('click', (e) => { e.stopPropagation(); this._deletePreset(p.id); });
+      row.append(star, nm, chip, del);
+      row.addEventListener('click', () => this._loadUserPreset(p.id));
+      host.appendChild(row);
+    }
+    // Built-in examples (starter library) — smaller, dimmed.
+    for (const p of MOTION_PRESETS) {
+      const b = document.createElement('button');
+      b.className = 'me-preset bg-[#14100b] hover:bg-gray-800 border border-[#7df09a]/40 text-[#7df09a]/70 text-[9px] px-1.5 py-0.5 cursor-pointer active:scale-95';
+      b.textContent = '예시·' + p.name;
+      b.addEventListener('click', () => this._loadPreset(p.id));
+      host.appendChild(b);
+    }
+  }
+  _equipPreset(id) {
+    const target = this.userPresets.find(p => p.id === id); if (!target) return;
+    for (const p of this.userPresets) if (p.tag === target.tag) p.equipped = false;
+    target.equipped = true;
+    saveUserPresets(this.userPresets); this._renderPresetList();
+    this._setStatus(`"${target.name}" 를 [${TAG_LABEL[target.tag]}] 태그에 장착했습니다.`);
+  }
+  _deletePreset(id) {
+    this.userPresets = this.userPresets.filter(p => p.id !== id);
+    saveUserPresets(this.userPresets); this._renderPresetList();
+  }
+  /** Load one of MY presets back into the editor for tweaking. */
+  _loadUserPreset(id) {
+    const p = this.userPresets.find(x => x.id === id); if (!p) return;
+    this.motion = sanitizeMotion(p.motion, undefined, { allowGameplay: true });
+    if (!this.motion.events.some(e => e.type === 'impact')) this.motion.events.push({ t: (HIT_WINDOW.start + HIT_WINDOW.end) / 2, type: 'impact' });
+    this.selKf = 0; this.scrubT = this.motion.keyframes[0]?.t || 0; this.playing = false;
+    const dur = document.getElementById('meDuration'); if (dur) dur.value = String(this.motion.duration);
+    const dv = document.getElementById('meDurationVal'); if (dv) dv.textContent = this.motion.duration.toFixed(2) + 's';
+    const nm = document.getElementById('meName'); if (nm) nm.value = p.name;
+    const ts = document.getElementById('mePresetTag'); if (ts) ts.value = p.tag;
+    this._setStatus(`내 프리셋 "${p.name}" [${TAG_LABEL[p.tag]}] 을 불러왔습니다. 수정 후 다시 저장하세요.`);
+    this._renderAll();
+  }
+
   _loadPreset(id) {
     const preset = MOTION_PRESETS.find(p => p.id === id);
     if (!preset) return;
@@ -831,9 +920,12 @@ export class MotionEditor {
   _saveWorkshop() {
     const raw = (document.getElementById('meName')?.value || '').trim() || `${this.weapon} 공방무기`;
     const { stats, overBudget } = enforceBudget(this.stats);
+    // Bundle the equipped preset of each tag; the editor's current motion stays
+    // the attack unless an 공격-tag preset is explicitly equipped.
+    const tagged = this._equippedTagMotions();
     const def = clampWorkshopWeapon({
       name: raw, color: this.look.color || null, stats,
-      motionSet: { attack: this.motion },
+      motionSet: { attack: this.motion, ...tagged },
       blocks: this.blocks,
     });
     try { localStorage.setItem(STORE_WORKSHOP, JSON.stringify(def)); } catch {}

@@ -247,7 +247,7 @@ export function solveStickman(pose, scale, x, y, facing = 1, opts = {}) {
 
 /** Draw a stick figure from solved screen joints. `aimAngle` only orients the
  *  held weapon. Used by both the game and the editor preview. */
-export function drawStickFromJoints(ctx, sc, headR, { color = '#cdd3da', accent = '#0d0a06', lineW = 3, scale = 14, weapon = 'sword', drawWeapon = true, aimAngle = 0, headShape = 'circle', accessory = 'none' } = {}) {
+export function drawStickFromJoints(ctx, sc, headR, { color = '#cdd3da', accent = '#0d0a06', lineW = 3, scale = 14, weapon = 'sword', drawWeapon = true, aimAngle = 0, headShape = 'circle', accessory = 'none', weaponImage = null, weaponImageSize = 2.0 } = {}) {
   const lw = Math.max(2, lineW * (scale / 14));
   const limb = (a, b, w, col) => {
     ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineCap = 'round';
@@ -261,9 +261,29 @@ export function drawStickFromJoints(ctx, sc, headR, { color = '#cdd3da', accent 
   drawHead(ctx, sc.head, sc.neck, headR, color, accent, Math.max(1, lw * 0.5), headShape, accessory);
   limb(sc.shoulder, sc.elbowN, lw, color); limb(sc.elbowN, sc.handN, lw, color);
   if (drawWeapon && sc.weaponTip) {
-    const wcol = WEAPON_STICK_COLOR[weapon] || color;
-    drawHeldWeapon(ctx, sc.handN, sc.weaponTip, scale, weapon, wcol);
+    if (weaponImage && weaponImage.complete && weaponImage.naturalWidth) {
+      drawImageWeapon(ctx, sc.handN, sc.weaponTip, scale, weaponImage, weaponImageSize);
+    } else {
+      const wcol = WEAPON_STICK_COLOR[weapon] || color;
+      drawHeldWeapon(ctx, sc.handN, sc.weaponTip, scale, weapon, wcol);
+    }
   }
+}
+
+// A user-supplied weapon IMAGE, drawn from the hand along the hand→tip direction
+// (so the weapon joint still aims it), sized by the per-weapon size multiplier.
+// Assumes the image points right (grip at the left edge).
+function drawImageWeapon(ctx, hand, tip, scale, img, sizeMul) {
+  const ang = Math.atan2(tip.y - hand.y, tip.x - hand.x);
+  const len = scale * (sizeMul || 2.0);
+  const ar = (img.naturalHeight / img.naturalWidth) || 0.5;
+  const h = len * ar;
+  ctx.save();
+  ctx.translate(hand.x, hand.y);
+  ctx.rotate(ang);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(img, -len * 0.18, -h / 2, len, h);   // grip sits slightly behind the hand
+  ctx.restore();
 }
 
 // Head shape + optional accessory (cosmetic appearance, Phase E).

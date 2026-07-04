@@ -974,9 +974,18 @@
             <div class="text-[9px] text-gray-500 text-center max-w-[340px] leading-tight">◀ ▶ 로 프레임을 넘기며 한 장씩 포즈를 만드세요. <b class="text-[#9fb0ff]">파란 잔상</b>=이전 프레임. <b class="text-[#7df09a]">＋새 프레임</b>은 지금 포즈를 그대로 이어받습니다.</div>
           </div>
           <div class="flex-1 flex flex-col gap-3 min-w-0 overflow-y-auto">
-            <div class="flex items-center gap-2">
-              <label class="text-[11px] text-gray-300 uppercase">무기</label>
-              <select id="meWeapon" class="bg-[#14100b] border border-gray-600 text-white text-xs px-2 py-1 flex-1"></select>
+            <div class="flex flex-col gap-1.5">
+              <div class="flex items-center gap-2">
+                <label class="text-[11px] text-gray-300 uppercase">무기</label>
+                <select id="meWeapon" class="bg-[#14100b] border border-gray-600 text-white text-xs px-2 py-1 flex-1"></select>
+                <button id="meAddWeapon" class="bg-[#14100b] hover:bg-gray-800 border border-[#45f3ff] text-[#45f3ff] text-[10px] px-2 py-1.5 uppercase cursor-pointer active:scale-95 whitespace-nowrap" title="내 무기 이미지를 직접 추가">＋ 이미지</button>
+                <input id="meWeaponFile" type="file" accept="image/*" class="hidden" />
+              </div>
+              <div id="meWeaponSizeWrap" class="hidden flex items-center gap-2">
+                <label class="text-[10px] text-gray-400 whitespace-nowrap">무기 크기</label>
+                <input id="meWeaponSize" type="range" min="0.6" max="4.5" step="0.05" value="2" class="flex-1" />
+                <button id="meDelWeapon" class="bg-[#14100b] hover:bg-gray-800 border border-red-500 text-red-300 text-[10px] px-2 py-1 cursor-pointer active:scale-95 whitespace-nowrap">🗑 무기 삭제</button>
+              </div>
             </div>
             <div>
               <div class="text-[10px] text-gray-300 uppercase mb-1">프리셋 (눌러 바로 적용)</div>

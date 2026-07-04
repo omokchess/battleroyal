@@ -38,6 +38,13 @@ const STAT_KEYS = ['damage', 'cooldownMs', 'maxHp', 'moveSpeed', 'range', 'knock
 // Editable weapons (those whose stick attack reads clearly). Kept short on purpose.
 const EDITOR_WEAPONS = ['sword', 'spear', 'hammer', 'katana', 'axe', 'rapier', 'bow', 'scythe'];
 
+// User-uploaded weapon images (cosmetic), persisted locally. Each is
+// { id:'custom:…', name, src(dataURL), size(length multiplier) }.
+const CUSTOM_WEAPONS_KEY = 'psd_custom_weapons';
+const loadCustomWeapons = () => { try { const a = JSON.parse(localStorage.getItem(CUSTOM_WEAPONS_KEY) || '[]'); return Array.isArray(a) ? a : []; } catch { return []; } };
+const saveCustomWeapons = (list) => { try { localStorage.setItem(CUSTOM_WEAPONS_KEY, JSON.stringify(list)); } catch {} };
+const escOpt = (s) => String(s).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+
 // Which pose joint + parent joint each draggable handle controls.
 const HANDLES = [
   { name: 'neck',   joint: 'spine',     parent: 'pelvis' },
@@ -137,6 +144,8 @@ export class MotionEditor {
     this.tctx = this.timeline?.getContext('2d');
 
     this.weapon = 'sword';
+    this.customWeapons = loadCustomWeapons();   // user-uploaded weapon images (local)
+    this._wimgCache = {};                       // id → HTMLImageElement
     this.mode = 'canonical';           // 'canonical' (admin) | 'workshop' (user weapon)
     this.stats = clampWorkshopStats({});
     this.blocks = null;                // workshop weapon's block-gimmick AST
@@ -189,9 +198,17 @@ export class MotionEditor {
     });
     const wsel = $('meWeapon');
     if (wsel) {
-      wsel.innerHTML = EDITOR_WEAPONS.map(w => `<option value="${w}">${w}</option>`).join('');
-      wsel.addEventListener('change', () => { this.weapon = wsel.value; this._loadTemplate(); });
+      this._populateWeaponSelect();
+      wsel.addEventListener('change', () => { this.weapon = wsel.value; this._syncWeaponUI(); this._loadTemplate(); });
     }
+    // Custom weapon image: add / resize / delete.
+    $('meAddWeapon')?.addEventListener('click', () => $('meWeaponFile')?.click());
+    $('meWeaponFile')?.addEventListener('change', (e) => this._onWeaponFile(e));
+    $('meWeaponSize')?.addEventListener('input', (e) => {
+      const c = this._customWeapon(this.weapon); if (!c) return;
+      c.size = clamp(parseFloat(e.target.value) || 2, 0.6, 4.5); saveCustomWeapons(this.customWeapons); this._renderPreview();
+    });
+    $('meDelWeapon')?.addEventListener('click', () => this._delCustomWeapon());
     // Preset library (Phase D, no-ML path): click a preset to retarget it onto
     // the current stick instantly; the user can then tweak + save as usual.
     const presets = $('mePresets');
@@ -256,6 +273,8 @@ export class MotionEditor {
       this._renderBudget();
       this._updateBlockCount();
     }
+    this._populateWeaponSelect();
+    this._syncWeaponUI();
     this._loadTemplate();
     this._syncOnionBtn();
     this.root.classList.remove('hidden');
@@ -292,6 +311,68 @@ export class MotionEditor {
     this.playing = false;
     if (this._raf) cancelAnimationFrame(this._raf);
     this.root?.classList.add('hidden');
+  }
+
+  // --- Custom weapon images --------------------------------------------------
+  _populateWeaponSelect() {
+    const wsel = document.getElementById('meWeapon'); if (!wsel) return;
+    const base = EDITOR_WEAPONS.map(w => `<option value="${w}">${w}</option>`).join('');
+    const custom = this.customWeapons.length
+      ? `<optgroup label="내 무기 이미지">${this.customWeapons.map(c => `<option value="${escOpt(c.id)}">🖼 ${escOpt(c.name)}</option>`).join('')}</optgroup>`
+      : '';
+    wsel.innerHTML = base + custom;
+    wsel.value = this.weapon;
+  }
+  _customWeapon(id) { return this.customWeapons.find(c => c.id === id) || null; }
+  /** The (lazily loaded) Image for the current weapon, or null for a built-in. */
+  _weaponImage() {
+    const c = this._customWeapon(this.weapon); if (!c) return null;
+    let img = this._wimgCache[c.id];
+    if (!img) { img = new Image(); img.onload = () => { if (!this.playing) this._renderPreview(); }; img.src = c.src; this._wimgCache[c.id] = img; }
+    return img;
+  }
+  /** Show/hide the size slider + delete button for the current weapon. */
+  _syncWeaponUI() {
+    const c = this._customWeapon(this.weapon);
+    const wrap = document.getElementById('meWeaponSizeWrap');
+    if (wrap) wrap.classList.toggle('hidden', !c);
+    const sl = document.getElementById('meWeaponSize'); if (sl && c) sl.value = String(c.size ?? 2.0);
+  }
+  _onWeaponFile(e) {
+    const file = e.target.files && e.target.files[0]; e.target.value = '';
+    if (!file) return;
+    if (!/^image\//.test(file.type)) { this._setStatus('이미지 파일만 넣을 수 있어요 (PNG 권장).'); return; }
+    const reader = new FileReader();
+    reader.onload = () => this._addWeaponImage(String(reader.result), (file.name || '무기').replace(/\.[^.]+$/, '').slice(0, 16) || '무기');
+    reader.onerror = () => this._setStatus('파일을 읽지 못했어요.');
+    reader.readAsDataURL(file);
+  }
+  /** Downscale (≤256px, keeps localStorage small) then register + select. */
+  _addWeaponImage(dataUrl, name) {
+    const img = new Image();
+    img.onload = () => {
+      const max = 256; let w = img.naturalWidth || 64, h = img.naturalHeight || 64;
+      if (Math.max(w, h) > max) { const s = max / Math.max(w, h); w = Math.round(w * s); h = Math.round(h * s); }
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+      cv.getContext('2d').drawImage(img, 0, 0, w, h);
+      let src = dataUrl; try { src = cv.toDataURL('image/png'); } catch { /* tainted? keep original */ }
+      const rec = { id: 'custom:' + Date.now().toString(36), name, src, size: 2.0 };
+      this.customWeapons.push(rec); saveCustomWeapons(this.customWeapons);
+      this.weapon = rec.id;
+      this._populateWeaponSelect(); this._syncWeaponUI();
+      this._loadTemplate();
+      this._setStatus('무기 이미지 추가됨! 주황 점을 끌어 방향을, 슬라이더로 크기를 맞추세요.');
+    };
+    img.onerror = () => this._setStatus('이미지를 불러오지 못했어요.');
+    img.src = dataUrl;
+  }
+  _delCustomWeapon() {
+    const c = this._customWeapon(this.weapon); if (!c) return;
+    this.customWeapons = this.customWeapons.filter(x => x.id !== c.id);
+    saveCustomWeapons(this.customWeapons); delete this._wimgCache[c.id];
+    this.weapon = 'sword';
+    this._populateWeaponSelect(); this._syncWeaponUI(); this._loadTemplate();
+    this._setStatus('무기 이미지를 삭제했습니다.');
   }
 
   _loadTemplate() {
@@ -416,6 +497,8 @@ export class MotionEditor {
 
     const scale = 46;
     const cx = W / 2, cyCenter = H - 30 - scale * 1.28; // body centre so feet sit on the ground line
+    const wimg = this._weaponImage();                         // custom weapon image (or null)
+    const wsize = this._customWeapon(this.weapon)?.size ?? 2.0;
 
     // Onion skin: the PREVIOUS frame's pose, drawn faint + blue behind the current
     // one, so you can see what the stickman did last and build the next pose from it.
@@ -424,7 +507,7 @@ export class MotionEditor {
       if (prev) {
         const pj = solveStickman({ ...STICK_NEUTRAL, ...prev.pose }, scale, cx, cyCenter, 1, { rawNearArm: true, weapon: this.weapon });
         ctx.save(); ctx.globalAlpha = 0.3;
-        drawStickFromJoints(ctx, pj.joints, pj.headR, { color: '#6f8cff', accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory });
+        drawStickFromJoints(ctx, pj.joints, pj.headR, { color: '#6f8cff', accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory, weaponImage: wimg, weaponImageSize: wsize });
         ctx.restore();
       }
     }
@@ -432,7 +515,7 @@ export class MotionEditor {
     const pose = this._displayPose();
     const { joints, headR } = solveStickman(pose, scale, cx, cyCenter, 1, { rawNearArm: true, weapon: this.weapon });
     const color = this.look.color || WEAPON_STICK_COLOR[this.weapon] || '#cdd3da';
-    drawStickFromJoints(ctx, joints, headR, { color, accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory });
+    drawStickFromJoints(ctx, joints, headR, { color, accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory, weaponImage: wimg, weaponImageSize: wsize });
 
     // Joint handles (only when a keyframe is selected & not playing).
     if (!this.playing && this.motion.keyframes[this.selKf]) {

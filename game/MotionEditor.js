@@ -495,7 +495,7 @@ export class MotionEditor {
     ctx.strokeStyle = '#3b3a44'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(0, H - 30); ctx.lineTo(W, H - 30); ctx.stroke();
 
-    const scale = 46;
+    const scale = Math.round(H * 0.114);                // stickman scales with the canvas (404→46)
     const cx = W / 2, cyCenter = H - 30 - scale * 1.28; // body centre so feet sit on the ground line
     const wimg = this._weaponImage();                         // custom weapon image (or null)
     const wsize = this._customWeapon(this.weapon)?.size ?? 2.0;

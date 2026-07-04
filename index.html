@@ -948,96 +948,97 @@
           <button id="meClose" class="text-gray-400 hover:text-white font-mono text-lg leading-none px-2 cursor-pointer">✕</button>
         </div>
         <p class="text-[10px] text-gray-400 mb-1.5 px-3 leading-snug">관절(<b class="text-[#7df09a]">초록 점</b>)·무기(<b style="color:#ffa050">주황 점</b>)를 끌어 포즈를 만들고 <b class="text-[#c9a227]">◀ ▶</b>로 프레임을 넘기며 <b class="text-[#7df09a]">＋키프레임</b>으로 저장하세요. 모션은 겉모습일 뿐 — 사거리·데미지·쿨타임은 안 바뀝니다.</p>
-        <div class="flex-1 flex flex-row gap-3 min-h-0 overflow-hidden px-3 pb-3">
-          <!-- LEFT: pose the stickman (canvas → frame flip → keyframe) -->
-          <div class="flex flex-col items-center gap-2 shrink-0" style="width:352px">
-            <canvas id="meCanvas" width="340" height="404" class="bg-[#14100b] border-2 border-gray-600 touch-none"></canvas>
-            <!-- Frame flip (page through frames, onion skin) -->
-            <div class="w-full flex items-center justify-center gap-1.5 text-[11px] bg-[#0d0a06] border border-gray-700 rounded py-1.5">
-              <button id="mePrevFrame" class="bg-[#14100b] hover:bg-gray-800 border border-[#c9a227] text-[#c9a227] px-2.5 py-1 cursor-pointer active:scale-95" title="이전 프레임 (←)">◀</button>
-              <span class="text-gray-300 px-1">프레임 <b id="meFrameLabel" class="text-[#ffd24a]">1 / 1</b></span>
-              <button id="meNextFrame" class="bg-[#14100b] hover:bg-gray-800 border border-[#c9a227] text-[#c9a227] px-2.5 py-1 cursor-pointer active:scale-95" title="다음 프레임 (→)">▶</button>
-              <button id="meNewFrame" class="bg-[#14100b] hover:bg-gray-800 border border-[#7df09a] text-[#7df09a] text-[10px] px-2 py-1 cursor-pointer active:scale-95" title="현재 포즈를 이어받은 새 프레임">＋새</button>
-              <button id="meOnion" class="bg-[#14100b] hover:bg-gray-800 border border-[#6f8cff] text-[#9fb0ff] text-[10px] px-2 py-1 cursor-pointer active:scale-95" title="이전 프레임 잔상(오니언스킨) 켜기/끄기">🧅</button>
-            </div>
-            <!-- Keyframe add (green) / delete / play -->
-            <div class="w-full grid grid-cols-3 gap-1.5">
-              <button id="meAddKf" class="bg-[#1c6b33]/40 hover:bg-[#1c6b33]/70 border-2 border-[#7df09a] text-[#7df09a] text-[11px] py-2 uppercase font-bold cursor-pointer active:scale-95">＋ 키프레임</button>
-              <button id="meDelKf" class="bg-[#14100b] hover:bg-gray-800 border border-red-500 text-red-300 text-[10px] py-2 uppercase cursor-pointer active:scale-95">－ 키프레임</button>
-              <button id="mePlay" class="bg-[#14100b] hover:bg-gray-800 border border-[#45f3ff] text-[#45f3ff] text-[10px] py-2 uppercase cursor-pointer active:scale-95">▶ 재생</button>
-            </div>
-            <div class="w-full flex items-center gap-2">
-              <button id="meCapture" class="bg-[#14100b] hover:bg-gray-800 border border-[#45f3ff] text-[#45f3ff] text-[10px] px-3 py-1.5 uppercase cursor-pointer active:scale-95 whitespace-nowrap">📷 웹캠 캡처</button>
-              <span class="text-[9px] text-gray-500 leading-tight flex-1">카메라로 포즈를 따 모션으로</span>
+        <div class="flex-1 flex flex-col gap-2 min-h-0 overflow-hidden px-3 pb-3">
+          <!-- TOP (파란 영역): the stickman posing box — big canvas, frame flip at
+               top-left (하얀 박스) with ＋키프레임 right under it (연두 박스). -->
+          <div class="flex-1 min-h-0 flex gap-3 bg-[#14100b] border-2 border-gray-600 rounded p-2">
+            <div class="w-52 shrink-0 flex flex-col gap-2 overflow-y-auto">
+              <!-- frame flip (하얀 박스 위치) -->
+              <div class="bg-[#0d0a06] border border-gray-500 rounded py-1.5 px-2 flex items-center justify-center gap-1.5 text-[11px]">
+                <button id="mePrevFrame" class="bg-[#14100b] hover:bg-gray-800 border border-[#c9a227] text-[#c9a227] px-2.5 py-1 cursor-pointer active:scale-95" title="이전 프레임 (←)">◀</button>
+                <span class="text-gray-300">프레임 <b id="meFrameLabel" class="text-[#ffd24a]">1 / 1</b></span>
+                <button id="meNextFrame" class="bg-[#14100b] hover:bg-gray-800 border border-[#c9a227] text-[#c9a227] px-2.5 py-1 cursor-pointer active:scale-95" title="다음 프레임 (→)">▶</button>
+              </div>
+              <!-- ＋키프레임 (연두 박스 위치) -->
+              <button id="meAddKf" class="w-full bg-[#1c6b33]/40 hover:bg-[#1c6b33]/70 border-2 border-[#7df09a] text-[#7df09a] text-[12px] py-2.5 uppercase font-bold cursor-pointer active:scale-95">＋ 키프레임</button>
+              <button id="meNewFrame" class="w-full bg-[#14100b] hover:bg-gray-800 border border-[#7df09a]/60 text-[#7df09a] text-[10px] py-1.5 cursor-pointer active:scale-95" title="현재 포즈를 이어받은 새 프레임">＋ 새 프레임 (포즈 이어받기)</button>
+              <div class="grid grid-cols-2 gap-1.5">
+                <button id="meDelKf" class="bg-[#14100b] hover:bg-gray-800 border border-red-500 text-red-300 text-[10px] py-1.5 uppercase cursor-pointer active:scale-95">－ 키프레임</button>
+                <button id="mePlay" class="bg-[#14100b] hover:bg-gray-800 border border-[#45f3ff] text-[#45f3ff] text-[10px] py-1.5 uppercase cursor-pointer active:scale-95">▶ 재생</button>
+              </div>
+              <button id="meOnion" class="w-full bg-[#14100b] hover:bg-gray-800 border border-[#6f8cff] text-[#9fb0ff] text-[10px] py-1.5 cursor-pointer active:scale-95" title="이전 프레임 잔상(오니언스킨) 켜기/끄기">🧅 잔상 (이전 프레임)</button>
+              <button id="meCapture" class="w-full bg-[#14100b] hover:bg-gray-800 border border-[#45f3ff] text-[#45f3ff] text-[10px] py-1.5 uppercase cursor-pointer active:scale-95">📷 웹캠 캡처</button>
               <video id="meVideo" class="hidden" width="160" height="120" playsinline muted></video>
+              <div class="text-[9px] text-gray-500 leading-tight">◀ ▶ (←/→키)로 프레임을 넘기며 포즈를 만드세요. <b class="text-[#9fb0ff]">파란 잔상</b>=이전 프레임. <b class="text-[#7df09a]">＋새 프레임</b>은 지금 포즈를 그대로 이어받습니다.</div>
             </div>
-            <div class="text-[9px] text-gray-500 text-center leading-tight"><b class="text-[#9fb0ff]">파란 잔상</b>=이전 프레임 · <b class="text-[#7df09a]">＋새</b>는 지금 포즈를 이어받음</div>
+            <div class="flex-1 flex items-center justify-center min-w-0 min-h-0">
+              <canvas id="meCanvas" width="620" height="470" class="max-h-full max-w-full bg-[#14100b] touch-none"></canvas>
+            </div>
           </div>
 
-          <!-- RIGHT: everything else, compact so it fits without scrolling -->
-          <div class="flex-1 min-w-0 grid grid-cols-2 gap-x-4 gap-y-2 content-start auto-rows-min overflow-y-auto">
-            <!-- weapon (full width) -->
-            <div class="col-span-2 flex flex-col gap-1.5">
+          <!-- BOTTOM (빨간 영역): everything else, packed to avoid scrolling -->
+          <div class="shrink-0 grid grid-cols-3 gap-x-4 gap-y-1.5 content-start overflow-y-auto" style="max-height:48%">
+            <!-- col1: weapon -->
+            <div class="flex flex-col gap-1.5">
               <div class="flex items-center gap-2">
                 <label class="text-[11px] text-gray-300 uppercase">무기</label>
-                <select id="meWeapon" class="bg-[#14100b] border border-gray-600 text-white text-xs px-2 py-1 flex-1"></select>
+                <select id="meWeapon" class="bg-[#14100b] border border-gray-600 text-white text-xs px-2 py-1 flex-1 min-w-0"></select>
                 <button id="meAddWeapon" class="bg-[#14100b] hover:bg-gray-800 border border-[#45f3ff] text-[#45f3ff] text-[10px] px-2 py-1.5 uppercase cursor-pointer active:scale-95 whitespace-nowrap" title="내 무기 이미지를 직접 추가">＋ 이미지</button>
                 <input id="meWeaponFile" type="file" accept="image/*" class="hidden" />
               </div>
               <div id="meWeaponSizeWrap" class="hidden flex items-center gap-2">
                 <label class="text-[10px] text-gray-400 whitespace-nowrap">무기 크기</label>
-                <input id="meWeaponSize" type="range" min="0.6" max="4.5" step="0.05" value="2" class="flex-1" />
-                <button id="meDelWeapon" class="bg-[#14100b] hover:bg-gray-800 border border-red-500 text-red-300 text-[10px] px-2 py-1 cursor-pointer active:scale-95 whitespace-nowrap">🗑 무기 삭제</button>
+                <input id="meWeaponSize" type="range" min="0.6" max="4.5" step="0.05" value="2" class="flex-1 min-w-0" />
+                <button id="meDelWeapon" class="bg-[#14100b] hover:bg-gray-800 border border-red-500 text-red-300 text-[10px] px-2 py-1 cursor-pointer active:scale-95 whitespace-nowrap">🗑 삭제</button>
               </div>
             </div>
-            <!-- timeline + duration (full width) -->
-            <div class="col-span-2">
-              <div class="text-[10px] text-gray-300 uppercase mb-1">타임라인 (판정 창 = 초록)</div>
-              <canvas id="meTimeline" width="380" height="60" class="w-full bg-[#0d0a06] border border-gray-600 touch-none"></canvas>
-              <div class="flex items-center gap-2 mt-1">
-                <label class="text-[11px] text-gray-300 uppercase">길이</label>
-                <input id="meDuration" type="range" min="0.2" max="1.5" step="0.02" value="0.42" class="flex-1" />
-                <span id="meDurationVal" class="text-[11px] text-[#e8d5a3] w-12 text-right">0.42s</span>
-              </div>
-            </div>
-            <!-- presets (left) -->
+            <!-- col2: presets -->
             <div>
               <div class="text-[10px] text-gray-300 uppercase mb-1">프리셋 (눌러 적용)</div>
-              <div id="mePresets" class="flex flex-wrap gap-1.5"></div>
+              <div id="mePresets" class="flex flex-wrap gap-1"></div>
             </div>
-            <!-- appearance (right) -->
+            <!-- col3: appearance -->
             <div class="border-l border-gray-700 pl-3">
-              <div class="text-[10px] text-gray-300 uppercase mb-1.5">외형 (즉시 장착)</div>
-              <div class="grid grid-cols-2 gap-x-2 gap-y-1.5 text-[11px]">
+              <div class="text-[10px] text-gray-300 uppercase mb-1">외형 (즉시 장착)</div>
+              <div class="grid grid-cols-2 gap-x-2 gap-y-1 text-[11px]">
                 <label class="flex items-center gap-1.5 text-gray-300">색
                   <input id="meColor" type="color" value="#7df09a" class="w-7 h-6 bg-transparent border border-gray-600 cursor-pointer" />
                   <button id="meColorClear" class="text-[9px] text-gray-500 underline cursor-pointer">기본</button>
                 </label>
                 <label class="flex items-center gap-1.5 text-gray-300">두께
-                  <input id="meLineW" type="range" min="2" max="6" step="1" value="3" class="flex-1" />
+                  <input id="meLineW" type="range" min="2" max="6" step="1" value="3" class="flex-1 min-w-0" />
                 </label>
                 <label class="flex items-center gap-1.5 text-gray-300">머리
-                  <select id="meHead" class="bg-[#14100b] border border-gray-600 text-white px-1 py-0.5 flex-1">
+                  <select id="meHead" class="bg-[#14100b] border border-gray-600 text-white px-1 py-0.5 flex-1 min-w-0">
                     <option value="circle">원</option><option value="square">사각</option><option value="diamond">마름모</option>
                   </select>
                 </label>
                 <label class="flex items-center gap-1.5 text-gray-300">악세
-                  <select id="meAccessory" class="bg-[#14100b] border border-gray-600 text-white px-1 py-0.5 flex-1">
+                  <select id="meAccessory" class="bg-[#14100b] border border-gray-600 text-white px-1 py-0.5 flex-1 min-w-0">
                     <option value="none">없음</option><option value="horns">뿔</option><option value="antenna">안테나</option><option value="halo">후광</option><option value="crown">왕관</option>
                   </select>
                 </label>
               </div>
             </div>
-            <!-- hitbox (full width) -->
-            <div class="col-span-2 border-t border-gray-700 pt-1.5">
+            <!-- row2: timeline (wide) + hitbox -->
+            <div class="col-span-2">
+              <div class="text-[10px] text-gray-300 uppercase mb-0.5">타임라인 (판정 창 = 초록)</div>
+              <canvas id="meTimeline" width="760" height="56" class="w-full bg-[#0d0a06] border border-gray-600 touch-none"></canvas>
+              <div class="flex items-center gap-2 mt-0.5">
+                <label class="text-[11px] text-gray-300 uppercase">길이</label>
+                <input id="meDuration" type="range" min="0.2" max="1.5" step="0.02" value="0.42" class="flex-1 min-w-0" />
+                <span id="meDurationVal" class="text-[11px] text-[#e8d5a3] w-12 text-right">0.42s</span>
+              </div>
+            </div>
+            <div class="border-l border-gray-700 pl-3">
               <div class="flex items-center justify-between mb-1">
-                <span class="text-[10px] text-[#ff7a5a] uppercase font-bold">⚔ 히트박스 (정본 · 판정)</span>
+                <span class="text-[10px] text-[#ff7a5a] uppercase font-bold">⚔ 히트박스</span>
                 <button id="meAddHitbox" class="bg-[#14100b] hover:bg-gray-800 border border-[#ff7a5a] text-[#ff7a5a] text-[10px] px-2 py-1 uppercase cursor-pointer active:scale-95">＋ 추가</button>
               </div>
-              <div class="text-[9px] text-gray-500 leading-tight">빨간 상자 = 실제 타격 판정 영역(끌어 이동 / 모서리로 크기). 타임라인 <b style="color:#ff7a5a">주황 띠</b>가 활성 구간.</div>
+              <div class="text-[9px] text-gray-500 leading-tight">빨간 상자 = 타격 판정(끌어 이동/모서리 크기). 타임라인 <b style="color:#ff7a5a">주황 띠</b>=활성 구간.</div>
             </div>
             <!-- Workshop weapon stats (Tier 2) — workshop mode only; 4-col to stay short. -->
-            <div id="meStatsPanel" class="col-span-2 hidden border-t border-[#ffb070]/40 pt-1.5">
+            <div id="meStatsPanel" class="col-span-3 hidden border-t border-[#ffb070]/40 pt-1.5">
               <div class="flex items-center justify-between mb-1.5">
                 <span class="text-[11px] text-[#ffb070] uppercase font-bold">🔧 무기 스탯 (봉투 내)</span>
                 <span class="text-[10px] text-gray-400">예산 <b id="meBudgetVal" class="text-[#7df09a]">0</b>/100</span>
@@ -1055,13 +1056,13 @@
               </div>
               <button id="meBlockBtn" class="w-full mt-2 bg-[#14100b] hover:bg-gray-800 border border-[#45f3ff] text-[#45f3ff] text-[10px] py-2 uppercase cursor-pointer active:scale-95">⚙ 기믹 코딩 (블록) <span id="meBlockCount" class="text-gray-400 normal-case"></span></button>
             </div>
-            <!-- name + reset + save (full width) -->
-            <div class="col-span-2 flex items-center gap-2">
+            <!-- name + reset + save + status (full width) -->
+            <div class="col-span-3 flex items-center gap-2">
               <input id="meName" type="text" maxlength="24" placeholder="모션 이름" class="w-40 shrink-0 bg-[#14100b] border border-gray-600 text-white text-xs px-2 py-1.5" />
               <button id="meReset" class="bg-[#14100b] hover:bg-gray-800 border border-gray-500 text-gray-300 text-[10px] px-3 py-1.5 uppercase cursor-pointer active:scale-95 whitespace-nowrap">초기화</button>
-              <button id="meSave" class="flex-1 bg-gradient-to-r from-[#3aa856] to-[#1c6b33] hover:from-[#4cc96b] hover:to-[#175a2a] border-2 border-[#7df09a] text-white text-xs px-4 py-2 uppercase tracking-wider cursor-pointer font-extrabold active:scale-95 transition-transform">저장 + 장착</button>
+              <button id="meSave" class="w-56 bg-gradient-to-r from-[#3aa856] to-[#1c6b33] hover:from-[#4cc96b] hover:to-[#175a2a] border-2 border-[#7df09a] text-white text-xs px-4 py-2 uppercase tracking-wider cursor-pointer font-extrabold active:scale-95 transition-transform">저장 + 장착</button>
+              <div id="meStatus" class="flex-1 text-[10px] text-gray-400 leading-snug min-w-0"></div>
             </div>
-            <div id="meStatus" class="col-span-2 text-[10px] text-gray-400 leading-snug min-h-[18px]"></div>
           </div>
         </div>
       </div>

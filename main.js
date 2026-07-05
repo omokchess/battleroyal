@@ -1240,6 +1240,9 @@ function ensureMotionEditor() {
   };
   return motionEditor;
 }
+// Shop 🔧 워크샵 tab: browse/equip other players' workshop weapons in the shop.
+accountUI.setWorkshopTabRenderer?.((el) => renderWorkshopList(el));
+
 // Workshop weapon creator (all users) — opens the editor in workshop mode.
 const workshopBtn = document.getElementById('workshopBtn');
 if (workshopBtn) workshopBtn.addEventListener('click', () => {

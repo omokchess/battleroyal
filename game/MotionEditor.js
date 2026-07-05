@@ -61,7 +61,7 @@ const ME_TUT_STEPS = [
   { target: 'meCanvas', title: '① 포즈 만들기', text: '스틱맨의 <b style="color:#7df09a">초록 점(관절)</b>과 <b style="color:#ffa050">주황 점(무기)</b>을 끌어 공격 시작 포즈를 만들어 보세요.', auto: 'joint' },
   { target: 'meNewFrame', title: '② 다음 장 만들기', text: '<b style="color:#7df09a">＋ 새 프레임</b>을 누르면 지금 포즈를 그대로 이어받은 다음 장이 생겨요. 조금씩 바꿔 휘두르는 동작을 완성하세요. (◀ ▶로 장 넘기기)', auto: 'newframe' },
   { target: 'mePlay', title: '③ 재생해 보기', text: '<b style="color:#45f3ff">▶ 재생</b>으로 동작이 자연스러운지 확인하세요. 파란 잔상은 이전 장의 포즈예요.', auto: 'play' },
-  { target: 'meStatsPanel', title: '④ 무기 스탯 정하기', text: '오른쪽에서 데미지·사거리 등을 조절하세요. 모든 무기는 <b style="color:#7df09a">예산 70점</b> 안에서만 강해질 수 있어 공정합니다.', auto: 'stat' },
+  { target: 'meStatsPanel', title: '④ 무기 스탯 정하기', text: '오른쪽에서 데미지·사거리 등을 조절하세요. 모든 무기는 <b style="color:#7df09a">예산 100점</b> 안에서만 강해질 수 있어 공정합니다.', auto: 'stat' },
   { target: 'meSave', title: '⑤ 저장 + 장착!', text: '<b style="color:#7df09a">저장 + 장착</b>을 누르면 내 무기가 되고, <b style="color:#ffb070">워크샵에 공유</b>되어 다른 유저도 장착할 수 있어요. (⚙ 기믹 코딩으로 특수능력도 만들 수 있어요!)', auto: 'save' },
 ];
 

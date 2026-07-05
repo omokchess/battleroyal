@@ -75,6 +75,11 @@ const SHOP_CATEGORIES = [
   { key: 'title',      label: '칭호' },
 ];
 
+// 워크샵 탭: 다른 유저가 만든 공방 무기를 상점에서 바로 둘러보고 장착. 렌더러는
+// main.js가 주입한다 (renderWorkshopList가 게임 쪽 장착/사운드에 의존하므로).
+let workshopTabRenderer = null;
+export function setWorkshopTabRenderer(fn) { workshopTabRenderer = typeof fn === 'function' ? fn : null; }
+
 // ── DOM 헬퍼 ────────────────────────────────────────────────
 const $ = (id) => document.getElementById(id);
 
@@ -642,13 +647,17 @@ function renderShop() {
 
   const cats = SHOP_CATEGORIES.filter((c) => items.some((i) => i.category === c.key));
   const activeCats = cats.length ? cats : SHOP_CATEGORIES.slice(0, 1);
+  // 워크샵 탭은 카탈로그 아이템과 무관하게 항상 노출 (렌더러가 주입된 경우).
+  if (workshopTabRenderer) activeCats.push({ key: 'workshop', label: '🔧 워크샵' });
   if (!activeCats.some((c) => c.key === activeCategory)) activeCategory = activeCats[0].key;
 
   const tabs = activeCats.map((c) => `
     <button data-cat="${c.key}" class="px-2.5 py-1 text-[10px] font-mono uppercase border-2 cursor-pointer active:scale-95 transition-all ${c.key === activeCategory ? 'border-[#45f3ff] text-[#45f3ff] bg-[#0b3038]' : 'border-gray-700 text-gray-400 hover:border-gray-500'}">${c.label}</button>`).join('');
 
   let content;
-  if (activeCategory === 'weaponskin') {
+  if (activeCategory === 'workshop') {
+    content = '<div id="shopWorkshopHost" class="col-span-full"></div>';
+  } else if (activeCategory === 'weaponskin') {
     content = renderWeaponSkinTab();
   } else {
     const catItems = items
@@ -661,6 +670,7 @@ function renderShop() {
   body.innerHTML = `
     <div class="col-span-full flex flex-wrap gap-1.5 mb-3">${tabs}</div>
     ${content}`;
+  if (activeCategory === 'workshop') workshopTabRenderer?.($('shopWorkshopHost'));
 
   body.querySelectorAll('[data-cat]').forEach((el) =>
     el.addEventListener('click', () => { activeCategory = el.getAttribute('data-cat'); renderShop(); }));

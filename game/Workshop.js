@@ -40,7 +40,7 @@ export const ENVELOPE = {
 };
 
 export const VALID_STATUS = new Set(['none', 'slow', 'bleed', 'burn', 'stun']);
-export const POINT_BUDGET = 70;
+export const POINT_BUDGET = 100;
 
 const clampNum = (v, [lo, hi], dflt) => (Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : dflt);
 
@@ -87,7 +87,10 @@ export function statCost(stats) {
   const spd = norm(s.moveSpeed, ENVELOPE.moveSpeed);
   const kb = norm(s.knockback, ENVELOPE.knockback);
   const status = s.status !== 'none' ? (0.5 + 0.5 * norm(s.statusDurationMs, ENVELOPE.statusDurationMs)) : 0;
-  return Math.round(100 * (0.34 * dmg + 0.24 * rate + 0.14 * range + 0.12 * hp + 0.10 * spd + 0.06 * kb + 0.14 * status));
+  // 1000/7 scale: the budget reads as a friendly 100 points, but every cost is
+  // ×10/7 so the RATIO of build power to budget is identical to the old
+  // 70-point balance (a balanced build ~57/100, maxing everything ~163/100).
+  return Math.round((1000 / 7) * (0.34 * dmg + 0.24 * rate + 0.14 * range + 0.12 * hp + 0.10 * spd + 0.06 * kb + 0.14 * status));
 }
 
 /**

@@ -22,7 +22,11 @@ import { solveStickman, drawStickFromJoints, samplePose, STICK_NEUTRAL, WEAPON_S
 import { resolveMotion, weaponSetId, sanitizeMotion, registerMotionSet, MOTION_LIMITS, setCanonicalWeapon } from './Motion.js';
 import { captureMotionFromWebcam } from './PoseCapture.js';
 import { equippedStickLook, saveStickLook } from './StickLook.js';
-import { clampWorkshopStats, statCost, enforceBudget, clampWorkshopWeapon, POINT_BUDGET } from './Workshop.js';
+import { clampWorkshopStats, statCost, enforceBudget, clampWorkshopWeapon, POINT_BUDGET, toWorkshopWeaponV2, clampWorkshopWeaponV2, COMBAT_PRESET_KINDS, PRIMARY_PRESET_KEYS } from './Workshop.js';
+import { saveWorkshopWeaponLocal, equipWorkshopWeaponLocal, v2ToV1Runtime } from './WorkshopStore.js';
+// Local workshop storage + equip live in WorkshopStore now; re-export the
+// legacy-named helpers so existing import sites (main.js) keep working.
+export { equippedWorkshopWeapon, equipWorkshopWeapon, clearWorkshopWeapon, equippedWorkshopWeaponName } from './WorkshopStore.js';
 import { BlockEditor } from './BlockEditor.js';
 
 const MAX_KF = 16;                                 // editor keyframe budget (admin authoring)
@@ -30,7 +34,6 @@ const HIT_WINDOW = { start: 0.3, end: 0.7 };       // fixed cosmetic impact band
 const STORE_SETS = 'pixelroyale_motionsets_v1';    // { id: { attack: motion } }
 const STORE_EQUIP = 'pixelroyale_equipped_motion_v1';
 const STORE_CANON = 'pixelroyale_canonical_weapons_v1'; // { weapon: { attack: motion } }
-const STORE_WORKSHOP = 'pixelroyale_workshop_equipped_v1'; // clamped workshop weapon def
 
 const STAT_KEYS = ['damage', 'cooldownMs', 'maxHp', 'moveSpeed', 'range', 'knockback', 'statusDurationMs'];
 
@@ -62,7 +65,7 @@ const ME_TUT_STEPS = [
   { target: 'meNewFrame', title: '② 다음 장 만들기', text: '<b style="color:#7df09a">＋ 새 프레임</b>을 누르면 지금 포즈를 그대로 이어받은 다음 장이 생겨요. 조금씩 바꿔 휘두르는 동작을 완성하세요. (◀ ▶로 장 넘기기)', auto: 'newframe' },
   { target: 'mePlay', title: '③ 재생해 보기', text: '<b style="color:#45f3ff">▶ 재생</b>으로 동작이 자연스러운지 확인하세요. 파란 잔상은 이전 장의 포즈예요.', auto: 'play' },
   { target: 'meStatsPanel', title: '④ 무기 스탯 정하기', text: '오른쪽에서 데미지·사거리 등을 조절하세요. 모든 무기는 <b style="color:#7df09a">예산 100점</b> 안에서만 강해질 수 있어 공정합니다.', auto: 'stat' },
-  { target: 'meSave', title: '⑤ 저장 + 장착!', text: '<b style="color:#7df09a">저장 + 장착</b>을 누르면 내 무기가 되고, <b style="color:#ffb070">워크샵에 공유</b>되어 다른 유저도 장착할 수 있어요. (⚙ 기믹 코딩으로 특수능력도 만들 수 있어요!)', auto: 'save' },
+  { target: 'meSave', title: '⑤ 저장 + 장착!', text: '<b style="color:#7df09a">저장 + 장착</b>은 이 기기에만 저장하고 바로 장착합니다(공유 안 함). 다른 유저와 나누고 싶으면 그 옆 <b style="color:#ffb070">⬆ 업로드</b>를 누르면 워크샵에 올라가요. (⚙ 기믹 코딩으로 특수능력도!)', auto: 'save' },
 ];
 
 // User-authored motion presets: [{ id, name, tag, motion, equipped }]. Saved
@@ -141,32 +144,6 @@ export function cacheCanonicalWeapon(weapon, set) {
   try { localStorage.setItem(STORE_CANON, JSON.stringify(map)); } catch {}
 }
 
-/** The equipped workshop weapon def (already envelope-clamped), or null. */
-export function equippedWorkshopWeapon() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(STORE_WORKSHOP) || 'null');
-    return raw ? clampWorkshopWeapon(raw) : null;   // re-clamp defensively
-  } catch { return null; }
-}
-
-/** Equip a workshop weapon (re-clamped before storing). Returns the safe def. */
-export function equipWorkshopWeapon(def) {
-  const safe = clampWorkshopWeapon(def);
-  try { localStorage.setItem(STORE_WORKSHOP, JSON.stringify(safe)); } catch {}
-  return safe;
-}
-
-/** Unequip the workshop weapon (back to the base weapon). */
-export function clearWorkshopWeapon() {
-  try { localStorage.removeItem(STORE_WORKSHOP); } catch {}
-}
-
-/** Name of the currently equipped workshop weapon (or null). */
-export function equippedWorkshopWeaponName() {
-  const w = equippedWorkshopWeapon();
-  return w ? w.name : null;
-}
-
 export class MotionEditor {
   constructor() {
     this.root = document.getElementById('motionEditor');
@@ -221,6 +198,8 @@ export class MotionEditor {
     });
     $('meReset')?.addEventListener('click', () => this._loadTemplate());
     $('meSave')?.addEventListener('click', () => this._save());
+    $('meUpload')?.addEventListener('click', () => { if (this.mode === 'workshop') this._uploadWorkshop(); else this._setStatus('업로드는 공방 무기에서만 가능합니다.'); });
+    $('meTutReplay')?.addEventListener('click', () => this._tutStart());
     $('meCapture')?.addEventListener('click', () => this._capture());
     $('meAddHitbox')?.addEventListener('click', () => this._toggleHitbox());
     const dur = $('meDuration');
@@ -490,6 +469,7 @@ export class MotionEditor {
     $('meStatsPanel')?.classList.toggle('hidden', !ws);
     const title = this.root.querySelector('h2'); if (title) title.textContent = ws ? '🔧 무기 공방' : '🎬 모션 에디터';
     if (ws) {
+      this._editingId = null; this._editingV2 = null;   // fresh session (openWorkshopV2 sets these after)
       this.stats = clampWorkshopStats({});
       this.blocks = null;
       STAT_KEYS.forEach(k => { const el = $('ms_' + k); if (el) el.value = String(this.stats[k]); const v = $('ms_' + k + '_v'); if (v) v.textContent = this.stats[k]; });
@@ -505,6 +485,38 @@ export class MotionEditor {
     // First visit to the workshop → guided "make one weapon" tutorial.
     if (this.mode === 'workshop' && !localStorage.getItem(ME_TUT_KEY)) this._tutStart();
     else this._tutStop();
+  }
+
+  /** Open the editor loaded with an existing V2 workshop weapon (from the grid /
+   *  armory). Loads its `basic` preset into the current single-motion editor;
+   *  other presets are preserved through save (full per-preset UI is a later task). */
+  openWorkshopV2(w) {
+    this.open('sword', 'workshop');
+    this._applyV2ToEditor(w);
+  }
+  _applyV2ToEditor(w) {
+    if (!w) return;
+    this._editingId = w.id;
+    this._editingV2 = w;
+    let basic = w.presets.basic;
+    if (!basic || !COMBAT_PRESET_KINDS.has(basic.kind)) {
+      for (const k of PRIMARY_PRESET_KEYS) { const p = w.presets[k]; if (p && COMBAT_PRESET_KINDS.has(p.kind)) { basic = p; break; } }
+    }
+    if (basic) {
+      this.motion = sanitizeMotion({ ...basic.motion, hitboxes: basic.hitboxes || [] }, undefined, { allowGameplay: true });
+      this.blocks = basic.blocks || null;
+    }
+    this.stats = clampWorkshopStats({
+      maxHp: w.baseStats.maxHp, moveSpeed: w.baseStats.moveSpeed,
+      ...(basic && basic.combat ? basic.combat : {}),
+    });
+    const nm = document.getElementById('meName'); if (nm) nm.value = w.name;
+    if (w.color) { this.look = { ...this.look, color: w.color }; }
+    STAT_KEYS.forEach(k => { const el = document.getElementById('ms_' + k); if (el) el.value = String(this.stats[k]); const v = document.getElementById('ms_' + k + '_v'); if (v) v.textContent = this.stats[k]; });
+    if (document.getElementById('ms_status')) document.getElementById('ms_status').value = this.stats.status;
+    this.selKf = 0; this.scrubT = this.motion.keyframes[0]?.t || 0; this.playing = false;
+    this._renderBudget(); this._updateBlockCount(); this._renderAll();
+    this._setStatus(`"${w.name}" 편집 중. 💾 저장하면 무기고에 반영됩니다.`);
   }
 
   /** Live-update one workshop stat: clamp into the envelope, reflect the clamped
@@ -1196,29 +1208,69 @@ export class MotionEditor {
     this._setStatus(`저장 완료: "${raw}"${hb}. ${this.weapon} 무기의 정본으로 적용됩니다${synced}.`);
   }
 
-  /** Tier-2 workshop save: build a workshop weapon from the stats + motion, run
-   *  it through the balance envelope + budget, persist it as the equipped weapon,
-   *  and let the host wire publish/Firestore via onSaveWorkshop. */
-  _saveWorkshop() {
+  /** Build the current editor state into a V2 workshop weapon (used by both
+   *  Save+Equip and Upload). Bundles the equipped tag motions + stats + blocks;
+   *  full per-preset editing lands in a later task. */
+  _buildWorkshopV2() {
     const raw = (document.getElementById('meName')?.value || '').trim() || `${this.weapon} 공방무기`;
-    const { stats, overBudget } = enforceBudget(this.stats);
-    // Bundle the equipped preset of each tag; the editor's current motion stays
-    // the attack unless an 공격-tag preset is explicitly equipped.
+    const { stats } = enforceBudget(this.stats);
     const tagged = this._equippedTagMotions();
-    const def = clampWorkshopWeapon({
+    const v1 = clampWorkshopWeapon({
       name: raw, color: this.look.color || null, stats,
       motionSet: { attack: this.motion, ...tagged },
       blocks: this.blocks,
     });
-    try { localStorage.setItem(STORE_WORKSHOP, JSON.stringify(def)); } catch {}
-    try { const r = this.onSaveWorkshop?.(def); if (r && typeof r.then === 'function') r.catch(() => {}); } catch {}
+    const fresh = toWorkshopWeaponV2({ ...v1, id: this._editingId });
+    // Preserve the edited weapon's category, desc, and non-basic presets.
+    if (this._editingV2) {
+      fresh.category = this._editingV2.category || fresh.category;
+      fresh.desc = this._editingV2.desc || fresh.desc;
+      for (const k of Object.keys(this._editingV2.presets || {})) {
+        if (k !== 'basic' && !fresh.presets[k]) fresh.presets[k] = this._editingV2.presets[k];
+      }
+    }
+    const w = clampWorkshopWeaponV2(fresh);
+    this._editingId = w.id; this._editingV2 = w;   // remember for re-save / upload
+    return { w, overBudget: statCost(stats) > POINT_BUDGET, stats };
+  }
+
+  /** Tier-2 저장 + 장착: LOCAL only — save to the device store + equip.
+   *  NEVER publishes; sharing is the separate 업로드 button. */
+  _saveWorkshop() {
+    const { w, overBudget, stats } = this._buildWorkshopV2();
+    let ok = false;
+    try { saveWorkshopWeaponLocal(w); equipWorkshopWeaponLocal(w.id); ok = true; } catch (e) { /* keep editing */ }
+    this._lastSaved = ok ? w : null;
     // Reflect any budget bleed back into the sliders.
-    this.stats = def.stats;
-    STAT_KEYS.forEach(k => { const v = document.getElementById('ms_' + k + '_v'); if (v) v.textContent = def.stats[k]; const el = document.getElementById('ms_' + k); if (el) el.value = String(def.stats[k]); });
+    this.stats = stats;
+    STAT_KEYS.forEach(k => { const v = document.getElementById('ms_' + k + '_v'); if (v) v.textContent = stats[k]; const el = document.getElementById('ms_' + k); if (el) el.value = String(stats[k]); });
     this._renderBudget();
-    const note = overBudget ? ' (예산 초과분은 데미지에서 자동 차감됨)' : '';
-    this._setStatus(`공방 무기 "${def.name}" 저장 + 장착 완료${note}. 워크샵에 공유되어 다른 유저도 사용할 수 있습니다 (무기고 → 공방 탭).`);
+    if (!ok) { this._setStatus('저장에 실패했습니다 (저장공간 문제일 수 있어요). 잠시 후 다시 시도하세요.'); return; }
+    const note = overBudget ? ' (예산 초과분은 자동 차감됨)' : '';
+    this._setStatus(`"${w.name}" 저장 + 장착 완료${note}. 다른 유저와 공유하려면 [⬆ 업로드]를 누르세요.`);
     this._tutEvent('save');
+    try { this.onWorkshopSaved?.(w); } catch {}
+  }
+
+  /** 업로드: the ONLY publish path. Saves locally first (upload never runs on a
+   *  save failure); an upload failure never rolls back the local save. */
+  async _uploadWorkshop() {
+    // Ensure it's saved locally first.
+    this._saveWorkshop();
+    const w = this._lastSaved;
+    if (!w) { this._setStatus('업로드하려면 먼저 저장이 성공해야 합니다.'); return; }
+    if (!this.onUploadWorkshop) { this._setStatus('업로드 기능을 사용할 수 없습니다.'); return; }
+    this._setStatus(`"${w.name}" 업로드 중...`);
+    try {
+      // Bridge: attach a V1 runtime projection so the existing publish path
+      // (stats/motionSet/blocks) stores a usable doc alongside the V2 fields.
+      const v1 = v2ToV1Runtime(w) || {};
+      await this.onUploadWorkshop({ ...w, stats: v1.stats, motionSet: v1.motionSet, blocks: v1.blocks });
+      this._setStatus(`"${w.name}" 업로드 완료! 워크샵에서 다른 유저가 사용할 수 있습니다.`);
+    } catch (e) {
+      // Local save stays intact — only the share failed.
+      this._setStatus(`업로드 실패 (${e && e.message ? e.message : '네트워크'}) — 로컬 저장/장착은 그대로예요. 나중에 다시 업로드하세요.`);
+    }
   }
 
   _setStatus(t) { const el = document.getElementById('meStatus'); if (el) el.textContent = t; }

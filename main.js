@@ -17,6 +17,8 @@ import { isMobileDevice, isPhoneDevice } from './game/Device.js';
 import { normalizeRoomConfig, roomConfigBadges } from './game/RoomConfig.js';
 import { Sound } from './game/Sound.js';
 import { MotionEditor, loadStoredMotionSets, equippedMotionSetId, equippedWorkshopWeapon, equipWorkshopWeapon, clearWorkshopWeapon, equippedWorkshopWeaponName } from './game/MotionEditor.js';
+import { loadWorkshopWeaponsV2, saveWorkshopWeaponLocal, equipWorkshopWeaponLocal, equippedWorkshopWeaponId, unequipWorkshopWeapon, deleteWorkshopWeaponLocal, importWorkshopWeapon } from './game/WorkshopStore.js';
+import { PRESET_LABELS, PRIMARY_PRESET_KEYS, COMBAT_PRESET_KINDS, makeEmptyWeaponV2 } from './game/Workshop.js';
 import { equippedStickLook } from './game/StickLook.js';
 
 // Dom Elements
@@ -1233,23 +1235,139 @@ let motionEditor = null;
 function ensureMotionEditor() {
   if (motionEditor) return motionEditor;
   motionEditor = new MotionEditor();
-  // Workshop save → publish to the shared catalog (fail-soft; stays equipped locally).
-  motionEditor.onSaveWorkshop = async (def) => {
-    try { await accountUI.publishMyWorkshopWeapon?.(def); }
-    catch (e) { console.warn('workshop publish failed (kept locally):', e?.message || e); }
+  // Upload (NOT save) → publish to the shared catalog. Throws on failure so the
+  // editor can report it; the local save/equip already happened and is untouched.
+  motionEditor.onUploadWorkshop = async (def) => {
+    if (!accountUI.publishMyWorkshopWeapon) throw new Error('로그인이 필요합니다');
+    return accountUI.publishMyWorkshopWeapon(def);
+  };
+  // Keep the workshop grid + armory in sync after a local save.
+  motionEditor.onWorkshopSaved = () => {
+    if (_wsGridEl && !_wsGridEl.classList.contains('hidden')) renderWorkshopGrid();
+    document.querySelector('#armoryBody')?._armoryRefresh?.();
   };
   return motionEditor;
 }
 // Shop 🔧 워크샵 tab: browse/equip other players' workshop weapons in the shop.
 accountUI.setWorkshopTabRenderer?.((el) => renderWorkshopList(el));
 
-// Workshop weapon creator (all users) — opens the editor in workshop mode.
+// Workshop weapon creator (all users) — opens the SAVED WEAPON GRID first
+// (첫 칸 = 새 무기 만들기, 나머지 = 저장된 공방 무기). Editing a specific saved
+// weapon is also routed here from the armory via pendingWorkshopEditId.
 const workshopBtn = document.getElementById('workshopBtn');
 if (workshopBtn) workshopBtn.addEventListener('click', () => {
   Sound.play('ui');
-  const weapon = document.querySelector('.weapon-card.selected')?.dataset.weapon || 'sword';
-  ensureMotionEditor().open(weapon, 'workshop');
+  if (pendingWorkshopEditId) { const id = pendingWorkshopEditId; pendingWorkshopEditId = null; editWorkshopWeapon(id); return; }
+  openWorkshopGrid();
 });
+
+// ── Workshop weapon grid (entry screen) ─────────────────────────────────────
+let _wsGridEl = null;
+function ensureWorkshopGrid() {
+  if (_wsGridEl) return _wsGridEl;
+  const el = document.createElement('div');
+  el.id = 'workshopGrid';
+  el.className = 'hidden absolute inset-0 z-[76] flex flex-col bg-[#14100b] font-mono';
+  el.innerHTML = `
+    <div class="flex items-center justify-between px-4 pt-3 pb-2 border-b border-[#7df09a]/30">
+      <h2 class="font-display text-xl text-[#7df09a] font-bold uppercase tracking-widest">🔧 무기 공방</h2>
+      <button id="wsGridClose" class="text-gray-400 hover:text-white text-lg leading-none px-2 cursor-pointer">✕</button>
+    </div>
+    <p class="text-[10px] text-gray-400 px-4 py-2">내가 만든 무기를 편집하거나, <b class="text-[#7df09a]">＋ 새 무기 만들기</b>로 처음부터 만들어 보세요. 저장하면 무기고에, 업로드하면 워크샵에 올라갑니다.</p>
+    <div id="wsGridBody" class="flex-1 overflow-y-auto p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 content-start"></div>`;
+  document.getElementById('motionEditor')?.parentElement?.appendChild(el);
+  el.querySelector('#wsGridClose').addEventListener('click', () => el.classList.add('hidden'));
+  _wsGridEl = el;
+  return el;
+}
+function openWorkshopGrid() {
+  const el = ensureWorkshopGrid();
+  renderWorkshopGrid();
+  el.classList.remove('hidden');
+}
+function renderWorkshopGrid() {
+  const el = ensureWorkshopGrid();
+  const body = el.querySelector('#wsGridBody');
+  const list = loadWorkshopWeaponsV2();
+  const equippedId = equippedWorkshopWeaponId();
+  const newCard = `<button id="wsNewCard" class="aspect-square flex flex-col items-center justify-center gap-2 bg-[#0d0a06] border-2 border-dashed border-[#7df09a] text-[#7df09a] hover:bg-[#1c6b33]/20 cursor-pointer active:scale-95 rounded">
+    <span class="text-3xl">＋</span><span class="text-xs">새 무기 만들기</span></button>`;
+  const cards = list.map(w => {
+    const eq = w.id === equippedId;
+    const presets = PRIMARY_PRESET_KEYS.filter(k => w.presets[k]).length;
+    return `<div class="aspect-square flex flex-col bg-[#0d0a06] border ${eq ? 'border-[#ffd24a]' : 'border-gray-700'} rounded p-2 cursor-pointer hover:border-[#7df09a] active:scale-95" data-edit="${w.id}">
+      <div class="flex-1 flex items-center justify-center text-3xl" style="color:${w.color || '#ffb070'}">🗡</div>
+      <div class="text-[11px] text-white truncate">${escapeHtml(w.name)}${eq ? ' <span style="color:#ffd24a">★</span>' : ''}</div>
+      <div class="text-[9px] text-gray-500">${WS_CAT_KO[w.category] || '근접'} · 프리셋 ${presets}</div>
+    </div>`;
+  }).join('');
+  body.innerHTML = newCard + cards;
+  body.querySelector('#wsNewCard').addEventListener('click', () => showNewWeaponModal());
+  body.querySelectorAll('[data-edit]').forEach(c => c.addEventListener('click', () => editWorkshopWeapon(c.dataset.edit)));
+}
+
+function editWorkshopWeapon(id) {
+  const w = loadWorkshopWeaponsV2().find(x => x.id === id);
+  if (!w) { showToast('무기를 찾을 수 없습니다'); return; }
+  _wsGridEl?.classList.add('hidden');
+  ensureMotionEditor().openWorkshopV2(w);
+}
+
+// New-weapon modal: name / desc / category / first preset → empty V2 weapon.
+let _wsNewEl = null;
+function showNewWeaponModal() {
+  if (!_wsNewEl) {
+    const el = document.createElement('div');
+    el.id = 'wsNewModal';
+    el.className = 'hidden absolute inset-0 z-[86] flex items-center justify-center bg-black/80 p-4 font-mono';
+    el.innerHTML = `
+      <div class="bg-[#2c2016] border-2 border-[#7df09a] p-4 w-full max-w-sm">
+        <div class="text-[#7df09a] text-sm font-bold mb-3">＋ 새 무기 만들기</div>
+        <label class="block text-[10px] text-gray-300 mb-1">이름</label>
+        <input id="wsnName" maxlength="24" placeholder="무기 이름" class="w-full bg-[#14100b] border border-gray-600 text-white text-xs px-2 py-1.5 mb-2"/>
+        <label class="block text-[10px] text-gray-300 mb-1">설명</label>
+        <input id="wsnDesc" maxlength="80" placeholder="설명 (선택)" class="w-full bg-[#14100b] border border-gray-600 text-white text-xs px-2 py-1.5 mb-2"/>
+        <label class="block text-[10px] text-gray-300 mb-1">분류</label>
+        <div id="wsnCat" class="flex gap-1.5 mb-3">
+          <button data-cat="melee" class="flex-1 med-btn text-[11px] py-1.5 on">근접</button>
+          <button data-cat="ranged" class="flex-1 med-btn text-[11px] py-1.5">원거리</button>
+          <button data-cat="special" class="flex-1 med-btn text-[11px] py-1.5">특수</button>
+        </div>
+        <label class="block text-[10px] text-gray-300 mb-1">첫 프리셋</label>
+        <select id="wsnPreset" class="w-full bg-[#14100b] border border-gray-600 text-white text-xs px-2 py-1.5 mb-4">
+          <option value="basic">평타</option><option value="heavy">강공격</option><option value="dash">대시</option>
+          <option value="skill1">스킬 1</option><option value="skill2">스킬 2</option><option value="skill3">스킬 3</option>
+        </select>
+        <div class="flex gap-2">
+          <button id="wsnCreate" class="flex-1 bg-gradient-to-r from-[#3aa856] to-[#1c6b33] border-2 border-[#7df09a] text-white text-xs px-4 py-2 uppercase font-extrabold cursor-pointer active:scale-95">만들기</button>
+          <button id="wsnCancel" class="med-btn text-xs px-4 py-2">취소</button>
+        </div>
+      </div>`;
+    document.getElementById('motionEditor')?.parentElement?.appendChild(el);
+    el.querySelector('#wsnCat').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-cat]'); if (!b) return;
+      el.querySelectorAll('#wsnCat button').forEach(x => x.classList.toggle('on', x === b));
+    });
+    el.querySelector('#wsnCancel').addEventListener('click', () => el.classList.add('hidden'));
+    el.querySelector('#wsnCreate').addEventListener('click', () => {
+      const name = el.querySelector('#wsnName').value.trim() || '새 무기';
+      const desc = el.querySelector('#wsnDesc').value.trim();
+      const category = el.querySelector('#wsnCat .on')?.dataset.cat || 'melee';
+      const firstPresetKind = el.querySelector('#wsnPreset').value;
+      const w = makeEmptyWeaponV2({ name, desc, category, firstPresetKind });
+      saveWorkshopWeaponLocal(w);      // brand-new empty weapon — no carry-over
+      el.classList.add('hidden');
+      editWorkshopWeapon(w.id);
+    });
+    _wsNewEl = el;
+  }
+  // reset fields each open
+  _wsNewEl.querySelector('#wsnName').value = '';
+  _wsNewEl.querySelector('#wsnDesc').value = '';
+  _wsNewEl.querySelector('#wsnPreset').value = 'basic';
+  _wsNewEl.querySelectorAll('#wsnCat button').forEach((x, i) => x.classList.toggle('on', i === 0));
+  _wsNewEl.classList.remove('hidden');
+}
 
 // --- Onboarding controls card -------------------------------------------------
 function showOnboardCard(objective) {
@@ -1947,6 +2065,15 @@ function armoryCategory(w) {
   if (ARMORY_SPECIAL.has(w)) return '특수';
   return (Weapons[w]?.type === 'projectile') ? '원거리' : '근접';
 }
+// V2 workshop category → armory filter label.
+const WS_CAT_KO = { melee: '근접', ranged: '원거리', special: '특수' };
+
+/** Open the workshop editor to edit a saved V2 weapon (full load in the grid task). */
+function openWorkshopWeaponForEdit(id) {
+  pendingWorkshopEditId = id;
+  document.getElementById('workshopBtn')?.click();
+}
+let pendingWorkshopEditId = null;
 
 /**
  * Tier-2 workshop weapons tab: browse published creations (re-clamped on fetch),
@@ -1991,13 +2118,17 @@ async function renderWorkshopList(el) {
           <button class="med-btn font-mono text-[10px] px-1.5 py-1" data-act="like" title="좋아요">♥</button>
           <button class="med-btn font-mono text-[10px] px-1.5 py-1" data-act="report" title="신고">⚑</button>
           ${isAdmin ? '<button class="med-btn font-mono text-[10px] px-1.5 py-1" data-act="hide" title="숨김(어드민)" style="color:#c0392b">숨김</button>' : ''}
-          <button class="med-btn ${equipped ? '' : 'med-btn--blood'} font-mono text-[10px] px-2 py-1" data-act="equip">${equipped ? '장착됨' : '장착'}</button>
+          <button class="med-btn med-btn--blood font-mono text-[10px] px-2 py-1" data-act="add" title="내 무기고에 추가">＋ 추가</button>
         </div>
       </div>`;
     }).join('');
     listEl.querySelectorAll('[data-i]').forEach(row => {
       const w = items[Number(row.dataset.i)];
-      row.querySelector('[data-act="equip"]')?.addEventListener('click', () => { equipWorkshopWeapon(w); Sound.play('uiConfirm'); renderWorkshopList(el); });
+      row.querySelector('[data-act="add"]')?.addEventListener('click', (ev) => {
+        importWorkshopWeapon(w); Sound.play('uiConfirm');
+        ev.currentTarget.textContent = '추가됨 ✓'; ev.currentTarget.disabled = true;
+        showToast(`"${w.name}" 무기고에 추가됨 (무기고 → 무기 탭)`);
+      });
       row.querySelector('[data-act="like"]')?.addEventListener('click', (ev) => { ev.currentTarget.disabled = true; accountUI.likeWorkshop?.(w.id); });
       row.querySelector('[data-act="report"]')?.addEventListener('click', (ev) => { ev.currentTarget.disabled = true; accountUI.reportWorkshop?.(w.id); ev.currentTarget.textContent = '신고됨'; });
       row.querySelector('[data-act="hide"]')?.addEventListener('click', () => { accountUI.moderateWorkshop?.(w.id, 'hidden'); load(el._wsSort || 'likes'); });
@@ -2032,9 +2163,6 @@ function buildArmoryInto(body) {
   const maxDps = max(dps), maxHp = max(w => Weapons[w].maxHp || 0), maxMove = max(w => Weapons[w].moveSpeed || 1), maxRange = max(finiteRange);
 
   body.innerHTML = `
-    <div class="armory-filter mb-2" id="armoryTabs">
-      <button class="on" data-tab="base">기본 무기</button><button data-tab="workshop">🔧 공방 무기</button>
-    </div>
     <div id="armoryBase">
       <div class="armory-grid">
         <div class="med-parch relative p-3">
@@ -2043,47 +2171,42 @@ function buildArmoryInto(body) {
             <button data-cat="원거리">원거리</button><button data-cat="특수">특수</button>
           </div>
           <div class="armory-chips" id="armoryChips"></div>
-          <div class="font-mono text-[10px] med-muted mt-2 text-center">▼ ${weapons.length}종 · ⚔ ${weapons.filter(w=>armoryCategory(w)==='근접').length}</div>
+          <div class="font-mono text-[10px] med-muted mt-2 text-center" id="armoryCount"></div>
         </div>
         <div class="med-parch med-parch--hi med-ticks relative p-4" id="armoryDetail"></div>
       </div>
-    </div>
-    <div id="armoryWorkshop" class="hidden med-parch relative p-3"></div>`;
-
-  // Tab switch: base arsenal ↔ workshop weapons (Tier 2).
-  body.querySelector('#armoryTabs')?.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-tab]'); if (!btn) return;
-    body.querySelectorAll('#armoryTabs button').forEach(b => b.classList.toggle('on', b === btn));
-    const ws = btn.dataset.tab === 'workshop';
-    body.querySelector('#armoryBase')?.classList.toggle('hidden', ws);
-    const wsEl = body.querySelector('#armoryWorkshop');
-    wsEl?.classList.toggle('hidden', !ws);
-    if (ws) renderWorkshopList(wsEl);
-  });
+    </div>`;
 
   const chipsEl = body.querySelector('#armoryChips');
   const detailEl = body.querySelector('#armoryDetail');
   let activeCat = '전체';
-  let selected = document.querySelector('.weapon-card.selected')?.dataset.weapon || weapons[0];
+  // Selection is either a base weapon key or a workshop weapon id ('ws:<id>').
+  let wsList = loadWorkshopWeaponsV2();
+  const equippedWsId = () => equippedWorkshopWeaponId();
+  let selected = equippedWsId() ? ('ws:' + equippedWsId()) : (document.querySelector('.weapon-card.selected')?.dataset.weapon || weapons[0]);
 
-  // Build every chip ONCE. Filtering and selection then only toggle classes —
-  // the DOM is never re-created, so chips can't blank out or restart their
-  // entrance animation when tabs are spammed.
+  // Build every chip ONCE (base arsenal + local workshop weapons). Workshop
+  // chips carry a 공방 badge; both share the 근접/원거리/특수 category filter.
   function buildChips() {
-    chipsEl.innerHTML = weapons
-      .map(w => `<button class="armory-chip ${w === selected ? 'on' : ''}" data-w="${w}" data-cat="${armoryCategory(w)}">
+    const baseHtml = weapons.map(w => `<button class="armory-chip ${w === selected ? 'on' : ''}" data-w="${w}" data-cat="${armoryCategory(w)}">
         <span class="dot" style="background:${Weapons[w].color || '#caa84a'}"></span>${armoryWeaponName(w)}</button>`).join('');
+    const wsHtml = wsList.map(x => `<button class="armory-chip ${('ws:' + x.id) === selected ? 'on' : ''}" data-ws="${x.id}" data-cat="${WS_CAT_KO[x.category] || '근접'}">
+        <span class="dot" style="background:${x.color || '#ffb070'}"></span>${escapeHtml(x.name)}<span class="ml-1 text-[8px] px-1 rounded" style="background:#5a3a1a;color:#ffd7a8">공방</span></button>`).join('');
+    chipsEl.innerHTML = baseHtml + wsHtml;
+    const countEl = body.querySelector('#armoryCount');
+    if (countEl) countEl.textContent = `▼ 기본 ${weapons.length} · 공방 ${wsList.length}`;
   }
-  // Show/hide chips by category (no re-render). 전체 shows all.
   function applyFilter() {
     chipsEl.querySelectorAll('.armory-chip').forEach(chip => {
       const match = activeCat === '전체' || chip.dataset.cat === activeCat;
       chip.classList.toggle('chip-hidden', !match);
     });
   }
-  // Mark the selected chip without rebuilding the list.
   function markSelected() {
-    chipsEl.querySelectorAll('.armory-chip').forEach(chip => chip.classList.toggle('on', chip.dataset.w === selected));
+    chipsEl.querySelectorAll('.armory-chip').forEach(chip => {
+      const key = chip.dataset.ws ? ('ws:' + chip.dataset.ws) : chip.dataset.w;
+      chip.classList.toggle('on', key === selected);
+    });
   }
   // Persistent stat bars: the four <fill> elements are created ONCE and only
   // their scaleX/value update on weapon switch, so the CSS transition
@@ -2101,7 +2224,55 @@ function buildArmoryInto(body) {
     return true;
   }
 
+  // Dispatch: workshop weapon detail vs the base-weapon stat-bar detail.
   function renderDetail() {
+    if (typeof selected === 'string' && selected.startsWith('ws:')) return renderWorkshopDetail(selected.slice(3));
+    return renderBaseDetail();
+  }
+
+  /** Workshop weapon detail: identity, preset summary, equip / edit / delete. */
+  function renderWorkshopDetail(id) {
+    const w = wsList.find(x => x.id === id);
+    if (!w) { selected = weapons[0]; buildChips(); markSelected(); return renderBaseDetail(); }
+    const equipped = equippedWsId() === id;
+    const presetChips = PRIMARY_PRESET_KEYS.filter(k => w.presets[k]).map(k => {
+      const p = w.presets[k]; const c = p.combat;
+      const info = COMBAT_PRESET_KINDS.has(p.kind) && c ? `⚔${c.damage}${p.ranged ? ' 🏹' : ''}` : '';
+      return `<span class="armory-tag" style="color:#e8d5a3">${PRESET_LABELS[k] || k}${info ? ' ' + info : ''}</span>`;
+    }).join(' ');
+    detailEl.innerHTML = `
+      <div class="armory-head">
+        <div class="armory-sprite med-cell" style="font-size:26px">🔧</div>
+        <div class="min-w-0">
+          <div class="font-bold text-lg leading-tight">${escapeHtml(w.name)}<span class="ml-2 text-[9px] px-1 rounded" style="background:#5a3a1a;color:#ffd7a8">공방</span></div>
+          <div class="font-mono text-[10px] med-muted">${WS_CAT_KO[w.category] || '근접'} · 체력 ${w.baseStats.maxHp} · 이속 ${w.baseStats.moveSpeed}</div>
+        </div>
+      </div>
+      <div class="font-mono text-[11px] med-desc mt-3 leading-snug" style="border-top:1px dashed var(--med-wood);padding-top:8px">${escapeHtml(w.desc || '설명 없음')}</div>
+      <div class="mt-3 flex flex-wrap gap-1">${presetChips || '<span class="med-muted text-[10px]">프리셋 없음</span>'}</div>
+      <div class="mt-4 flex items-center gap-2 flex-wrap">
+        <button id="wsEquip" class="med-btn ${equipped ? '' : 'med-btn--blood'} font-mono text-xs px-4 py-2">${equipped ? '장착됨 ✓' : '장착하기'}</button>
+        <button id="wsEdit" class="med-btn font-mono text-xs px-3 py-2">✏ 편집</button>
+        <button id="wsDelete" class="med-btn font-mono text-xs px-3 py-2" style="color:#c0392b;border-color:#c0392b">삭제</button>
+        ${equipped ? '<button id="wsUnequipOne" class="med-btn font-mono text-[10px] px-2 py-2" style="color:#8a8175">장착 해제</button>' : ''}
+      </div>
+      <div class="font-mono text-[10px] med-muted mt-2">장착 시 다음 부활부터 적용됩니다.</div>`;
+    detailEl.querySelector('#wsEquip')?.addEventListener('click', () => {
+      equipWorkshopWeaponLocal(id); Sound.play('uiConfirm');
+      showToast(`${w.name} 장착 완료`); renderDetail(); markSelected();
+    });
+    detailEl.querySelector('#wsUnequipOne')?.addEventListener('click', () => { unequipWorkshopWeapon(); renderDetail(); });
+    detailEl.querySelector('#wsEdit')?.addEventListener('click', () => { openWorkshopWeaponForEdit(id); });
+    detailEl.querySelector('#wsDelete')?.addEventListener('click', () => {
+      if (!confirm(`"${w.name}" 을(를) 삭제할까요?`)) return;
+      deleteWorkshopWeaponLocal(id);
+      wsList = loadWorkshopWeaponsV2();
+      selected = weapons[0]; buildChips(); applyFilter(); markSelected(); renderDetail();
+      showToast('삭제되었습니다');
+    });
+  }
+
+  function renderBaseDetail() {
     const w = selected, c = Weapons[w];
     const skins = accountUI.getEquippedWeaponSkins?.() || {};
     const skinKey = w === 'pistols' ? 'crossbow' : w;
@@ -2156,6 +2327,7 @@ function buildArmoryInto(body) {
     fadeIn(meta);
     meta.querySelector('#armoryEquip')?.addEventListener('click', () => {
       document.querySelector(`.weapon-card[data-weapon="${w}"]`)?.click();
+      unequipWorkshopWeapon();   // picking a base weapon clears the workshop overlay
       meta.querySelector('#armoryEquipNote')?.classList.remove('hidden');
       const b = meta.querySelector('#armoryEquip'); if (b) { b.textContent = '장착됨 ✓'; popElement(b); }
       showToast(`${armoryWeaponName(w)} 장착 완료`);
@@ -2185,9 +2357,12 @@ function buildArmoryInto(body) {
   }
 
   chipsEl.addEventListener('click', (e) => {
-    const b = e.target.closest('[data-w]'); if (!b) return;
-    selected = b.dataset.w; markSelected(); renderDetail();
+    const b = e.target.closest('[data-w],[data-ws]'); if (!b) return;
+    selected = b.dataset.ws ? ('ws:' + b.dataset.ws) : b.dataset.w;
+    markSelected(); renderDetail();
   });
+  // Let the workshop editor (Task 4) refresh this grid after save/create/delete.
+  body._armoryRefresh = () => { wsList = loadWorkshopWeaponsV2(); buildChips(); applyFilter(); markSelected(); renderDetail(); };
   body.querySelector('#armoryFilter').addEventListener('click', (e) => {
     const b = e.target.closest('[data-cat]'); if (!b) return;
     activeCat = b.dataset.cat;

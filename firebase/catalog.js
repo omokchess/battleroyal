@@ -46,7 +46,8 @@ const weaponSkinItems = WEAPON_SKIN_DEFS.flatMap((sk, si) =>
 
 export const DEFAULT_ITEMS = [
   ...costumeItems,
-  ...weaponSkinItems,
+  // weaponSkinItems removed from the shop (weapons are now the workshop/무기 tab).
+  // Kept exported for back-compat with any existing owned/equipped skin data.
   { id: 'killfx:none', category: 'killfx', name: '기본', price: 0, data: {}, unlock_type: 'coin', unlock_threshold: 0, sort_order: 0 },
   { id: 'killfx:firework', category: 'killfx', name: '폭죽', price: 300, data: { style: 'firework', color: '#ffd24a' }, unlock_type: 'coin', unlock_threshold: 0, sort_order: 1 },
   { id: 'killfx:skull', category: 'killfx', name: '픽셀 해골', price: 450, data: { style: 'skull', color: '#e5e7eb' }, unlock_type: 'coin', unlock_threshold: 0, sort_order: 2 },

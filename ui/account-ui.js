@@ -57,8 +57,8 @@ let callbacks = {};            // { onEnterLobby, onRequireLogin }
 let itemCatalog = [];          // [{ id, category, name, price, data, unlock_type, unlock_threshold }]
 let ownedItemIds = new Set();  // 보유 아이템 id
 let equipped = equippedFromProfile(null); // { costume, weaponskin, killfx, dashtrail, respawnfx, title } (전체 id)
-let activeCategory = 'weaponskin';
-let activeSkinWeapon = 'sword'; // 무기 스킨 탭에서 선택된 무기
+let activeCategory = 'killfx';
+let activeSkinWeapon = 'sword'; // (legacy) 무기 스킨 탭 제거됨 — 무기는 워크샵/무기 탭으로 이동
 
 const WEAPON_KO = {
   axe: '도끼', bow: '활', chakram: '부메랑', crossbow: '쇠뇌', dagger: '단검',
@@ -68,7 +68,7 @@ const WEAPON_KO = {
 };
 
 const SHOP_CATEGORIES = [
-  { key: 'weaponskin', label: '무기 스킨' },
+  // '무기 스킨' 탭 제거 — 무기는 무기고 '무기' 탭 / 상점 '🔧 워크샵' 탭으로 이동.
   { key: 'killfx',     label: '처치 이펙트' },
   { key: 'dashtrail',  label: '대시 트레일' },
   { key: 'respawnfx',  label: '부활 이펙트' },

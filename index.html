@@ -1082,13 +1082,17 @@
               <button id="meBlockBtn" class="w-full bg-[#14100b] hover:bg-gray-800 border border-[#45f3ff] text-[#45f3ff] text-[10px] py-2 cursor-pointer active:scale-95">⚙ 기믹 코딩 (블록) <span id="meBlockCount" class="text-gray-400 normal-case"></span></button>
             </div>
 
-            <!-- name + save -->
+            <!-- name + save/upload -->
             <div class="bg-[#0d0a06] border border-gray-600 rounded p-2 flex flex-col gap-1.5 mt-auto">
+              <button id="meTutReplay" class="self-start bg-[#14100b] hover:bg-gray-800 border border-[#ffd24a] text-[#ffd24a] text-[9px] px-2 py-0.5 cursor-pointer active:scale-95">❔ 튜토리얼 다시보기</button>
               <div class="flex items-center gap-1.5">
-                <input id="meName" type="text" maxlength="24" placeholder="모션 이름" class="flex-1 min-w-0 bg-[#14100b] border border-gray-600 text-white text-xs px-2 py-1.5" />
+                <input id="meName" type="text" maxlength="24" placeholder="무기 이름" class="flex-1 min-w-0 bg-[#14100b] border border-gray-600 text-white text-xs px-2 py-1.5" />
                 <button id="meReset" class="bg-[#14100b] hover:bg-gray-800 border border-gray-500 text-gray-300 text-[10px] px-2.5 py-1.5 cursor-pointer active:scale-95 whitespace-nowrap">초기화</button>
               </div>
-              <button id="meSave" class="w-full bg-gradient-to-r from-[#3aa856] to-[#1c6b33] hover:from-[#4cc96b] hover:to-[#175a2a] border-2 border-[#7df09a] text-white text-xs px-4 py-2 uppercase tracking-wider cursor-pointer font-extrabold active:scale-95 transition-transform">저장 + 장착</button>
+              <div class="flex gap-1.5">
+                <button id="meSave" class="flex-1 bg-gradient-to-r from-[#3aa856] to-[#1c6b33] hover:from-[#4cc96b] hover:to-[#175a2a] border-2 border-[#7df09a] text-white text-xs px-3 py-2 uppercase tracking-wider cursor-pointer font-extrabold active:scale-95 transition-transform" title="이 기기에 저장하고 장착 (공유 안 함)">💾 저장 + 장착</button>
+                <button id="meUpload" class="bg-[#14100b] hover:bg-gray-800 border-2 border-[#ffb070] text-[#ffb070] text-xs px-3 py-2 uppercase cursor-pointer active:scale-95 whitespace-nowrap" title="워크샵에 업로드해 다른 유저와 공유">⬆ 업로드</button>
+              </div>
               <div id="meStatus" class="text-[10px] text-gray-400 leading-snug min-h-[14px]"></div>
             </div>
           </div>

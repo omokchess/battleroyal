@@ -333,9 +333,10 @@ function drawHead(ctx, head, neck, r, color, accent, lineW, shape, accessory) {
 
 export function drawStickman(opts) {
   const { ctx, x, y, scale, facing = 1, color = '#cdd3da', accent = '#0d0a06',
-    lineW = 3, pose, aimAngle = 0, weapon = 'sword', headShape = 'circle', accessory = 'none' } = opts;
+    lineW = 3, pose, aimAngle = 0, weapon = 'sword', headShape = 'circle', accessory = 'none',
+    weaponImage = null, weaponImageSize = 2.0, weaponImageAnchors = null } = opts;
   const { joints, headR } = solveStickman(pose, scale, x, y, facing, { aimAngle, weapon });
-  drawStickFromJoints(ctx, joints, headR, { color, accent, lineW, scale, weapon, aimAngle, headShape, accessory });
+  drawStickFromJoints(ctx, joints, headR, { color, accent, lineW, scale, weapon, aimAngle, headShape, accessory, weaponImage, weaponImageSize, weaponImageAnchors });
 }
 
 // A held weapon: a bar/blade from the hand to the (already-solved) tip.

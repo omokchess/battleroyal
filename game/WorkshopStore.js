@@ -115,7 +115,10 @@ export function v2ToV1Runtime(w) {
     damage: c.damage, cooldownMs: c.cooldownMs, range: c.range, knockback: c.knockback,
     status: c.status, statusDurationMs: c.statusDurationMs, statusIntensity: c.statusIntensity,
   };
-  return clampWorkshopWeapon({ name: w.name, color: w.color, stats, motionSet, blocks: basic ? basic.blocks : null });
+  const rt = clampWorkshopWeapon({ name: w.name, color: w.color, stats, motionSet, blocks: basic ? basic.blocks : null });
+  // Carry the (small, id-only) custom weapon image for the in-game renderer.
+  if (w.weaponVisual && w.weaponVisual.imageId) rt.weaponVisual = { imageId: w.weaponVisual.imageId, scale: w.weaponVisual.scale || 1 };
+  return rt;
 }
 
 // ── Legacy-named compat exports (consumed by main.js / localAppearance) ──────

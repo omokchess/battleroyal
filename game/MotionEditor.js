@@ -38,7 +38,10 @@ const STORE_CANON = 'pixelroyale_canonical_weapons_v1'; // { weapon: { attack: m
 const STAT_KEYS = ['damage', 'cooldownMs', 'maxHp', 'moveSpeed', 'range', 'knockback', 'statusDurationMs'];
 
 // Editable weapons (those whose stick attack reads clearly). Kept short on purpose.
-const EDITOR_WEAPONS = ['sword', 'spear', 'hammer', 'katana', 'axe', 'rapier', 'bow', 'scythe'];
+// Workshop weapons are custom-image-first: no fixed base roster anymore, just a
+// plain stick default ('sword' = a simple bar) plus the user's uploaded images.
+const EDITOR_WEAPONS = ['sword'];
+const EDITOR_WEAPON_LABEL = { sword: '기본 (막대)' };
 
 // Fixed motion-tag vocabulary (the bridge between authored motions and gameplay /
 // blockcoding). Keys are the engine slot names; labels are what users see.
@@ -510,11 +513,16 @@ export class MotionEditor {
       maxHp: w.baseStats.maxHp, moveSpeed: w.baseStats.moveSpeed,
       ...(basic && basic.combat ? basic.combat : {}),
     });
+    // Restore the custom weapon image if it's available on this device.
+    if (w.weaponVisual && w.weaponVisual.imageId && this._customWeapon(w.weaponVisual.imageId)) {
+      this.weapon = w.weaponVisual.imageId;
+    }
     const nm = document.getElementById('meName'); if (nm) nm.value = w.name;
     if (w.color) { this.look = { ...this.look, color: w.color }; }
     STAT_KEYS.forEach(k => { const el = document.getElementById('ms_' + k); if (el) el.value = String(this.stats[k]); const v = document.getElementById('ms_' + k + '_v'); if (v) v.textContent = this.stats[k]; });
     if (document.getElementById('ms_status')) document.getElementById('ms_status').value = this.stats.status;
     this.selKf = 0; this.scrubT = this.motion.keyframes[0]?.t || 0; this.playing = false;
+    this._populateWeaponSelect(); this._syncWeaponUI();
     this._renderBudget(); this._updateBlockCount(); this._renderAll();
     this._setStatus(`"${w.name}" 편집 중. 💾 저장하면 무기고에 반영됩니다.`);
   }
@@ -557,7 +565,7 @@ export class MotionEditor {
   // --- Custom weapon images --------------------------------------------------
   _populateWeaponSelect() {
     const wsel = document.getElementById('meWeapon'); if (!wsel) return;
-    const base = EDITOR_WEAPONS.map(w => `<option value="${w}">${w}</option>`).join('');
+    const base = EDITOR_WEAPONS.map(w => `<option value="${w}">${EDITOR_WEAPON_LABEL[w] || w}</option>`).join('');
     const custom = this.customWeapons.length
       ? `<optgroup label="내 무기 이미지">${this.customWeapons.map(c => `<option value="${escOpt(c.id)}">🖼 ${escOpt(c.name)}</option>`).join('')}</optgroup>`
       : '';
@@ -1221,6 +1229,15 @@ export class MotionEditor {
       blocks: this.blocks,
     });
     const fresh = toWorkshopWeaponV2({ ...v1, id: this._editingId });
+    // Capture the equipped custom weapon IMAGE so it shows in-game (not just the
+    // editor preview). Only the small id travels; the renderer resolves pixels
+    // locally from psd_custom_weapons.
+    if (this.weapon && this.weapon.startsWith('custom:')) {
+      const rec = this._customWeapon(this.weapon);
+      fresh.weaponVisual = { imageId: this.weapon, scale: (rec && rec.size) || 2 };
+    } else if (this._editingV2 && this._editingV2.weaponVisual) {
+      fresh.weaponVisual = this._editingV2.weaponVisual;
+    }
     // Preserve the edited weapon's category, desc, and non-basic presets.
     if (this._editingV2) {
       fresh.category = this._editingV2.category || fresh.category;

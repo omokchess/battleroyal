@@ -8,6 +8,7 @@ import { SpriteAtlas, SPRITE_MANIFEST, CHAR_FRAME, CHAR_COLS, CHAR_ROW, WEAPON_S
 import { drawStickman, WEAPON_STICK_COLOR } from './Stickman.js';
 import { StickAnimator } from './Motion.js';
 import { sanitizeLook } from './StickLook.js';
+import { resolveWeaponImage } from './WeaponImages.js';
 
 // Pixel-detected frame x-ranges of fx/slash2 (SpriteSheetSlash02.png, H=50).
 // The sheet is not a uniform grid; these are the real crescent frames
@@ -561,11 +562,18 @@ export class Renderer {
     // its weapon colour, biased to the (synced) aim so it reads in combat.
     const { pose } = this._stick.sample(p, now);
     const look = sanitizeLook(p.stickLook);
+    // A workshop weapon's custom image (resolved locally from the small id) rides
+    // on the stick's hand instead of the procedural bar.
+    const wv = p.workshopWeapon && p.workshopWeapon.weaponVisual;
+    const wimg = wv && wv.imageId ? resolveWeaponImage(wv.imageId) : null;
     drawStickman({
       ctx, x: bodyScr.x, y: bodyScr.y, scale: radius, facing: face,
       color: look.color || bodyColor, accent: '#0d0a06', lineW: look.lineW,
       pose, aimAngle: p.angle || 0, weapon: p.weapon,
       headShape: look.head, accessory: look.accessory,
+      weaponImage: wimg && wimg.img && wimg.img.complete && wimg.img.naturalWidth ? wimg.img : null,
+      weaponImageSize: wimg ? wimg.size : 2.0,
+      weaponImageAnchors: wimg ? wimg.anchors : null,
     });
 
     if (p.burnTimeLeft > 0) this._drawBurnFlames(ctx, bodyScr, radius, z);

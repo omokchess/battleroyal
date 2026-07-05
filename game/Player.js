@@ -154,6 +154,10 @@ export class Player {
    *  and building the sandboxed block VM (which sanitizes the AST). */
   _applyWorkshopWeapon(def) {
     const safe = clampWorkshopWeapon(def);
+    // The V1 clamp drops weaponVisual; keep the small id-only visual for rendering.
+    if (def && def.weaponVisual && def.weaponVisual.imageId) {
+      safe.weaponVisual = { imageId: String(def.weaponVisual.imageId).slice(0, 48), scale: Number(def.weaponVisual.scale) || 1 };
+    }
     this.workshopWeapon = safe;
     // Block-gimmick VM (host runs it; the constructor sanitizes + caps the AST).
     this.blockVM = safe.blocks ? new BlockVM(safe.blocks, 'workshop') : null;

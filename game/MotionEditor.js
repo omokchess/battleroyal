@@ -49,6 +49,11 @@ export const MOTION_TAGS = [
 ];
 const TAG_LABEL = Object.fromEntries(MOTION_TAGS.map(t => [t.key, t.label]));
 
+// Resizable editor columns: drag threshold below which a block folds shut, and
+// the localStorage key persisting per-column widths / collapsed state.
+const ME_COLLAPSE_AT = 120;
+const ME_LAYOUT_KEY = 'psd_me_layout';
+
 // User-authored motion presets: [{ id, name, tag, motion, equipped }]. Saved
 // locally; the equipped one per tag is bundled into the workshop weapon def.
 const STORE_PRESETS = 'psd_motion_presets';
@@ -257,6 +262,127 @@ export class MotionEditor {
     window.addEventListener('pointerup', () => this._pointerUp());
     // Timeline: scrub / select / drag keyframe + impact.
     this.timeline?.addEventListener('pointerdown', (e) => this._timelineDown(e));
+    // Resizable columns: drag splitters, collapse under threshold, header chips.
+    this._initLayout();
+  }
+
+  // --- Resizable / collapsible columns --------------------------------------
+  _ensureLayoutStyles() {
+    if (document.getElementById('meLayoutStyles')) return;
+    const st = document.createElement('style'); st.id = 'meLayoutStyles';
+    st.textContent = `
+    .me-split{width:6px;flex:none;align-self:stretch;cursor:col-resize;border-radius:3px;background:#3f3f46;opacity:.55;transition:opacity .12s,background .12s;touch-action:none}
+    .me-split:hover,.me-split.on{opacity:1;background:#7df09a}
+    .me-col-collapsed{width:32px !important}
+    .me-col-collapsed>*{display:none !important}
+    .me-col-collapsed>.me-expand-rail{display:flex !important}
+    .me-expand-rail{display:none;flex:1;flex-direction:column;align-items:center;gap:8px;background:#0d0a06;border:1px solid #3f3f46;border-radius:6px;cursor:pointer;padding-top:8px;color:#7df09a;font-size:13px}
+    .me-expand-rail:hover{border-color:#7df09a}
+    .me-expand-rail .vlabel{writing-mode:vertical-rl;font-size:10px;color:#9ca3af;letter-spacing:2px}`;
+    document.head.appendChild(st);
+  }
+
+  _initLayout() {
+    this._ensureLayoutStyles();
+    const L = document.getElementById('meColLeft'), R = document.getElementById('meColRight');
+    if (!L || !R) return;
+    this._cols = {
+      left:  { el: L, split: document.getElementById('meSplitL'), side: 1,  label: '컨트롤', arrow: '▶', def: 0.34 },
+      right: { el: R, split: document.getElementById('meSplitR'), side: -1, label: '무기 · 스탯', arrow: '◀', def: 0.27 },
+    };
+    for (const key of ['left', 'right']) {
+      const c = this._cols[key];
+      // Collapsed state renders as a thin rail — click anywhere on it to expand.
+      const rail = document.createElement('div');
+      rail.className = 'me-expand-rail'; rail.title = '클릭하여 펼치기';
+      rail.innerHTML = `<b>${c.arrow}</b><span class="vlabel">${c.label} 펼치기</span>`;
+      rail.addEventListener('click', () => this._expandCol(key));
+      c.el.appendChild(rail);
+      // Splitter: drag = resize (collapses under the threshold); dblclick = toggle.
+      c.split?.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        try { c.split.setPointerCapture(e.pointerId); } catch {}
+        c.split.classList.add('on');
+        const startX = e.clientX;
+        const startW = c.el.classList.contains('me-col-collapsed') ? 32 : c.el.getBoundingClientRect().width;
+        const parentW = c.el.parentElement.getBoundingClientRect().width;
+        const move = (ev) => this._setColWidth(key, startW + (ev.clientX - startX) * c.side, parentW);
+        const up = () => { c.split.classList.remove('on'); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); this._saveLayout(); };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+        window.addEventListener('pointercancel', up);
+      });
+      c.split?.addEventListener('dblclick', () => c.el.classList.contains('me-col-collapsed') ? this._expandCol(key) : this._collapseCol(key));
+    }
+    this._applyLayout(this._loadLayout());
+  }
+
+  /** Live width during a splitter drag; below the threshold the block folds. */
+  _setColWidth(key, w, parentW) {
+    const c = this._cols[key];
+    if (w < ME_COLLAPSE_AT) { if (!c.el.classList.contains('me-col-collapsed')) this._collapseCol(key, true); return; }
+    if (c.el.classList.contains('me-col-collapsed')) { c.el.classList.remove('me-col-collapsed'); this._syncChips(); }
+    const max = (parentW || c.el.parentElement.getBoundingClientRect().width) * 0.45;
+    c.el.style.width = Math.min(max, w) + 'px';
+    c.lastW = Math.min(max, w);
+  }
+
+  _collapseCol(key, silent) {
+    const c = this._cols[key];
+    if (!c.el.classList.contains('me-col-collapsed')) {
+      c.prevW = c.lastW || c.el.getBoundingClientRect().width;
+      c.el.classList.add('me-col-collapsed');
+    }
+    this._syncChips();
+    if (!silent) this._saveLayout();
+  }
+
+  _expandCol(key) {
+    const c = this._cols[key];
+    c.el.classList.remove('me-col-collapsed');
+    const parentW = c.el.parentElement.getBoundingClientRect().width;
+    const target = Math.max(ME_COLLAPSE_AT + 40, Math.min(parentW * 0.45, c.prevW || parentW * c.def));
+    c.el.style.width = target + 'px';
+    c.lastW = target;
+    this._syncChips();
+    this._saveLayout();
+  }
+
+  /** Header chips (top-right): one ▶/◀ 펼치기 button per collapsed block. */
+  _syncChips() {
+    const host = document.getElementById('meExpandChips'); if (!host || !this._cols) return;
+    host.innerHTML = '';
+    for (const key of ['left', 'right']) {
+      const c = this._cols[key];
+      if (!c.el.classList.contains('me-col-collapsed')) continue;
+      const b = document.createElement('button');
+      b.className = 'bg-[#14100b] hover:bg-gray-800 border border-[#7df09a] text-[#7df09a] text-[10px] px-2 py-1 cursor-pointer active:scale-95';
+      b.textContent = `${c.arrow} ${c.label} 펼치기`;
+      b.addEventListener('click', () => this._expandCol(key));
+      host.appendChild(b);
+    }
+  }
+
+  _saveLayout() {
+    if (!this._cols) return;
+    try {
+      localStorage.setItem(ME_LAYOUT_KEY, JSON.stringify({
+        l: this._cols.left.el.classList.contains('me-col-collapsed') ? 'c' : (this._cols.left.lastW || null),
+        r: this._cols.right.el.classList.contains('me-col-collapsed') ? 'c' : (this._cols.right.lastW || null),
+        lp: this._cols.left.prevW || null, rp: this._cols.right.prevW || null,
+      }));
+    } catch {}
+  }
+  _loadLayout() { try { return JSON.parse(localStorage.getItem(ME_LAYOUT_KEY) || 'null'); } catch { return null; } }
+  _applyLayout(s) {
+    if (!s) { this._syncChips(); return; }
+    if (s.lp) this._cols.left.prevW = s.lp;
+    if (s.rp) this._cols.right.prevW = s.rp;
+    if (s.l === 'c') this._collapseCol('left', true);
+    else if (s.l) { this._cols.left.el.style.width = s.l + 'px'; this._cols.left.lastW = s.l; }
+    if (s.r === 'c') this._collapseCol('right', true);
+    else if (s.r) { this._cols.right.el.style.width = s.r + 'px'; this._cols.right.lastW = s.r; }
+    this._syncChips();
   }
 
   open(weapon = 'sword', mode = 'canonical') {

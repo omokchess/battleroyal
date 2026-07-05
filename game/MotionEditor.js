@@ -54,6 +54,17 @@ const TAG_LABEL = Object.fromEntries(MOTION_TAGS.map(t => [t.key, t.label]));
 const ME_COLLAPSE_AT = 120;
 const ME_LAYOUT_KEY = 'psd_me_layout';
 
+// First-run workshop tutorial (goal: make ONE weapon end-to-end). Each step
+// highlights a target and auto-advances when the user performs the action.
+const ME_TUT_KEY = 'psd_ws_tut_done';
+const ME_TUT_STEPS = [
+  { target: 'meCanvas', title: '① 포즈 만들기', text: '스틱맨의 <b style="color:#7df09a">초록 점(관절)</b>과 <b style="color:#ffa050">주황 점(무기)</b>을 끌어 공격 시작 포즈를 만들어 보세요.', auto: 'joint' },
+  { target: 'meNewFrame', title: '② 다음 장 만들기', text: '<b style="color:#7df09a">＋ 새 프레임</b>을 누르면 지금 포즈를 그대로 이어받은 다음 장이 생겨요. 조금씩 바꿔 휘두르는 동작을 완성하세요. (◀ ▶로 장 넘기기)', auto: 'newframe' },
+  { target: 'mePlay', title: '③ 재생해 보기', text: '<b style="color:#45f3ff">▶ 재생</b>으로 동작이 자연스러운지 확인하세요. 파란 잔상은 이전 장의 포즈예요.', auto: 'play' },
+  { target: 'meStatsPanel', title: '④ 무기 스탯 정하기', text: '오른쪽에서 데미지·사거리 등을 조절하세요. 모든 무기는 <b style="color:#7df09a">예산 70점</b> 안에서만 강해질 수 있어 공정합니다.', auto: 'stat' },
+  { target: 'meSave', title: '⑤ 저장 + 장착!', text: '<b style="color:#7df09a">저장 + 장착</b>을 누르면 내 무기가 되고, <b style="color:#ffb070">워크샵에 공유</b>되어 다른 유저도 장착할 수 있어요. (⚙ 기믹 코딩으로 특수능력도 만들 수 있어요!)', auto: 'save' },
+];
+
 // User-authored motion presets: [{ id, name, tag, motion, equipped }]. Saved
 // locally; the equipped one per tag is bundled into the workshop weapon def.
 const STORE_PRESETS = 'psd_motion_presets';
@@ -288,8 +299,73 @@ export class MotionEditor {
     .me-col-collapsed>.me-expand-rail{display:flex !important}
     .me-expand-rail{display:none;flex:1;flex-direction:column;align-items:center;gap:8px;background:#0d0a06;border:1px solid #3f3f46;border-radius:6px;cursor:pointer;padding-top:8px;color:#7df09a;font-size:13px}
     .me-expand-rail:hover{border-color:#7df09a}
-    .me-expand-rail .vlabel{writing-mode:vertical-rl;font-size:10px;color:#9ca3af;letter-spacing:2px}`;
+    .me-expand-rail .vlabel{writing-mode:vertical-rl;font-size:10px;color:#9ca3af;letter-spacing:2px}
+    #meTutCard{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:95;width:min(500px,92%);background:#1a1410;border:2px solid #ffd24a;border-radius:8px;padding:10px 14px;box-shadow:0 6px 24px rgba(0,0,0,.65);font-family:monospace}
+    .me-tut-hi{outline:3px solid #ffd24a !important;outline-offset:2px;box-shadow:0 0 16px rgba(255,210,74,.55) !important;border-radius:6px;animation:meTutPulse 1.4s ease-in-out infinite}
+    @keyframes meTutPulse{0%,100%{outline-color:#ffd24a}50%{outline-color:#fff3c4}}`;
     document.head.appendChild(st);
+  }
+
+  // --- First-run workshop tutorial (goal: make one weapon) -------------------
+  _tutStart() {
+    this._tutStop();
+    this._ensureLayoutStyles();
+    this._tut = { step: 0 };
+    let card = document.getElementById('meTutCard');
+    if (!card) { card = document.createElement('div'); card.id = 'meTutCard'; this.root.appendChild(card); }
+    this._tutRender();
+  }
+  _tutRender() {
+    const card = document.getElementById('meTutCard');
+    if (!card || !this._tut) return;
+    const i = this._tut.step, s = ME_TUT_STEPS[i];
+    if (!s) return this._tutFinish();
+    const dots = ME_TUT_STEPS.map((_, k) => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;background:${k < i ? '#7df09a' : k === i ? '#ffd24a' : '#4b4237'}"></span>`).join('');
+    card.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <span>${dots}</span>
+        <b style="color:#ffd24a;font-size:12px">${s.title}</b>
+        <span style="margin-left:auto;color:#8a8175;font-size:10px">${i + 1} / ${ME_TUT_STEPS.length}</span>
+      </div>
+      <div style="color:#d9d2c5;font-size:11px;line-height:1.55">${s.text}</div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button id="meTutNext" style="flex:1;background:#1c6b33;border:1px solid #7df09a;color:#d9ffe4;font-size:11px;padding:5px 0;cursor:pointer">다음 →</button>
+        <button id="meTutSkip" style="background:#14100b;border:1px solid #6b6156;color:#8a8175;font-size:10px;padding:5px 10px;cursor:pointer">건너뛰기</button>
+      </div>`;
+    card.querySelector('#meTutNext').addEventListener('click', () => this._tutNext());
+    card.querySelector('#meTutSkip').addEventListener('click', () => this._tutFinish());
+    // Highlight the step's target (expanding its column if it's folded away).
+    document.querySelectorAll('.me-tut-hi').forEach((n) => n.classList.remove('me-tut-hi'));
+    const target = document.getElementById(s.target);
+    if (target) {
+      const col = target.closest('.me-col-collapsed');
+      if (col && this._cols) for (const key of ['left', 'right']) if (this._cols[key].el === col) this._expandCol(key);
+      target.classList.add('me-tut-hi');
+      target.scrollIntoView?.({ block: 'nearest' });
+    }
+  }
+  /** Auto-advance: handlers report what the user just did. */
+  _tutEvent(kind) {
+    if (!this._tut) return;
+    const s = ME_TUT_STEPS[this._tut.step];
+    if (s && s.auto === kind) this._tutNext();
+  }
+  _tutNext() {
+    if (!this._tut) return;
+    this._tut.step++;
+    if (this._tut.step >= ME_TUT_STEPS.length) this._tutFinish();
+    else this._tutRender();
+  }
+  _tutFinish() {
+    try { localStorage.setItem(ME_TUT_KEY, '1'); } catch {}
+    this._tutStop();
+    this._setStatus('🎉 튜토리얼 완료! 이제 프리셋 태그·⚓기준점·⚙기믹 코딩까지 자유롭게 실험해 보세요.');
+  }
+  /** Tear down without marking done (e.g., editor closed mid-way). */
+  _tutStop() {
+    this._tut = null;
+    document.getElementById('meTutCard')?.remove();
+    document.querySelectorAll('.me-tut-hi').forEach((n) => n.classList.remove('me-tut-hi'));
   }
 
   _initLayout() {
@@ -426,6 +502,9 @@ export class MotionEditor {
     this._loadTemplate();
     this._syncOnionBtn();
     this.root.classList.remove('hidden');
+    // First visit to the workshop → guided "make one weapon" tutorial.
+    if (this.mode === 'workshop' && !localStorage.getItem(ME_TUT_KEY)) this._tutStart();
+    else this._tutStop();
   }
 
   /** Live-update one workshop stat: clamp into the envelope, reflect the clamped
@@ -437,6 +516,7 @@ export class MotionEditor {
     if (el && key !== 'status' && Number(el.value) !== this.stats[key]) el.value = String(this.stats[key]);
     const v = document.getElementById('ms_' + key + '_v'); if (v) v.textContent = this.stats[key];
     if (document.getElementById('ms_status')) document.getElementById('ms_status').value = this.stats.status;
+    this._tutEvent('stat');
     this._renderBudget();
   }
 
@@ -458,6 +538,7 @@ export class MotionEditor {
   close() {
     this.playing = false;
     if (this._raf) cancelAnimationFrame(this._raf);
+    this._tutStop();
     this.root?.classList.add('hidden');
   }
 
@@ -889,6 +970,7 @@ export class MotionEditor {
     deg = clamp(deg, MOTION_LIMITS.angleMin, MOTION_LIMITS.angleMax);
     const kf = this.motion.keyframes[this.selKf];
     kf.pose[h.joint] = Math.round(deg);
+    this._tutEvent('joint');
     this._renderPreview();
   }
 
@@ -1024,6 +1106,7 @@ export class MotionEditor {
     kfs.push(kf); kfs.sort((a, b) => a.t - b.t);
     this.selKf = kfs.indexOf(kf); this.scrubT = kf.t; this.playing = false;
     this._setStatus('새 프레임 — 이전 포즈를 그대로 이어받았습니다. 관절을 조금씩 바꿔 다음 동작을 만드세요.');
+    this._tutEvent('newframe');
     this._renderAll();
   }
   _syncOnionBtn() { const b = document.getElementById('meOnion'); if (b) { b.style.opacity = this.onion ? '1' : '0.4'; b.style.borderColor = this.onion ? '#6f8cff' : '#555'; } }
@@ -1068,7 +1151,7 @@ export class MotionEditor {
   _togglePlay() {
     this.playing = !this.playing;
     document.getElementById('mePlay') && (document.getElementById('mePlay').textContent = this.playing ? '⏸ 정지' : '▶ 재생');
-    if (this.playing) { this.scrubT = 0; this._lastT = performance.now(); this._loop(); }
+    if (this.playing) { this.scrubT = 0; this._lastT = performance.now(); this._loop(); this._tutEvent('play'); }
     else if (this._raf) cancelAnimationFrame(this._raf);
     this._renderAll();
   }
@@ -1134,7 +1217,8 @@ export class MotionEditor {
     STAT_KEYS.forEach(k => { const v = document.getElementById('ms_' + k + '_v'); if (v) v.textContent = def.stats[k]; const el = document.getElementById('ms_' + k); if (el) el.value = String(def.stats[k]); });
     this._renderBudget();
     const note = overBudget ? ' (예산 초과분은 데미지에서 자동 차감됨)' : '';
-    this._setStatus(`공방 무기 "${def.name}" 저장 + 장착 완료${note}. 다음 매치부터 적용됩니다.`);
+    this._setStatus(`공방 무기 "${def.name}" 저장 + 장착 완료${note}. 워크샵에 공유되어 다른 유저도 사용할 수 있습니다 (무기고 → 공방 탭).`);
+    this._tutEvent('save');
   }
 
   _setStatus(t) { const el = document.getElementById('meStatus'); if (el) el.textContent = t; }

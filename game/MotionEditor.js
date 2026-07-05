@@ -231,6 +231,16 @@ export class MotionEditor {
       c.size = clamp(parseFloat(e.target.value) || 2, 0.6, 4.5); saveCustomWeapons(this.customWeapons); this._renderPreview();
     });
     $('meDelWeapon')?.addEventListener('click', () => this._delCustomWeapon());
+    // Anchor picker (grip + tip on the weapon image).
+    $('meAnchorBtn')?.addEventListener('click', () => { const c = this._customWeapon(this.weapon); if (c) this._openAnchorPicker(c.src, c.name, c); });
+    $('meAnchorOk')?.addEventListener('click', () => this._anchorConfirm());
+    $('meAnchorCancel')?.addEventListener('click', () => this._anchorClose());
+    const acv = $('meAnchorCanvas');
+    if (acv) {
+      acv.addEventListener('pointerdown', (e) => this._anchorDown(e));
+      acv.addEventListener('pointermove', (e) => this._anchorMove(e));
+      window.addEventListener('pointerup', () => { if (this._anchor) this._anchor.drag = null; });
+    }
     // Preset library: the user's own tagged motions (save current → library;
     // click → load; ★ = equipped for its tag; built-ins remain as 예시).
     const tagSel = $('mePresetTag');
@@ -481,12 +491,13 @@ export class MotionEditor {
     if (!file) return;
     if (!/^image\//.test(file.type)) { this._setStatus('이미지 파일만 넣을 수 있어요 (PNG 권장).'); return; }
     const reader = new FileReader();
-    reader.onload = () => this._addWeaponImage(String(reader.result), (file.name || '무기').replace(/\.[^.]+$/, '').slice(0, 16) || '무기');
+    // Upload flow: pick the grip/tip anchors FIRST, then register on 확인.
+    reader.onload = () => this._openAnchorPicker(String(reader.result), (file.name || '무기').replace(/\.[^.]+$/, '').slice(0, 16) || '무기');
     reader.onerror = () => this._setStatus('파일을 읽지 못했어요.');
     reader.readAsDataURL(file);
   }
   /** Downscale (≤256px, keeps localStorage small) then register + select. */
-  _addWeaponImage(dataUrl, name) {
+  _addWeaponImage(dataUrl, name, anchors) {
     const img = new Image();
     img.onload = () => {
       const max = 256; let w = img.naturalWidth || 64, h = img.naturalHeight || 64;
@@ -494,15 +505,98 @@ export class MotionEditor {
       const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
       cv.getContext('2d').drawImage(img, 0, 0, w, h);
       let src = dataUrl; try { src = cv.toDataURL('image/png'); } catch { /* tainted? keep original */ }
-      const rec = { id: 'custom:' + Date.now().toString(36), name, src, size: 2.0 };
+      const rec = { id: 'custom:' + Date.now().toString(36), name, src, size: 2.0, anchors: anchors || null };
       this.customWeapons.push(rec); saveCustomWeapons(this.customWeapons);
       this.weapon = rec.id;
       this._populateWeaponSelect(); this._syncWeaponUI();
       this._loadTemplate();
-      this._setStatus('무기 이미지 추가됨! 주황 점을 끌어 방향을, 슬라이더로 크기를 맞추세요.');
+      this._setStatus('무기 이미지 추가됨! 주황 점을 끌어 방향을, 슬라이더로 크기를, ⚓기준점으로 손잡이·끝을 다시 맞출 수 있어요.');
     };
     img.onerror = () => this._setStatus('이미지를 불러오지 못했어요.');
     img.src = dataUrl;
+  }
+
+  // --- Grip/tip anchor picker -------------------------------------------------
+  /** Open the picker for a fresh upload (rec=null) or an existing weapon (rec). */
+  _openAnchorPicker(dataUrl, name, rec = null) {
+    const modal = document.getElementById('meAnchorModal');
+    const cv = document.getElementById('meAnchorCanvas');
+    if (!modal || !cv) return;
+    const img = new Image();
+    img.onload = () => {
+      // Fit the canvas to the image (≤380×300) so clicks map 1:1.
+      const s = Math.min(380 / img.naturalWidth, 300 / img.naturalHeight, 4);
+      cv.width = Math.max(80, Math.round(img.naturalWidth * s));
+      cv.height = Math.max(80, Math.round(img.naturalHeight * s));
+      const a = (rec && rec.anchors) || { gx: 0.15, gy: 0.5, tx: 0.95, ty: 0.5 };
+      this._anchor = { img, dataUrl, name, rec, g: { x: a.gx, y: a.gy }, t: { x: a.tx, y: a.ty }, drag: null, cv };
+      this._drawAnchorPicker();
+      modal.classList.remove('hidden');
+    };
+    img.onerror = () => this._setStatus('이미지를 불러오지 못했어요.');
+    img.src = dataUrl;
+  }
+  _drawAnchorPicker() {
+    const A = this._anchor; if (!A) return;
+    const ctx = A.cv.getContext('2d'); const W = A.cv.width, H = A.cv.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#0d0a06'; ctx.fillRect(0, 0, W, H);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(A.img, 0, 0, W, H);
+    const g = { x: A.g.x * W, y: A.g.y * H }, t = { x: A.t.x * W, y: A.t.y * H };
+    // grip→tip guide line
+    ctx.strokeStyle = 'rgba(255,210,74,0.85)'; ctx.lineWidth = 2; ctx.setLineDash([5, 4]);
+    ctx.beginPath(); ctx.moveTo(g.x, g.y); ctx.lineTo(t.x, t.y); ctx.stroke(); ctx.setLineDash([]);
+    const dot = (p, fill, label) => {
+      ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, Math.PI * 2);
+      ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = '#0d0a06'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center';
+      ctx.fillStyle = '#0d0a06'; ctx.fillText(label[0], p.x, p.y + 3.5);
+      ctx.fillStyle = fill; ctx.fillText(label, p.x, p.y - 13);
+    };
+    dot(g, '#ffa050', '손잡이');
+    dot(t, '#ff5a5a', '끝');
+  }
+  _anchorXY(e) {
+    const A = this._anchor; const r = A.cv.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)),
+      y: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)),
+    };
+  }
+  _anchorDown(e) {
+    const A = this._anchor; if (!A) return;
+    e.preventDefault();
+    const p = this._anchorXY(e);
+    const dist = (m) => Math.hypot((m.x - p.x) * A.cv.width, (m.y - p.y) * A.cv.height);
+    // Grab whichever anchor is closer (drag or tap-to-place).
+    A.drag = dist(A.g) <= dist(A.t) ? 'g' : 't';
+    A[A.drag] = p; this._drawAnchorPicker();
+  }
+  _anchorMove(e) {
+    const A = this._anchor; if (!A || !A.drag) return;
+    e.preventDefault();
+    A[A.drag] = this._anchorXY(e); this._drawAnchorPicker();
+  }
+  _anchorConfirm() {
+    const A = this._anchor; if (!A) return this._anchorClose();
+    const rnd = (v) => Math.round(v * 1000) / 1000;
+    let anchors = { gx: rnd(A.g.x), gy: rnd(A.g.y), tx: rnd(A.t.x), ty: rnd(A.t.y) };
+    // Degenerate (same point) → fall back to a sane default axis.
+    if (Math.hypot(anchors.tx - anchors.gx, anchors.ty - anchors.gy) < 0.02) anchors = { gx: 0.15, gy: 0.5, tx: 0.95, ty: 0.5 };
+    if (A.rec) {                                   // editing an existing weapon
+      A.rec.anchors = anchors;
+      saveCustomWeapons(this.customWeapons);
+      this._renderPreview();
+      this._setStatus('기준점을 다시 설정했습니다.');
+    } else {
+      this._addWeaponImage(A.dataUrl, A.name, anchors);
+    }
+    this._anchorClose();
+  }
+  _anchorClose() {
+    this._anchor = null;
+    document.getElementById('meAnchorModal')?.classList.add('hidden');
   }
   _delCustomWeapon() {
     const c = this._customWeapon(this.weapon); if (!c) return;
@@ -689,8 +783,10 @@ export class MotionEditor {
 
     const scale = Math.round(H * 0.114);                // stickman scales with the canvas (404→46)
     const cx = W / 2, cyCenter = H - 30 - scale * 1.28; // body centre so feet sit on the ground line
-    const wimg = this._weaponImage();                         // custom weapon image (or null)
-    const wsize = this._customWeapon(this.weapon)?.size ?? 2.0;
+    const wrec = this._customWeapon(this.weapon);             // custom weapon record (or null)
+    const wimg = this._weaponImage();                         // its image (or null)
+    const wsize = wrec?.size ?? 2.0;
+    const wanch = wrec?.anchors || null;                      // grip/tip anchors
 
     // Onion skin: the PREVIOUS frame's pose, drawn faint + blue behind the current
     // one, so you can see what the stickman did last and build the next pose from it.
@@ -699,7 +795,7 @@ export class MotionEditor {
       if (prev) {
         const pj = solveStickman({ ...STICK_NEUTRAL, ...prev.pose }, scale, cx, cyCenter, 1, { rawNearArm: true, weapon: this.weapon });
         ctx.save(); ctx.globalAlpha = 0.3;
-        drawStickFromJoints(ctx, pj.joints, pj.headR, { color: '#6f8cff', accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory, weaponImage: wimg, weaponImageSize: wsize });
+        drawStickFromJoints(ctx, pj.joints, pj.headR, { color: '#6f8cff', accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory, weaponImage: wimg, weaponImageSize: wsize, weaponImageAnchors: wanch });
         ctx.restore();
       }
     }
@@ -707,7 +803,7 @@ export class MotionEditor {
     const pose = this._displayPose();
     const { joints, headR } = solveStickman(pose, scale, cx, cyCenter, 1, { rawNearArm: true, weapon: this.weapon });
     const color = this.look.color || WEAPON_STICK_COLOR[this.weapon] || '#cdd3da';
-    drawStickFromJoints(ctx, joints, headR, { color, accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory, weaponImage: wimg, weaponImageSize: wsize });
+    drawStickFromJoints(ctx, joints, headR, { color, accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory, weaponImage: wimg, weaponImageSize: wsize, weaponImageAnchors: wanch });
 
     // Joint handles (only when a keyframe is selected & not playing).
     if (!this.playing && this.motion.keyframes[this.selKf]) {

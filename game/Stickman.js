@@ -247,7 +247,7 @@ export function solveStickman(pose, scale, x, y, facing = 1, opts = {}) {
 
 /** Draw a stick figure from solved screen joints. `aimAngle` only orients the
  *  held weapon. Used by both the game and the editor preview. */
-export function drawStickFromJoints(ctx, sc, headR, { color = '#cdd3da', accent = '#0d0a06', lineW = 3, scale = 14, weapon = 'sword', drawWeapon = true, aimAngle = 0, headShape = 'circle', accessory = 'none', weaponImage = null, weaponImageSize = 2.0 } = {}) {
+export function drawStickFromJoints(ctx, sc, headR, { color = '#cdd3da', accent = '#0d0a06', lineW = 3, scale = 14, weapon = 'sword', drawWeapon = true, aimAngle = 0, headShape = 'circle', accessory = 'none', weaponImage = null, weaponImageSize = 2.0, weaponImageAnchors = null } = {}) {
   const lw = Math.max(2, lineW * (scale / 14));
   const limb = (a, b, w, col) => {
     ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineCap = 'round';
@@ -262,7 +262,7 @@ export function drawStickFromJoints(ctx, sc, headR, { color = '#cdd3da', accent 
   limb(sc.shoulder, sc.elbowN, lw, color); limb(sc.elbowN, sc.handN, lw, color);
   if (drawWeapon && sc.weaponTip) {
     if (weaponImage && weaponImage.complete && weaponImage.naturalWidth) {
-      drawImageWeapon(ctx, sc.handN, sc.weaponTip, scale, weaponImage, weaponImageSize);
+      drawImageWeapon(ctx, sc.handN, sc.weaponTip, scale, weaponImage, weaponImageSize, weaponImageAnchors);
     } else {
       const wcol = WEAPON_STICK_COLOR[weapon] || color;
       drawHeldWeapon(ctx, sc.handN, sc.weaponTip, scale, weapon, wcol);
@@ -270,19 +270,27 @@ export function drawStickFromJoints(ctx, sc, headR, { color = '#cdd3da', accent 
   }
 }
 
-// A user-supplied weapon IMAGE, drawn from the hand along the hand→tip direction
-// (so the weapon joint still aims it), sized by the per-weapon size multiplier.
-// Assumes the image points right (grip at the left edge).
-function drawImageWeapon(ctx, hand, tip, scale, img, sizeMul) {
-  const ang = Math.atan2(tip.y - hand.y, tip.x - hand.x);
+// A user-supplied weapon IMAGE. The user marks two anchors on the image — the
+// GRIP (손잡이) and the TIP (끝) — and we map grip→hand and the grip→tip vector
+// onto the hand→weaponTip direction (so the weapon joint still aims it), scaled
+// so the grip→tip distance equals the weapon length (scale × size multiplier).
+function drawImageWeapon(ctx, hand, tip, scale, img, sizeMul, anchors) {
+  const a = (anchors && Number.isFinite(anchors.gx)) ? anchors : { gx: 0.15, gy: 0.5, tx: 0.95, ty: 0.5 };
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  const gX = a.gx * iw, gY = a.gy * ih;
+  const dx = (a.tx - a.gx) * iw, dy = (a.ty - a.gy) * ih;
+  const d = Math.hypot(dx, dy);
+  if (!(d > 1)) return;                                   // degenerate anchors → skip
   const len = scale * (sizeMul || 2.0);
-  const ar = (img.naturalHeight / img.naturalWidth) || 0.5;
-  const h = len * ar;
+  const s = len / d;
+  const ang = Math.atan2(tip.y - hand.y, tip.x - hand.x);
   ctx.save();
   ctx.translate(hand.x, hand.y);
-  ctx.rotate(ang);
+  ctx.rotate(ang - Math.atan2(dy, dx));
+  ctx.scale(s, s);
+  ctx.translate(-gX, -gY);
   ctx.imageSmoothingEnabled = true;
-  ctx.drawImage(img, -len * 0.18, -h / 2, len, h);   // grip sits slightly behind the hand
+  ctx.drawImage(img, 0, 0);
   ctx.restore();
 }
 

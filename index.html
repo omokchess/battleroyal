@@ -1049,6 +1049,7 @@
               <div id="meWeaponSizeWrap" class="hidden flex items-center gap-2">
                 <label class="text-[10px] text-gray-400 whitespace-nowrap">무기 크기</label>
                 <input id="meWeaponSize" type="range" min="0.6" max="4.5" step="0.05" value="2" class="flex-1 min-w-0" />
+                <button id="meAnchorBtn" class="bg-[#14100b] hover:bg-gray-800 border border-[#ffa050] text-[#ffa050] text-[10px] px-2 py-1 cursor-pointer active:scale-95 whitespace-nowrap" title="손잡이·끝 기준점 다시 설정">⚓ 기준점</button>
                 <button id="meDelWeapon" class="bg-[#14100b] hover:bg-gray-800 border border-red-500 text-red-300 text-[10px] px-2 py-1 cursor-pointer active:scale-95 whitespace-nowrap">🗑 삭제</button>
               </div>
             </div>
@@ -1091,6 +1092,19 @@
               <div id="meStatus" class="text-[10px] text-gray-400 leading-snug min-h-[14px]"></div>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- WEAPON IMAGE ANCHOR PICKER: mark the grip + tip on an uploaded weapon -->
+    <div id="meAnchorModal" class="hidden absolute inset-0 z-[90] flex items-center justify-center bg-black/80 p-4 font-mono">
+      <div class="bg-[#2c2016] border-2 border-[#ffa050] p-4 max-w-md w-full">
+        <div class="text-[#ffa050] text-sm font-bold mb-1">⚓ 무기 기준점 설정</div>
+        <p class="text-[10px] text-gray-400 mb-2 leading-snug"><b style="color:#ffa050">🟠 손잡이</b>와 <b class="text-[#ff5a5a]">🔴 끝부분</b> 점을 끌어(또는 클릭해) 위치를 맞추세요. 손잡이가 스틱맨 <b>손</b>에 붙고, 끝부분이 <b>무기 관절(주황 점)</b> 방향을 향하며, 손잡이~끝 거리가 무기 길이가 됩니다.</p>
+        <canvas id="meAnchorCanvas" width="380" height="300" class="w-full bg-[#0d0a06] border border-gray-600 touch-none mb-2" style="image-rendering:pixelated"></canvas>
+        <div class="flex gap-2">
+          <button id="meAnchorOk" class="flex-1 bg-gradient-to-r from-[#3aa856] to-[#1c6b33] hover:from-[#4cc96b] hover:to-[#175a2a] border-2 border-[#7df09a] text-white text-xs px-4 py-2 uppercase font-extrabold cursor-pointer active:scale-95">확인</button>
+          <button id="meAnchorCancel" class="bg-[#14100b] hover:bg-gray-800 border border-gray-500 text-gray-300 text-xs px-4 py-2 cursor-pointer active:scale-95">취소</button>
         </div>
       </div>
     </div>

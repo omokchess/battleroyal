@@ -120,6 +120,10 @@ export function v2ToV1Runtime(w) {
   if (basic) motionSet.attack = { ...basic.motion, hitboxes: basic.hitboxes || [], flipXKeys: (basic.weaponTimeline && basic.weaponTimeline.flipXKeys) || [] };
   if (w.presets.dash) motionSet.dash = withFlip(w.presets.dash);
   for (const k of NONCOMBAT_PRESET_KINDS) if (w.presets[k]) motionSet[k] = withFlip(w.presets[k]);
+  // Combat skill/heavy preset motions → the runtime slots the animator plays via
+  // synced stick_motion triggers (skill1=F→'skill', skill2=R→'skill2', …).
+  const SKILL_MOTION_SLOT = { skill1: 'skill', skill2: 'skill2', skill3: 'skill3', heavy: 'heavy' };
+  for (const k of Object.keys(SKILL_MOTION_SLOT)) if (w.presets[k]) motionSet[SKILL_MOTION_SLOT[k]] = withFlip(w.presets[k]);
   const c = basic ? basic.combat : {};
   const stats = {
     maxHp: w.baseStats.maxHp, moveSpeed: w.baseStats.moveSpeed,

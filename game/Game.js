@@ -2800,7 +2800,20 @@ export class Game {
   _tryDash(player, dirX, dirY) {
     if (!player || player.isDead) return;
     if (player.daggerQte) return;
-    if (player.startDash(dirX, dirY) && player.id === this.localPlayerId) Sound.play('dash');
+    if (player.startDash(dirX, dirY)) {
+      this._triggerStickMotion(player, 'dash', Date.now());
+      if (player.id === this.localPlayerId) Sound.play('dash');
+    }
+  }
+
+  /** Emit a synced stick_motion overlay so an equipped workshop weapon's authored
+   *  skill/dash motion plays for every viewer (no-op for base weapons or when the
+   *  weapon didn't author that motion tag). */
+  _triggerStickMotion(player, tag, now) {
+    const m = player && player.workshopWeapon && player.workshopWeapon.motionSet && player.workshopWeapon.motionSet[tag];
+    if (!m || !Array.isArray(m.keyframes) || !m.keyframes.length) return;
+    const life = Math.max(200, Math.min(1500, Math.round((m.duration || 0.6) * 1000)));
+    this.effects.push({ attackerId: player.id, x: player.x, y: player.y, weapon: '', type: 'stick_motion', tag, progress: 0, timestamp: now, lifetime: life });
   }
 
   _resolveInputDashVector(dash) {
@@ -2841,6 +2854,7 @@ export class Game {
 
   _handleSkillPressed(player, now) {
     if (!player || player.isDead || player.stunTimeLeft > 0) return;
+    this._triggerStickMotion(player, 'skill', now);   // workshop weapon's F-skill motion (cosmetic)
     if (player.weapon === 'dagger' && player.daggerQte) {
       this._tryDaggerQteInput(player, now);
       return;
@@ -2865,6 +2879,7 @@ export class Game {
 
   _handleAltSkillPressed(player, now) {
     if (!player || player.isDead || player.stunTimeLeft > 0) return;
+    this._triggerStickMotion(player, 'skill2', now);   // workshop weapon's R-skill motion (cosmetic)
     if (player.weapon === 'sniper') {
       this._handleTeleport(player, now);
     } else if (player.weapon === 'magicstaff') {

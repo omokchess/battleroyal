@@ -55,6 +55,7 @@ export class Player {
     this.dashCdLeft = 0;
     this.dashDirX = 0;
     this.dashDirY = 0;
+    this.airDashUsed = false;   // one air-dash per airtime → no dash-hovering
     this.stunTimeLeft = 0;
 
     // --- Platformer physics state (side-scroller pivot) ---
@@ -376,6 +377,7 @@ export class Player {
     if (this.grounded) {
       this.coyoteLeft = PHYS.coyoteMs / 1000;
       this.jumping = false;
+      this.airDashUsed = false;   // landing refreshes the air-dash
     } else if (wasGrounded && this.vy >= 0) {
       // just walked off a ledge → start the coyote window
       this.coyoteLeft = PHYS.coyoteMs / 1000;
@@ -393,6 +395,8 @@ export class Player {
   startDash(dirX = 0, dirY = 0) {
     if (this.isDead || this.stunTimeLeft > 0 || this.dashCdLeft > 0 || this.dashTimeLeft > 0) return false;
     if (this.buffType === 'axe_rage' && this.buffTimeLeft > 0) return false; // rooted during axe rage
+    // Airborne: only one dash until we touch ground again — stops dash-hovering.
+    if (!this.grounded && this.coyoteLeft <= 0 && this.airDashUsed) return false;
 
     let len = Math.hypot(dirX, dirY);
     if (len < 1e-4) {
@@ -406,6 +410,7 @@ export class Player {
     this.dashTimeLeft = PHYS.dashMs / 1000;
     this.iframeTimeLeft = PHYS.dashIframeMs / 1000;
     this.dashCdLeft = PHYS.dashCdMs / 1000;
+    if (!this.grounded && this.coyoteLeft <= 0) this.airDashUsed = true;
     this.jumping = false;
     return true;
   }
@@ -422,6 +427,7 @@ export class Player {
     this.dashTimeLeft = 0;
     this.iframeTimeLeft = 0;
     this.dashCdLeft = 0;
+    this.airDashUsed = false;
     this.dashDirX = 0;
     this.dashDirY = 0;
     this.stunTimeLeft = 0;

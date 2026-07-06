@@ -163,7 +163,7 @@ export function clampWorkshopWeapon(raw) {
   // Motion set: cosmetic pose data + the attack's hitboxes (kept via allowGameplay),
   // then geometry re-clamped to the workshop envelope. Keys are the FIXED motion
   // tag vocabulary only — unknown slots are dropped (no smuggling arbitrary data).
-  const MOTION_STATES = ['attack', 'run', 'idle', 'jump', 'dash', 'skill', 'hurt', 'kill'];
+  const MOTION_STATES = ['attack', 'run', 'idle', 'jump', 'dash', 'skill', 'skill2', 'skill3', 'heavy', 'hurt', 'kill'];
   const rawSet = (r.motionSet && typeof r.motionSet === 'object') ? r.motionSet : {};
   const motionSet = {};
   for (const state of MOTION_STATES) {

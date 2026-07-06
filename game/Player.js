@@ -7,7 +7,7 @@ import { Weapons, getEffectiveWeapon, DashConfig } from './Weapons.js';
 import { STATUS } from './Status.js';
 import { PHYS } from './Level.js';
 import { Collision } from './Collision.js';
-import { clampWorkshopWeapon } from './Workshop.js';
+import { clampWorkshopWeapon, sanitizeCombat, clampWorkshopHitboxes, sanitizeProjectile } from './Workshop.js';
 import { BlockVM } from './BlockVM.js';
 import { BlockBudget, weaponBaseDps } from './BlockBudget.js';
 
@@ -166,9 +166,24 @@ export class Player {
     }
     // Ranged basic attack (projectile config) — kept for the fire path + renderer.
     if (def && def.ranged && def.projectile) { safe.ranged = true; safe.projectile = def.projectile; }
-    // Heavy (평타 3연타 finisher) damage/knockback — survives the re-clamp.
-    if (def && Number.isFinite(def.heavyDamage)) safe.heavyDamage = def.heavyDamage;
-    if (def && Number.isFinite(def.heavyKnockback)) safe.heavyKnockback = def.heavyKnockback;
+    // Heavy (평타 3연타) + skill1/2/3 combat (damage/hitboxes/ranged) — the V1
+    // clamp drops unknown keys, so re-clamp defensively (this def may be a synced
+    // peer's blob) and re-attach, mirroring ranged/weaponVisual above.
+    if (def && def.presetCombat && typeof def.presetCombat === 'object') {
+      const pc = {};
+      for (const k in def.presetCombat) pc[k] = sanitizeCombat(def.presetCombat[k]);
+      safe.presetCombat = pc;
+    }
+    if (def && def.presetHitboxes && typeof def.presetHitboxes === 'object') {
+      const ph = {};
+      for (const k in def.presetHitboxes) ph[k] = clampWorkshopHitboxes(def.presetHitboxes[k]);
+      safe.presetHitboxes = ph;
+    }
+    if (def && def.presetRanged && typeof def.presetRanged === 'object') {
+      const pr = {};
+      for (const k in def.presetRanged) pr[k] = sanitizeProjectile(def.presetRanged[k]);
+      safe.presetRanged = pr;
+    }
     this.workshopWeapon = safe;
     // Block-gimmick VM (host runs it; the constructor sanitizes + caps the AST).
     this.blockVM = safe.blocks ? new BlockVM(safe.blocks, 'workshop') : null;
@@ -462,6 +477,8 @@ export class Player {
     this.sniperTeleportTargetUntil = 0;
     this.altSkillCdLeft = 0;
     this.targetSkillCdLeft = 0;
+    this.wsSkillCd = {};
+    this._basicCombo = 0;
     this.arrowStacks = 0;
     this.greatswordChargeStart = 0;
     this.greatswordChargeAngle = 0;

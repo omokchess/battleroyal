@@ -1920,8 +1920,8 @@ export class Renderer {
       const angle = Number.isFinite(p.angle) ? p.angle : Math.atan2(p.vy, p.vx);
       const owner = players && p.ownerId ? players[p.ownerId] : null;
 
-      if (p.kind === 'wsranged') {
-        // Workshop ranged projectile: draw its chosen procedural shape.
+      if (p.kind === 'wsranged' || p.kind === 'wsskill') {
+        // Workshop ranged projectile (basic or a skill preset): its chosen shape.
         drawProjectileShape(ctx, scr.x, scr.y, angle, p.wsImageId || 'arrow', (18 * (p.wsScale || 1)) * zoom);
       } else if (p.kind === 'thrownspear') {
         this._drawWeaponProjectile(ctx, scr, angle, zoom, 'spear', owner, { tumble: true });

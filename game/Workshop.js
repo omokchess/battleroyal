@@ -125,8 +125,9 @@ export function enforceBudget(stats) {
   return { stats: s, cost: statCost(s), overBudget: over };
 }
 
-/** Clamp a list of hitboxes to the (tighter) workshop geometry caps. */
-function clampWorkshopHitboxes(hitboxes) {
+/** Clamp a list of hitboxes to the (tighter) workshop geometry caps. Exported so
+ *  Player.js can defensively re-clamp a synced peer's skill/heavy hitboxes. */
+export function clampWorkshopHitboxes(hitboxes) {
   if (!Array.isArray(hitboxes)) return [];
   const out = [];
   for (const hb of hitboxes.slice(0, ENVELOPE.maxHitboxes)) {
@@ -169,8 +170,8 @@ export function clampWorkshopWeapon(raw) {
   for (const state of MOTION_STATES) {
     if (!rawSet[state]) continue;
     const m = sanitizeMotion(rawSet[state], undefined, { allowGameplay: true });
-    // Only attack + heavy (the 3-combo finisher) carry hitboxes; rest cosmetic.
-    if (state === 'attack' || state === 'heavy') { if (Array.isArray(m.hitboxes)) m.hitboxes = clampWorkshopHitboxes(m.hitboxes); }
+    // Attack/heavy/skill1-3 carry real hitboxes (they drive combat); rest cosmetic.
+    if (['attack', 'heavy', 'skill', 'skill2', 'skill3'].includes(state)) { if (Array.isArray(m.hitboxes)) m.hitboxes = clampWorkshopHitboxes(m.hitboxes); }
     else delete m.hitboxes;
     // Preserve the weapon flip timeline (sanitizeMotion drops it) — cosmetic.
     if (Array.isArray(rawSet[state].flipXKeys)) m.flipXKeys = sanitizeFlipKeys(rawSet[state].flipXKeys);

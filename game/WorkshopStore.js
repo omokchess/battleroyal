@@ -19,6 +19,7 @@
 import {
   clampWorkshopWeaponV2, toWorkshopWeaponV2, clampWorkshopWeapon,
   PRIMARY_PRESET_KEYS, COMBAT_PRESET_KINDS, NONCOMBAT_PRESET_KINDS,
+  sanitizeCombat, clampWorkshopHitboxes,
 } from './Workshop.js';
 import { saveCustomWeaponRecord } from './WeaponImages.js';
 
@@ -122,8 +123,14 @@ export function v2ToV1Runtime(w) {
   for (const k of NONCOMBAT_PRESET_KINDS) if (w.presets[k]) motionSet[k] = withFlip(w.presets[k]);
   // Combat skill preset motions → the runtime slots the animator plays via synced
   // stick_motion triggers (skill1=F->'skill', skill2=E->'skill2', skill3=R->'skill3').
+  // Each also keeps its OWN hitboxes (like heavy) so the actual ability can fire,
+  // not just the cosmetic pose.
   const SKILL_MOTION_SLOT = { skill1: 'skill', skill2: 'skill2', skill3: 'skill3' };
-  for (const k of Object.keys(SKILL_MOTION_SLOT)) if (w.presets[k]) motionSet[SKILL_MOTION_SLOT[k]] = withFlip(w.presets[k]);
+  for (const k of Object.keys(SKILL_MOTION_SLOT)) {
+    if (!w.presets[k]) continue;
+    const sp = w.presets[k];
+    motionSet[SKILL_MOTION_SLOT[k]] = { ...withFlip(sp), hitboxes: sp.hitboxes || [] };
+  }
   // Heavy (평타 3연타 finisher) keeps its OWN hitboxes for the 3rd-hit swing.
   if (w.presets.heavy) motionSet.heavy = { ...w.presets.heavy.motion, hitboxes: w.presets.heavy.hitboxes || [], flipXKeys: (w.presets.heavy.weaponTimeline && w.presets.heavy.weaponTimeline.flipXKeys) || [] };
   const c = basic ? basic.combat : {};
@@ -137,13 +144,26 @@ export function v2ToV1Runtime(w) {
   if (w.weaponVisual && (w.weaponVisual.imageId || w.weaponVisual.dual)) rt.weaponVisual = { imageId: w.weaponVisual.imageId || null, scale: w.weaponVisual.scale || 1, dual: !!w.weaponVisual.dual };
   // The primary (basic) preset's ranged/projectile config drives the basic attack.
   if (basic && basic.ranged && basic.projectile) { rt.ranged = true; rt.projectile = basic.projectile; }
-  // Heavy combat (3rd-hit finisher damage/knockback) — clampWorkshopWeapon drops
-  // unknown keys, so attach after it (mirrors ranged/weaponVisual).
-  if (w.presets.heavy && w.presets.heavy.combat) {
-    const hc = w.presets.heavy.combat;
-    rt.heavyDamage = Number.isFinite(hc.damage) ? hc.damage : null;
-    rt.heavyKnockback = Number(hc.knockback) || 0;
+  // Heavy (3rd-hit finisher) + skill1/2/3 each carry their OWN combat stats
+  // (damage/cooldown/knockback/status) + hitboxes/ranged-projectile so the game
+  // can actually EXECUTE the authored ability, not just play its motion.
+  // clampWorkshopWeapon (V1) only knows the legacy shape, so re-clamp + attach
+  // these after it (mirrors ranged/weaponVisual above).
+  const presetCombat = {};
+  const presetHitboxes = {};
+  const presetRanged = {};
+  const abilitySlots = { heavy: 'heavy', ...SKILL_MOTION_SLOT };
+  for (const presetKey of Object.keys(abilitySlots)) {
+    const sp = w.presets[presetKey];
+    if (!sp || !sp.combat) continue;
+    const slot = abilitySlots[presetKey];
+    presetCombat[slot] = sanitizeCombat(sp.combat);              // re-clamp defensively
+    presetHitboxes[slot] = clampWorkshopHitboxes(sp.hitboxes);   // re-clamp defensively
+    if (sp.ranged && sp.projectile) presetRanged[slot] = sp.projectile;
   }
+  if (Object.keys(presetCombat).length) rt.presetCombat = presetCombat;
+  if (Object.keys(presetHitboxes).length) rt.presetHitboxes = presetHitboxes;
+  if (Object.keys(presetRanged).length) rt.presetRanged = presetRanged;
   return rt;
 }
 

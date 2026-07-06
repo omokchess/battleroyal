@@ -555,6 +555,9 @@ export class Game {
       }
       if (p.altSkillCdLeft > 0) p.altSkillCdLeft = Math.max(0, p.altSkillCdLeft - deltaTime);
       if (p.targetSkillCdLeft > 0) p.targetSkillCdLeft = Math.max(0, p.targetSkillCdLeft - deltaTime);
+      if (p.wsSkillCd) {
+        for (const key in p.wsSkillCd) if (p.wsSkillCd[key] > 0) p.wsSkillCd[key] = Math.max(0, p.wsSkillCd[key] - deltaTime);
+      }
       if (p.sniperTeleportTargetUntil > 0 && now > p.sniperTeleportTargetUntil) {
         p.sniperTeleportTargetUntil = 0;
       }
@@ -710,6 +713,16 @@ export class Game {
             const owner = this.players[proj.ownerId];
             const died = target.takeDamage(proj.damage || 0, owner ? owner.nickname : '');
             if (owner) this._applyWorkshopStatus(owner, target, now);
+            if (died) this._creditKill(proj.ownerId, target);
+            if (!proj.piercing) proj.isDead = true;
+            return;
+          }
+          if (proj.kind === 'wsskill') {
+            // A workshop skill1/2/3's OWN ranged ability: its own damage + status
+            // (not the basic swing's) — see _fireWorkshopPresetProjectile.
+            const owner = this.players[proj.ownerId];
+            const died = target.takeDamage(proj.damage || 0, owner ? owner.nickname : '');
+            if (proj.wsStatus) this._applyStatusEffect(target, proj.ownerId, proj.wsStatus, proj.wsStatusMs || 0, now);
             if (died) this._creditKill(proj.ownerId, target);
             if (!proj.piercing) proj.isDead = true;
             return;
@@ -988,12 +1001,71 @@ export class Game {
   }
   /** Apply the workshop weapon's status effect to a target (shared by melee/ranged). */
   _applyWorkshopStatus(owner, target, now) {
-    const s = owner.workshopWeapon?.stats; if (!s || !s.status || s.status === 'none') return;
-    const ms = s.statusDurationMs || 0;
-    if (s.status === 'slow') this._applySlow(target, ms);
-    else if (s.status === 'bleed') this._applyBleed(target, owner.id);
-    else if (s.status === 'burn') this._applyBurn(target, owner.id, 2, ms);
-    else if (s.status === 'stun') this._applyStun(target, ms, now);
+    const s = owner.workshopWeapon?.stats;
+    if (!s || !s.status || s.status === 'none') return;
+    this._applyStatusEffect(target, owner.id, s.status, s.statusDurationMs || 0, now);
+  }
+
+  /** Apply an arbitrary status effect (shared by basic/heavy/skill hits — each
+   *  preset carries its own status/duration rather than always the basic one). */
+  _applyStatusEffect(target, ownerId, status, ms, now) {
+    if (!status || status === 'none') return;
+    if (status === 'slow') this._applySlow(target, ms);
+    else if (status === 'bleed') this._applyBleed(target, ownerId);
+    else if (status === 'burn') this._applyBurn(target, ownerId, 2, ms);
+    else if (status === 'stun') this._applyStun(target, ms, now);
+  }
+
+  /** Fire a ranged skill preset's projectile (skill1/2/3) — same shape as the
+   *  basic workshop projectile but carries ITS OWN damage/status so hits apply
+   *  the authored skill's combat, not the basic swing's. */
+  _fireWorkshopPresetProjectile(player, pj, combat, now, tagSuffix) {
+    player.lastAttackTime = now; player.swingDirection *= -1;
+    const D2R = Math.PI / 180;
+    let ang;
+    if (pj.directionSource === 'facing') ang = (player.facingRight === false || player.facing < 0) ? Math.PI : 0;
+    else if (pj.directionSource === 'angle') ang = (pj.angle || 0) * D2R;
+    else ang = player.angle || 0;   // cursor/default = aim angle
+    const speed = pj.speed || 600;
+    const lifeSec = Math.max(0.1, (pj.lifetimeMs || 1200) / 1000);
+    const range = speed * lifeSec;
+    const dmg = Number.isFinite(combat.damage) ? combat.damage : 12;
+    const sx = player.x + Math.cos(ang) * (player.radius + 3), sy = player.y + Math.sin(ang) * (player.radius + 3);
+    const proj = new Projectile(`wss_${player.id}_${this._wsrSeq = (this._wsrSeq || 0) + 1}`, player.id, sx, sy, ang, speed, range, dmg, 'wsskill');
+    proj.weapon = player.weapon; proj.piercing = !!pj.pierce;
+    const hb = pj.hitbox || {};
+    proj.radius = (hb.shape === 'circle') ? Math.max(3, hb.radius || 8) : Math.max(4, Math.max(hb.width || 24, hb.height || 12) / 2);
+    proj.wsImageId = pj.imageId || 'arrow'; proj.wsScale = pj.scale || 1;
+    proj.wsStatus = combat.status || 'none';
+    proj.wsStatusMs = combat.statusDurationMs || 0;
+    this.projectiles.push(proj);
+    if (player.id === this.localPlayerId) Sound.play('shoot');
+  }
+
+  /** Fire a workshop weapon's skill1/skill2/skill3 (F/E/R) authored ability —
+   *  melee hitbox swing or ranged projectile, gated by its OWN cooldown. Returns
+   *  true when the equipped weapon owns this slot (caller skips base-weapon
+   *  fallback logic), false when nothing is authored there (or no workshop
+   *  weapon is equipped) so legacy per-weapon skills keep working unequipped. */
+  _activateWorkshopSkill(player, slot, now) {
+    const ws = player && player.workshopWeapon;
+    const combat = ws && ws.presetCombat && ws.presetCombat[slot];
+    if (!combat) return false;
+    if (!player.wsSkillCd) player.wsSkillCd = {};
+    if ((player.wsSkillCd[slot] || 0) > 0) return true;   // on cooldown — button consumed, nothing fires
+    player.wsSkillCd[slot] = (Number.isFinite(combat.cooldownMs) ? combat.cooldownMs : 1000) / 1000;
+    const ranged = ws.presetRanged && ws.presetRanged[slot];
+    if (ranged) { this._fireWorkshopPresetProjectile(player, ranged, combat, now); return true; }
+    const hb = ws.presetHitboxes && ws.presetHitboxes[slot];
+    if (Array.isArray(hb) && hb.length) {
+      const motion = ws.motionSet && ws.motionSet[slot];
+      const swingMotion = (motion && Array.isArray(motion.hitboxes) && motion.hitboxes.length) ? motion : { duration: 0.4, hitboxes: hb };
+      this._startHitboxSwing(player, swingMotion, now, {
+        damage: combat.damage, knockback: combat.knockback,
+        status: combat.status, statusMs: combat.statusDurationMs,
+      });
+    }
+    return true;   // slot is authored (motion + cooldown apply) even with no hitbox/projectile yet
   }
 
   /** Begin a hitbox-driven swing: manage the cooldown + render animation via
@@ -1006,7 +1078,9 @@ export class Game {
       durMs: Math.max(80, (motion.duration || 0.4) * 1000),
       hitboxes: motion.hitboxes,
       knockback: Number.isFinite(opts.knockback) ? opts.knockback : (motion.knockback || 0),
-      damage: Number.isFinite(opts.damage) ? opts.damage : null,   // override (e.g. heavy finisher)
+      damage: Number.isFinite(opts.damage) ? opts.damage : null,   // override (e.g. heavy/skill preset)
+      status: opts.status && opts.status !== 'none' ? opts.status : null,
+      statusMs: opts.statusMs || 0,
       hit: new Set(),
     };
     if (player.id === this.localPlayerId) Sound.play(Sound.attackSoundFor(getEffectiveWeapon(player.weapon, player.buffType)));
@@ -1045,6 +1119,7 @@ export class Game {
           sw.hit.add(t.id);
           if (sw.knockback) this._displace(t, facing * sw.knockback, 0);
           const died = t.takeDamage(dmg, p.nickname);
+          if (sw.status) this._applyStatusEffect(t, p.id, sw.status, sw.statusMs, now);
           if (died) this._creditKill(p.id, t);
           if (p.id === this.localPlayerId) this._triggerHitstop(now, 42);
         }
@@ -1412,8 +1487,9 @@ export class Game {
       // 강공격 = 평타 3연타. Every 3rd consecutive basic (within the combo window)
       // swings the workshop weapon's heavy preset instead — bigger reach/damage.
       const ws = player.workshopWeapon;
-      const heavy = ws && ws.motionSet && ws.motionSet.heavy;
-      const heavyReady = heavy && Array.isArray(heavy.hitboxes) && heavy.hitboxes.length;
+      const heavyCombat = ws && ws.presetCombat && ws.presetCombat.heavy;
+      const heavyHb = ws && ws.presetHitboxes && ws.presetHitboxes.heavy;
+      const heavyReady = heavyCombat && Array.isArray(heavyHb) && heavyHb.length;
       if (heavyReady) {
         if (!player._basicComboAt || (now - player._basicComboAt) > 1400) player._basicCombo = 0;
         player._basicComboAt = now;
@@ -1421,10 +1497,13 @@ export class Game {
         if (player._basicCombo >= 3) {
           player._basicCombo = 0;
           this._triggerStickMotion(player, 'heavy', now);
-          const heavyDmg = Number.isFinite(ws.heavyDamage)
-            ? ws.heavyDamage
-            : Math.round((ws.stats?.damage || 12) * 1.6);
-          this._startHitboxSwing(player, heavy, now, { damage: heavyDmg, knockback: ws.heavyKnockback || heavy.knockback || 0 });
+          const motion = ws.motionSet && ws.motionSet.heavy;
+          const swingMotion = (motion && Array.isArray(motion.hitboxes) && motion.hitboxes.length) ? motion : { duration: 0.5, hitboxes: heavyHb };
+          this._startHitboxSwing(player, swingMotion, now, {
+            damage: Number.isFinite(heavyCombat.damage) ? heavyCombat.damage : Math.round((ws.stats?.damage || 12) * 1.6),
+            knockback: heavyCombat.knockback,
+            status: heavyCombat.status, statusMs: heavyCombat.statusDurationMs,
+          });
           return true;
         }
       }
@@ -2875,6 +2954,9 @@ export class Game {
   _handleSkillPressed(player, now) {
     if (!player || player.isDead || player.stunTimeLeft > 0) return;
     this._triggerStickMotion(player, 'skill', now);   // workshop weapon's F-skill motion (cosmetic)
+    // An equipped workshop weapon's OWN skill1 ability (if authored) replaces the
+    // base weapon's hardcoded F-skill entirely — its stats assume no workshop kit.
+    if (this._activateWorkshopSkill(player, 'skill', now)) return;
     if (player.weapon === 'dagger' && player.daggerQte) {
       this._tryDaggerQteInput(player, now);
       return;
@@ -2899,7 +2981,8 @@ export class Game {
 
   _handleAltSkillPressed(player, now) {
     if (!player || player.isDead || player.stunTimeLeft > 0) return;
-    this._triggerStickMotion(player, 'skill2', now);   // workshop weapon's R-skill motion (cosmetic)
+    this._triggerStickMotion(player, 'skill2', now);   // workshop weapon's E-skill motion (cosmetic)
+    if (this._activateWorkshopSkill(player, 'skill2', now)) return;
     if (player.weapon === 'sniper') {
       this._handleTeleport(player, now);
     } else if (player.weapon === 'magicstaff') {
@@ -2921,6 +3004,10 @@ export class Game {
   _handleTargetCast(player, x, y, now) {
     if (!player || player.isDead || player.stunTimeLeft > 0) return;
     this._triggerStickMotion(player, 'skill3', now);   // 스킬3 (R) motion
+    // The R-skill fires toward the aim direction — workshop skill3 uses the same
+    // facing/aim angle a ranged ability would (already resolved into player.angle
+    // by the caller); melee skill3 swings its hitboxes from the player's position.
+    if (this._activateWorkshopSkill(player, 'skill3', now)) return;
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     const targetX = Math.max(0, Math.min(this.mapWidth, x));
     const targetY = Math.max(0, Math.min(this.mapHeight, y));

@@ -14,6 +14,15 @@ service cloud.firestore {
       return signedIn() && exists(/databases/$(database)/documents/admin/$(request.auth.uid));
     }
 
+    // A workshop weapon may carry the author's custom weapon image (a bounded
+    // dataURL) so recipients see it too. Keep it well under Firestore's 1MB doc
+    // cap; null / absent is always fine. (.get avoids errors on missing keys.)
+    function weaponImageWithinLimit(data) {
+      return !('weaponImage' in data)
+          || data.weaponImage == null
+          || data.weaponImage.get('src', '').size() < 500000;
+    }
+
     match /items/{itemId} {
       allow read: if true;
       allow write: if false;
@@ -41,8 +50,10 @@ service cloud.firestore {
     match /workshop_weapons/{weaponId} {
       allow read: if resource.data.status == 'published'
                   || isOwner(resource.data.author_id) || isAdmin();
-      allow create: if isOwner(request.resource.data.author_id);
-      allow update: if isOwner(resource.data.author_id) || isAdmin()
+      allow create: if isOwner(request.resource.data.author_id)
+                  && weaponImageWithinLimit(request.resource.data);
+      allow update: if (isOwner(resource.data.author_id) && weaponImageWithinLimit(request.resource.data))
+                  || isAdmin()
                   || (signedIn() && request.resource.data.diff(resource.data)
                         .affectedKeys().hasOnly(['likes', 'plays', 'reports', 'updated_at']));
       allow delete: if isOwner(resource.data.author_id) || isAdmin();

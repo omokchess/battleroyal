@@ -22,7 +22,7 @@ import { solveStickman, drawStickFromJoints, samplePose, STICK_NEUTRAL, WEAPON_S
 import { resolveMotion, weaponSetId, sanitizeMotion, registerMotionSet, MOTION_LIMITS, setCanonicalWeapon } from './Motion.js';
 import { captureMotionFromWebcam } from './PoseCapture.js';
 import { equippedStickLook, saveStickLook } from './StickLook.js';
-import { clampWorkshopStats, statCost, enforceBudget, clampWorkshopWeapon, POINT_BUDGET, toWorkshopWeaponV2, clampWorkshopWeaponV2, COMBAT_PRESET_KINDS, PRIMARY_PRESET_KEYS } from './Workshop.js';
+import { clampWorkshopStats, statCost, enforceBudget, clampWorkshopWeapon, POINT_BUDGET, toWorkshopWeaponV2, clampWorkshopWeaponV2, COMBAT_PRESET_KINDS, NONCOMBAT_PRESET_KINDS, PRIMARY_PRESET_KEYS, PRESET_LABELS, ALL_PRESET_KINDS, makeEmptyWeaponV2, makeEmptyPreset, statCostV2, sanitizeCombat, VALID_STATUS } from './Workshop.js';
 import { saveWorkshopWeaponLocal, equipWorkshopWeaponLocal, v2ToV1Runtime } from './WorkshopStore.js';
 // Local workshop storage + equip live in WorkshopStore now; re-export the
 // legacy-named helpers so existing import sites (main.js) keep working.
@@ -247,6 +247,7 @@ export class MotionEditor {
     };
     // Workshop stat sliders (Tier 2): live-clamp into the envelope + budget bar.
     STAT_KEYS.forEach(k => $('ms_' + k)?.addEventListener('input', (e) => this._updateStat(k, parseFloat(e.target.value))));
+    $('ms_dashDistance')?.addEventListener('input', (e) => this._updateStat('dashDistance', parseFloat(e.target.value)));
     $('ms_status')?.addEventListener('change', (e) => this._updateStat('status', e.target.value));
     $('meBlockBtn')?.addEventListener('click', () => {
       if (!this.blockEditor) this.blockEditor = new BlockEditor();
@@ -470,19 +471,25 @@ export class MotionEditor {
     // mode hides it. Title/CTA reflect the mode.
     const ws = this.mode === 'workshop';
     $('meStatsPanel')?.classList.toggle('hidden', !ws);
+    $('mePresetBar')?.classList.toggle('hidden', !ws);
+    $('meLegacyPresetBlock')?.classList.toggle('hidden', ws);   // V2 preset bar replaces it in workshop
     const title = this.root.querySelector('h2'); if (title) title.textContent = ws ? '🔧 무기 공방' : '🎬 모션 에디터';
     if (ws) {
-      this._editingId = null; this._editingV2 = null;   // fresh session (openWorkshopV2 sets these after)
-      this.stats = clampWorkshopStats({});
-      this.blocks = null;
-      STAT_KEYS.forEach(k => { const el = $('ms_' + k); if (el) el.value = String(this.stats[k]); const v = $('ms_' + k + '_v'); if (v) v.textContent = this.stats[k]; });
-      if ($('ms_status')) $('ms_status').value = this.stats.status;
-      this._renderBudget();
-      this._updateBlockCount();
+      // V2-native: edit a whole weapon (baseStats + per-preset). openWorkshopV2
+      // sets _pendingV2; the plain path creates a fresh empty weapon.
+      this._editingV2 = this._pendingV2 || makeEmptyWeaponV2({});
+      this._editingId = this._editingV2.id;
+      this._activeKey = this._editingV2.presets[this._editingV2.equippedPresetKey]
+        ? this._editingV2.equippedPresetKey : Object.keys(this._editingV2.presets)[0];
+      const nm = $('meName'); if (nm) nm.value = this._editingV2.name;
+      if (this._editingV2.color) { this.look = { ...this.look, color: this._editingV2.color }; if ($('meColor')) $('meColor').value = this.look.color; }
+      const vis = this._editingV2.weaponVisual;
+      this.weapon = (vis && vis.imageId && this._customWeapon(vis.imageId)) ? vis.imageId : 'sword';
     }
     this._populateWeaponSelect();
     this._syncWeaponUI();
-    this._loadTemplate();
+    if (ws) { this._renderPresetBar(); this._loadActivePreset(); }
+    else { this._loadTemplate(); }
     this._syncOnionBtn();
     this.root.classList.remove('hidden');
     // First visit to the workshop → guided "make one weapon" tutorial.
@@ -490,54 +497,150 @@ export class MotionEditor {
     else this._tutStop();
   }
 
-  /** Open the editor loaded with an existing V2 workshop weapon (from the grid /
-   *  armory). Loads its `basic` preset into the current single-motion editor;
-   *  other presets are preserved through save (full per-preset UI is a later task). */
+  /** Open the editor loaded with an existing V2 workshop weapon. */
   openWorkshopV2(w) {
+    this._pendingV2 = w;
     this.open('sword', 'workshop');
-    this._applyV2ToEditor(w);
-  }
-  _applyV2ToEditor(w) {
-    if (!w) return;
-    this._editingId = w.id;
-    this._editingV2 = w;
-    let basic = w.presets.basic;
-    if (!basic || !COMBAT_PRESET_KINDS.has(basic.kind)) {
-      for (const k of PRIMARY_PRESET_KEYS) { const p = w.presets[k]; if (p && COMBAT_PRESET_KINDS.has(p.kind)) { basic = p; break; } }
-    }
-    if (basic) {
-      this.motion = sanitizeMotion({ ...basic.motion, hitboxes: basic.hitboxes || [] }, undefined, { allowGameplay: true });
-      this.blocks = basic.blocks || null;
-    }
-    this.stats = clampWorkshopStats({
-      maxHp: w.baseStats.maxHp, moveSpeed: w.baseStats.moveSpeed,
-      ...(basic && basic.combat ? basic.combat : {}),
-    });
-    // Restore the custom weapon image if it's available on this device.
-    if (w.weaponVisual && w.weaponVisual.imageId && this._customWeapon(w.weaponVisual.imageId)) {
-      this.weapon = w.weaponVisual.imageId;
-    }
-    const nm = document.getElementById('meName'); if (nm) nm.value = w.name;
-    if (w.color) { this.look = { ...this.look, color: w.color }; }
-    STAT_KEYS.forEach(k => { const el = document.getElementById('ms_' + k); if (el) el.value = String(this.stats[k]); const v = document.getElementById('ms_' + k + '_v'); if (v) v.textContent = this.stats[k]; });
-    if (document.getElementById('ms_status')) document.getElementById('ms_status').value = this.stats.status;
-    this.selKf = 0; this.scrubT = this.motion.keyframes[0]?.t || 0; this.playing = false;
-    this._populateWeaponSelect(); this._syncWeaponUI();
-    this._renderBudget(); this._updateBlockCount(); this._renderAll();
+    this._pendingV2 = null;
     this._setStatus(`"${w.name}" 편집 중. 💾 저장하면 무기고에 반영됩니다.`);
   }
 
-  /** Live-update one workshop stat: clamp into the envelope, reflect the clamped
-   *  value back into the slider, and refresh the budget bar. */
+  // ── V2 preset tabs + per-preset load/commit ────────────────────────────────
+  _presetOrder() {
+    const w = this._editingV2; if (!w) return [];
+    const primary = PRIMARY_PRESET_KEYS.filter(k => w.presets[k]);
+    const noncombat = [...NONCOMBAT_PRESET_KINDS].filter(k => w.presets[k]);
+    return [...primary, ...noncombat];
+  }
+  _renderPresetBar() {
+    const bar = document.getElementById('mePresetBar'); const w = this._editingV2;
+    if (!bar || !w) return;
+    bar.innerHTML = '';
+    for (const key of this._presetOrder()) {
+      const wrap = document.createElement('span'); wrap.style.cssText = 'display:inline-flex;align-items:center';
+      const b = document.createElement('button');
+      const active = key === this._activeKey;
+      b.className = 'text-[10px] px-2 py-1 rounded cursor-pointer active:scale-95 ' + (active ? 'bg-[#1c6b33] text-white border border-[#7df09a]' : 'bg-[#14100b] text-gray-300 border border-gray-700 hover:border-gray-500');
+      const star = w.equippedPresetKey === key ? '★ ' : '';
+      b.textContent = star + (PRESET_LABELS[key] || key);
+      b.title = COMBAT_PRESET_KINDS.has(key) ? '공격 프리셋' : (key === 'dash' ? '대시' : '비공격(코스메틱) 프리셋');
+      b.addEventListener('click', () => this._switchPreset(key));
+      wrap.appendChild(b);
+      if (this._presetOrder().length > 1) {
+        const del = document.createElement('button'); del.textContent = '✕';
+        del.className = 'text-[9px] text-gray-600 hover:text-red-400 px-0.5 cursor-pointer';
+        del.title = '프리셋 삭제';
+        del.addEventListener('click', (e) => { e.stopPropagation(); this._deletePreset(key); });
+        wrap.appendChild(del);
+      }
+      bar.appendChild(wrap);
+    }
+    // ＋ add-preset menu (kinds not yet present)
+    const missing = [...PRIMARY_PRESET_KEYS, ...NONCOMBAT_PRESET_KINDS].filter(k => !w.presets[k]);
+    if (missing.length) {
+      const add = document.createElement('select');
+      add.className = 'text-[10px] bg-[#14100b] text-[#7df09a] border border-[#7df09a] rounded px-1 py-1 cursor-pointer';
+      add.innerHTML = '<option value="">＋ 프리셋</option>' + missing.map(k => `<option value="${k}">${PRESET_LABELS[k] || k}</option>`).join('');
+      add.addEventListener('change', () => { if (add.value) this._addPresetKind(add.value); });
+      bar.appendChild(add);
+    }
+  }
+  _switchPreset(key) {
+    if (!this._editingV2 || key === this._activeKey) return;
+    this._commitActivePreset();
+    this._activeKey = key;
+    this._loadActivePreset();
+    this._renderPresetBar();
+  }
+  _addPresetKind(kind) {
+    const w = this._editingV2; if (!w || !ALL_PRESET_KINDS.has(kind) || w.presets[kind]) return;
+    this._commitActivePreset();
+    w.presets[kind] = makeEmptyPreset(kind);
+    this._activeKey = kind;
+    this._loadActivePreset();
+    this._renderPresetBar();
+    this._setStatus(`"${PRESET_LABELS[kind] || kind}" 프리셋을 추가했습니다.`);
+  }
+  _deletePreset(key) {
+    const w = this._editingV2; if (!w || this._presetOrder().length <= 1) return;
+    delete w.presets[key];
+    if (w.equippedPresetKey === key) w.equippedPresetKey = this._presetOrder()[0];
+    if (this._activeKey === key) this._activeKey = this._presetOrder()[0];
+    this._loadActivePreset();
+    this._renderPresetBar();
+  }
+  /** Write the current editor pose/blocks back into the active preset. */
+  _commitActivePreset() {
+    const w = this._editingV2, key = this._activeKey, p = w && w.presets[key];
+    if (!p) return;
+    p.motion = this.motion;
+    if (COMBAT_PRESET_KINDS.has(key)) { p.hitboxes = Array.isArray(this.motion.hitboxes) ? this.motion.hitboxes : []; p.blocks = this.blocks; }
+    else if (key === 'dash') { p.blocks = this.blocks; }
+  }
+  /** Load the active preset into the editor + toggle the combat/dash UI. */
+  _loadActivePreset() {
+    const w = this._editingV2, key = this._activeKey, p = w && w.presets[key];
+    const $ = (id) => document.getElementById(id);
+    if (!p) return;
+    const isCombat = COMBAT_PRESET_KINDS.has(key), isDash = key === 'dash';
+    this.motion = sanitizeMotion(isCombat ? { ...p.motion, hitboxes: p.hitboxes || [] } : p.motion, undefined, { allowGameplay: true });
+    this.blocks = (isCombat || isDash) ? (p.blocks || null) : null;
+    this.selKf = 0; this.scrubT = this.motion.keyframes[0]?.t || 0; this.playing = false;
+    this._syncBaseSliders();
+    if (isCombat) this._syncCombatSliders(p.combat);
+    if (isDash && $('ms_dashDistance')) { $('ms_dashDistance').value = String(p.dashDistance || 120); if ($('ms_dashDistance_v')) $('ms_dashDistance_v').textContent = p.dashDistance || 120; }
+    $('meCombatStats')?.classList.toggle('hidden', !isCombat);
+    $('meDashStats')?.classList.toggle('hidden', !isDash);
+    $('meBlockBtn')?.classList.toggle('hidden', !(isCombat || isDash));
+    $('meHitboxRow')?.classList.toggle('hidden', !isCombat);   // hitboxes = combat only
+    const cn = $('meCombatPresetName'); if (cn) cn.textContent = PRESET_LABELS[key] || key;
+    this._renderBudget(); this._updateBlockCount(); this._renderAll();
+  }
+  _syncBaseSliders() {
+    const w = this._editingV2; if (!w) return;
+    const $ = (id) => document.getElementById(id);
+    if ($('ms_maxHp')) { $('ms_maxHp').value = String(w.baseStats.maxHp); if ($('ms_maxHp_v')) $('ms_maxHp_v').textContent = w.baseStats.maxHp; }
+    if ($('ms_moveSpeed')) { $('ms_moveSpeed').value = String(w.baseStats.moveSpeed); if ($('ms_moveSpeed_v')) $('ms_moveSpeed_v').textContent = w.baseStats.moveSpeed; }
+  }
+  _syncCombatSliders(c) {
+    const $ = (id) => document.getElementById(id);
+    for (const k of ['damage', 'range', 'cooldownMs', 'knockback', 'statusDurationMs']) {
+      if ($('ms_' + k)) { $('ms_' + k).value = String(c[k]); if ($('ms_' + k + '_v')) $('ms_' + k + '_v').textContent = c[k]; }
+    }
+    if ($('ms_status')) $('ms_status').value = c.status;
+  }
+
+  /** Live-update one workshop stat → V2 model, blocking any change that pushes the
+   *  budget over 100 (except cooldown, which is budget-free). Lower always allowed. */
   _updateStat(key, value) {
-    const next = { ...this.stats, [key]: value };
-    this.stats = clampWorkshopStats(next);
-    const el = document.getElementById('ms_' + key);
-    if (el && key !== 'status' && Number(el.value) !== this.stats[key]) el.value = String(this.stats[key]);
-    const v = document.getElementById('ms_' + key + '_v'); if (v) v.textContent = this.stats[key];
-    if (document.getElementById('ms_status')) document.getElementById('ms_status').value = this.stats.status;
+    const w = this._editingV2; if (!w) return;
+    const $ = (id) => document.getElementById(id);
+    if (key === 'maxHp' || key === 'moveSpeed') {
+      const prev = w.baseStats[key];
+      w.baseStats[key] = key === 'maxHp' ? Math.round(value) : Math.round(value * 100) / 100;
+      if (statCostV2(w) > POINT_BUDGET) { w.baseStats[key] = prev; this._budgetBlocked(); }
+      this._syncBaseSliders();
+    } else if (key === 'dashDistance') {
+      const p = w.presets[this._activeKey];
+      if (p) { p.dashDistance = Math.round(Math.max(0, Math.min(320, value))); if ($('ms_dashDistance')) $('ms_dashDistance').value = String(p.dashDistance); if ($('ms_dashDistance_v')) $('ms_dashDistance_v').textContent = p.dashDistance; }
+    } else {
+      const p = w.presets[this._activeKey]; if (!p || !p.combat) return;
+      const prev = { ...p.combat };
+      const next = { ...p.combat };
+      if (key === 'status') next.status = value;
+      else next[key] = value;
+      p.combat = sanitizeCombat(next);
+      // Cooldown is excluded from the budget → never blocked. Others revert if over.
+      if (key !== 'cooldownMs' && statCostV2(w) > POINT_BUDGET) { p.combat = sanitizeCombat(prev); this._budgetBlocked(); }
+      this._syncCombatSliders(p.combat);
+    }
     this._tutEvent('stat');
     this._renderBudget();
+  }
+  _budgetBlocked() {
+    const bar = document.getElementById('meBudgetBar');
+    if (bar) { bar.style.background = '#ff5a5a'; setTimeout(() => this._renderBudget(), 220); }
+    this._setStatus('예산 100을 넘어 더 올릴 수 없습니다. 다른 스탯이나 프리셋을 줄여 보세요.');
   }
 
   _updateBlockCount() {
@@ -546,7 +649,7 @@ export class MotionEditor {
   }
 
   _renderBudget() {
-    const cost = statCost(this.stats);
+    const cost = this._editingV2 ? statCostV2(this._editingV2) : 0;
     const bar = document.getElementById('meBudgetBar');
     const val = document.getElementById('meBudgetVal');
     if (val) val.textContent = cost;
@@ -1216,39 +1319,22 @@ export class MotionEditor {
     this._setStatus(`저장 완료: "${raw}"${hb}. ${this.weapon} 무기의 정본으로 적용됩니다${synced}.`);
   }
 
-  /** Build the current editor state into a V2 workshop weapon (used by both
-   *  Save+Equip and Upload). Bundles the equipped tag motions + stats + blocks;
-   *  full per-preset editing lands in a later task. */
+  /** Build the current V2 weapon (used by both Save+Equip and Upload). Commits
+   *  the active preset first, applies name/color/image, then double-clamps. */
   _buildWorkshopV2() {
-    const raw = (document.getElementById('meName')?.value || '').trim() || `${this.weapon} 공방무기`;
-    const { stats } = enforceBudget(this.stats);
-    const tagged = this._equippedTagMotions();
-    const v1 = clampWorkshopWeapon({
-      name: raw, color: this.look.color || null, stats,
-      motionSet: { attack: this.motion, ...tagged },
-      blocks: this.blocks,
-    });
-    const fresh = toWorkshopWeaponV2({ ...v1, id: this._editingId });
-    // Capture the equipped custom weapon IMAGE so it shows in-game (not just the
-    // editor preview). Only the small id travels; the renderer resolves pixels
-    // locally from psd_custom_weapons.
+    const w = this._editingV2 || makeEmptyWeaponV2({});
+    this._commitActivePreset();
+    w.name = (document.getElementById('meName')?.value || '').trim() || w.name || '새 무기';
+    w.color = this.look.color || null;
+    // Capture the equipped custom weapon IMAGE so it shows in-game.
     if (this.weapon && this.weapon.startsWith('custom:')) {
       const rec = this._customWeapon(this.weapon);
-      fresh.weaponVisual = { imageId: this.weapon, scale: (rec && rec.size) || 2 };
-    } else if (this._editingV2 && this._editingV2.weaponVisual) {
-      fresh.weaponVisual = this._editingV2.weaponVisual;
+      w.weaponVisual = { imageId: this.weapon, scale: (rec && rec.size) || 2 };
     }
-    // Preserve the edited weapon's category, desc, and non-basic presets.
-    if (this._editingV2) {
-      fresh.category = this._editingV2.category || fresh.category;
-      fresh.desc = this._editingV2.desc || fresh.desc;
-      for (const k of Object.keys(this._editingV2.presets || {})) {
-        if (k !== 'basic' && !fresh.presets[k]) fresh.presets[k] = this._editingV2.presets[k];
-      }
-    }
-    const w = clampWorkshopWeaponV2(fresh);
-    this._editingId = w.id; this._editingV2 = w;   // remember for re-save / upload
-    return { w, overBudget: statCost(stats) > POINT_BUDGET, stats };
+    const before = statCostV2(w);
+    const clamped = clampWorkshopWeaponV2(w);   // double-clamp (budget bleed if needed)
+    this._editingV2 = clamped; this._editingId = clamped.id;
+    return { w: clamped, overBudget: before > POINT_BUDGET, stats: clamped.baseStats };
   }
 
   /** Tier-2 저장 + 장착: LOCAL only — save to the device store + equip.
@@ -1258,10 +1344,8 @@ export class MotionEditor {
     let ok = false;
     try { saveWorkshopWeaponLocal(w); equipWorkshopWeaponLocal(w.id); ok = true; } catch (e) { /* keep editing */ }
     this._lastSaved = ok ? w : null;
-    // Reflect any budget bleed back into the sliders.
-    this.stats = stats;
-    STAT_KEYS.forEach(k => { const v = document.getElementById('ms_' + k + '_v'); if (v) v.textContent = stats[k]; const el = document.getElementById('ms_' + k); if (el) el.value = String(stats[k]); });
-    this._renderBudget();
+    // Reflect any budget bleed / clamped preset back into the sliders.
+    this._loadActivePreset();
     if (!ok) { this._setStatus('저장에 실패했습니다 (저장공간 문제일 수 있어요). 잠시 후 다시 시도하세요.'); return; }
     const note = overBudget ? ' (예산 초과분은 자동 차감됨)' : '';
     this._setStatus(`"${w.name}" 저장 + 장착 완료${note}. 다른 유저와 공유하려면 [⬆ 업로드]를 누르세요.`);

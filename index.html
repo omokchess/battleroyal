@@ -983,17 +983,17 @@
                 <input id="meDuration" type="range" min="0.2" max="1.5" step="0.02" value="0.42" class="flex-1 min-w-0" />
                 <span id="meDurationVal" class="text-[11px] text-[#e8d5a3] w-12 text-right">0.42s</span>
               </div>
-              <div class="flex items-center justify-between mt-1 border-t border-gray-800 pt-1">
+              <div id="meHitboxRow" class="flex items-center justify-between mt-1 border-t border-gray-800 pt-1">
                 <span class="text-[10px] text-[#ff7a5a] uppercase font-bold">⚔ 히트박스</span>
                 <span class="text-[9px] text-gray-500 flex-1 px-2 leading-tight">빨간 상자=타격 판정 · 타임라인 <b style="color:#ff7a5a">주황 띠</b>=활성 구간</span>
                 <button id="meAddHitbox" class="bg-[#14100b] hover:bg-gray-800 border border-[#ff7a5a] text-[#ff7a5a] text-[10px] px-2 py-1 cursor-pointer active:scale-95">＋ 추가</button>
               </div>
             </div>
 
-            <!-- ③ 프리셋 블록 -->
-            <div class="bg-[#0d0a06] border border-gray-600 rounded p-2">
+            <!-- ③ 프리셋 블록 (레거시 모션 태그 라이브러리 — 공방 V2 프리셋 바가 대체) -->
+            <div id="meLegacyPresetBlock" class="bg-[#0d0a06] border border-gray-600 rounded p-2">
               <div class="flex items-center gap-1.5 mb-1">
-                <span class="text-[10px] text-gray-300 uppercase">내 프리셋</span>
+                <span class="text-[10px] text-gray-300 uppercase">모션 클립</span>
                 <select id="mePresetTag" class="bg-[#14100b] border border-gray-600 text-white text-[10px] px-1 py-0.5" title="이 모션이 게임에서 쓰일 자리 (블록코딩의 모션 재생 태그)"></select>
                 <button id="mePresetSave" class="bg-[#14100b] hover:bg-gray-800 border border-[#ffd24a] text-[#ffd24a] text-[10px] px-2 py-0.5 cursor-pointer active:scale-95" title="지금 만든 모션을 이 태그의 프리셋으로 저장">💾 프리셋 저장</button>
               </div>
@@ -1029,9 +1029,12 @@
           <!-- splitter: 좌 컬럼 너비 조절 -->
           <div id="meSplitL" class="me-split" title="드래그로 너비 조절 · 더블클릭=접기/펼치기"></div>
 
-          <!-- CENTER: the stickman -->
-          <div class="flex-1 min-w-0 min-h-0 flex items-center justify-center bg-[#14100b] border-2 border-gray-600 rounded">
-            <canvas id="meCanvas" width="500" height="640" class="max-h-full max-w-full touch-none"></canvas>
+          <!-- CENTER: preset tabs + the stickman -->
+          <div class="flex-1 min-w-0 min-h-0 flex flex-col gap-2">
+            <div id="mePresetBar" class="hidden flex-none flex flex-wrap items-center gap-1 bg-[#0d0a06] border border-gray-700 rounded p-1.5"></div>
+            <div class="flex-1 min-h-0 flex items-center justify-center bg-[#14100b] border-2 border-gray-600 rounded">
+              <canvas id="meCanvas" width="500" height="640" class="max-h-full max-w-full touch-none"></canvas>
+            </div>
           </div>
 
           <!-- splitter: 우 컬럼 너비 조절 -->
@@ -1061,25 +1064,39 @@
                 <span class="text-[10px] text-gray-400">예산 <b id="meBudgetVal" class="text-[#7df09a]">0</b>/100</span>
               </div>
               <div class="w-full h-2 bg-[#14100b] border border-gray-700"><div id="meBudgetBar" class="h-full bg-[#7df09a]" style="width:0%"></div></div>
+              <!-- 전역 스탯 (무기 전체: 체력/이동속도) — 항상 표시 -->
+              <div class="text-[9px] text-[#7df09a] uppercase font-bold mt-1">🛡 무기 전역</div>
               <div class="flex flex-col gap-1.5 text-[10px] text-gray-300">
-                <label class="block"><span class="flex justify-between"><span>데미지</span><b id="ms_damage_v" class="text-[#e8d5a3]">18</b></span>
-                  <input id="ms_damage" type="range" min="4" max="55" step="1" class="w-full"/></label>
-                <label class="block"><span class="flex justify-between"><span>사거리</span><b id="ms_range_v" class="text-[#e8d5a3]">70</b></span>
-                  <input id="ms_range" type="range" min="30" max="300" step="5" class="w-full"/></label>
-                <label class="block"><span class="flex justify-between"><span>쿨타임</span><b id="ms_cooldownMs_v" class="text-[#e8d5a3]">600</b></span>
-                  <input id="ms_cooldownMs" type="range" min="250" max="2500" step="10" class="w-full"/></label>
-                <label class="block"><span class="flex justify-between"><span>넉백</span><b id="ms_knockback_v" class="text-[#e8d5a3]">0</b></span>
-                  <input id="ms_knockback" type="range" min="0" max="200" step="5" class="w-full"/></label>
                 <label class="block"><span class="flex justify-between"><span>체력</span><b id="ms_maxHp_v" class="text-[#e8d5a3]">100</b></span>
                   <input id="ms_maxHp" type="range" min="70" max="160" step="1" class="w-full"/></label>
                 <label class="block"><span class="flex justify-between"><span>이동속도</span><b id="ms_moveSpeed_v" class="text-[#e8d5a3]">1.0</b></span>
                   <input id="ms_moveSpeed" type="range" min="0.7" max="1.35" step="0.01" class="w-full"/></label>
-                <label class="block"><span class="flex justify-between mb-0.5"><span>상태이상</span></span>
-                  <select id="ms_status" class="bg-[#14100b] border border-gray-600 text-white px-1 py-1 w-full"><option value="none">없음</option><option value="slow">둔화</option><option value="bleed">출혈</option><option value="burn">화상</option><option value="stun">기절</option></select></label>
-                <label class="block"><span class="flex justify-between"><span>상태이상 지속 시간</span><b id="ms_statusDurationMs_v" class="text-[#e8d5a3]">0</b></span>
-                  <input id="ms_statusDurationMs" type="range" min="0" max="3000" step="100" class="w-full"/></label>
               </div>
-              <button id="meBlockBtn" class="w-full bg-[#14100b] hover:bg-gray-800 border border-[#45f3ff] text-[#45f3ff] text-[10px] py-2 cursor-pointer active:scale-95">⚙ 기믹 코딩 (블록) <span id="meBlockCount" class="text-gray-400 normal-case"></span></button>
+              <!-- 전투 스탯 (선택한 공격 프리셋별) — 공격 프리셋일 때만 -->
+              <div id="meCombatStats" class="hidden">
+                <div class="text-[9px] text-[#ff7a5a] uppercase font-bold mt-2">⚔ 이 프리셋 전투 (<span id="meCombatPresetName">평타</span>)</div>
+                <div class="flex flex-col gap-1.5 text-[10px] text-gray-300">
+                  <label class="block"><span class="flex justify-between"><span>데미지</span><b id="ms_damage_v" class="text-[#e8d5a3]">18</b></span>
+                    <input id="ms_damage" type="range" min="4" max="55" step="1" class="w-full"/></label>
+                  <label class="block"><span class="flex justify-between"><span>사거리</span><b id="ms_range_v" class="text-[#e8d5a3]">70</b></span>
+                    <input id="ms_range" type="range" min="30" max="300" step="5" class="w-full"/></label>
+                  <label class="block"><span class="flex justify-between"><span>쿨타임 <span class="text-gray-600">(예산 제외)</span></span><b id="ms_cooldownMs_v" class="text-[#e8d5a3]">600</b></span>
+                    <input id="ms_cooldownMs" type="range" min="250" max="2500" step="10" class="w-full"/></label>
+                  <label class="block"><span class="flex justify-between"><span>넉백</span><b id="ms_knockback_v" class="text-[#e8d5a3]">0</b></span>
+                    <input id="ms_knockback" type="range" min="0" max="200" step="5" class="w-full"/></label>
+                  <label class="block"><span class="flex justify-between mb-0.5"><span>상태이상</span></span>
+                    <select id="ms_status" class="bg-[#14100b] border border-gray-600 text-white px-1 py-1 w-full"><option value="none">없음</option><option value="slow">둔화</option><option value="bleed">출혈</option><option value="burn">화상</option><option value="stun">기절</option></select></label>
+                  <label class="block"><span class="flex justify-between"><span>상태이상 지속</span><b id="ms_statusDurationMs_v" class="text-[#e8d5a3]">0</b></span>
+                    <input id="ms_statusDurationMs" type="range" min="0" max="3000" step="100" class="w-full"/></label>
+                </div>
+              </div>
+              <!-- 대시 전용 -->
+              <div id="meDashStats" class="hidden">
+                <div class="text-[9px] text-[#45f3ff] uppercase font-bold mt-2">➤ 대시</div>
+                <label class="block text-[10px] text-gray-300"><span class="flex justify-between"><span>대시 거리</span><b id="ms_dashDistance_v" class="text-[#e8d5a3]">120</b></span>
+                  <input id="ms_dashDistance" type="range" min="0" max="320" step="5" class="w-full"/></label>
+              </div>
+              <button id="meBlockBtn" class="w-full bg-[#14100b] hover:bg-gray-800 border border-[#45f3ff] text-[#45f3ff] text-[10px] py-2 cursor-pointer active:scale-95 mt-1">⚙ 이 프리셋 기믹 코딩 <span id="meBlockCount" class="text-gray-400 normal-case"></span></button>
             </div>
 
             <!-- name + save/upload -->

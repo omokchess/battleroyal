@@ -2100,6 +2100,21 @@ function armoryCategory(w) {
 // V2 workshop category → armory filter label.
 const WS_CAT_KO = { melee: '근접', ranged: '원거리', special: '특수' };
 
+// Persisted set of workshop weapons THIS device has already recommended (♥).
+// Liking is idempotent against it, so re-rendering the list — or returning to
+// the tab from another one — can never re-bump a weapon's count a second time.
+const LIKED_WS_KEY = 'pixelroyale_liked_ws';
+function likedWsSet() {
+  try { const a = JSON.parse(localStorage.getItem(LIKED_WS_KEY) || '[]'); return new Set(Array.isArray(a) ? a : []); }
+  catch { return new Set(); }
+}
+function markWsLiked(id) {
+  const s = likedWsSet(); if (s.has(id)) return false;
+  s.add(id);
+  try { localStorage.setItem(LIKED_WS_KEY, JSON.stringify([...s])); } catch {}
+  return true;
+}
+
 /** Open the workshop editor to edit a saved V2 weapon (full load in the grid task). */
 function openWorkshopWeaponForEdit(id) {
   pendingWorkshopEditId = id;
@@ -2138,16 +2153,18 @@ async function renderWorkshopList(el) {
       return;
     }
     const eqName = equippedWorkshopWeaponName();
+    const liked = likedWsSet();
     listEl.innerHTML = items.map((w, i) => {
       const s = w.stats || {};
       const equipped = w.name === eqName;
+      const isLiked = liked.has(w.id);
       return `<div class="med-parch p-2.5 flex items-center justify-between gap-2" data-i="${i}">
         <div class="min-w-0">
           <div class="font-mono text-[12px] text-white truncate"><span style="color:${w.color || '#ffb070'}">●</span> ${escapeHtml(w.name)} <span class="med-muted text-[9px]">by ${escapeHtml(w.author_name || '익명')}</span></div>
           <div class="font-mono text-[9px] med-muted">⚔${s.damage} · ⏱${s.cooldownMs}ms · ❤${s.maxHp} · 🏃${s.moveSpeed} · ♥${w.likes||0}</div>
         </div>
         <div class="flex items-center gap-1 shrink-0">
-          <button class="med-btn font-mono text-[10px] px-1.5 py-1" data-act="like" title="좋아요">♥</button>
+          <button class="med-btn font-mono text-[10px] px-1.5 py-1" data-act="like" title="좋아요" ${isLiked ? 'disabled style="color:#c0392b;opacity:.6"' : ''}>♥</button>
           <button class="med-btn font-mono text-[10px] px-1.5 py-1" data-act="report" title="신고">⚑</button>
           ${isAdmin ? '<button class="med-btn font-mono text-[10px] px-1.5 py-1" data-act="hide" title="숨김(어드민)" style="color:#c0392b">숨김</button>' : ''}
           <button class="med-btn med-btn--blood font-mono text-[10px] px-2 py-1" data-act="add" title="내 무기고에 추가">＋ 추가</button>
@@ -2161,7 +2178,11 @@ async function renderWorkshopList(el) {
         ev.currentTarget.textContent = '추가됨 ✓'; ev.currentTarget.disabled = true;
         showToast(`"${w.name}" 무기고에 추가됨 (무기고 → 무기 탭)`);
       });
-      row.querySelector('[data-act="like"]')?.addEventListener('click', (ev) => { ev.currentTarget.disabled = true; accountUI.likeWorkshop?.(w.id); });
+      row.querySelector('[data-act="like"]')?.addEventListener('click', (ev) => {
+        ev.currentTarget.disabled = true;
+        ev.currentTarget.style.color = '#c0392b'; ev.currentTarget.style.opacity = '.6';
+        if (markWsLiked(w.id)) accountUI.likeWorkshop?.(w.id);   // idempotent: bump the server only on the FIRST like
+      });
       row.querySelector('[data-act="report"]')?.addEventListener('click', (ev) => { ev.currentTarget.disabled = true; accountUI.reportWorkshop?.(w.id); ev.currentTarget.textContent = '신고됨'; });
       row.querySelector('[data-act="hide"]')?.addEventListener('click', () => { accountUI.moderateWorkshop?.(w.id, 'hidden'); load(el._wsSort || 'likes'); });
     });

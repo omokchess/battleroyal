@@ -406,6 +406,20 @@ export class Input {
       this.keys.d = false;
     };
 
+    // Releasing focus (Alt-Tab, switching tabs) never fires keyup, so a held
+    // movement key would stay "pressed" — and the background sim keeps shoving
+    // the player into a wall until it tunnels through (noclip). Drop all held
+    // input the moment we lose focus / the tab hides.
+    this._releaseAllKeys = () => {
+      this.keys.w = this.keys.s = this.keys.a = this.keys.d = false;
+      this.keys.ArrowUp = this.keys.ArrowDown = this.keys.ArrowLeft = this.keys.ArrowRight = false;
+      this.skillHeld = false;
+    };
+    this._blurHandler = () => this._releaseAllKeys();
+    this._visHandler = () => { if (document.hidden) this._releaseAllKeys(); };
+    window.addEventListener('blur', this._blurHandler);
+    document.addEventListener('visibilitychange', this._visHandler);
+
     document.addEventListener('keydown', this._keyDownHandler);
     document.addEventListener('keyup', this._keyUpHandler);
     canvas.addEventListener('mousemove', this._mouseMoveHandler);
@@ -1050,6 +1064,8 @@ export class Input {
   cleanUp(canvas) {
     if (this._keyDownHandler) document.removeEventListener('keydown', this._keyDownHandler);
     if (this._keyUpHandler) document.removeEventListener('keyup', this._keyUpHandler);
+    if (this._blurHandler) window.removeEventListener('blur', this._blurHandler);
+    if (this._visHandler) document.removeEventListener('visibilitychange', this._visHandler);
     if (canvas && this._mouseMoveHandler) canvas.removeEventListener('mousemove', this._mouseMoveHandler);
     if (canvas && this._mouseDownHandler) canvas.removeEventListener('mousedown', this._mouseDownHandler);
     if (canvas && this._pointerDownHandler) canvas.removeEventListener('pointerdown', this._pointerDownHandler);

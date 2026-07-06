@@ -106,13 +106,16 @@ export function buildLevel(side, config = {}) {
   const platW = Math.round(clamp(W * 0.18, 130, 260));
   const cx = W / 2;
   const platformSlots = [];
+  // Tier heights are kept within a single jump's reach (jump apex ≈
+  // jumpSpeed²/2·gravity ≈ 149px ≈ 4.6 tiles): first tier ~3 tiles up and each
+  // step ~2.5 tiles, so every platform is comfortably reachable by jumping alone.
   if (platformShape === 'stairs') {
     for (let i = 0; i < platformCount; i++) {
       const sideSign = i % 2 === 0 ? -1 : 1;
       const step = Math.floor(i / 2);
       platformSlots.push({
         x: cx + sideSign * W * (0.18 + step * 0.09) - platW / 2,
-        y: H - GROUND_H - (3.4 + i * 1.55) * TILE,
+        y: H - GROUND_H - (2.8 + i * 1.2) * TILE,
         w: platW
       });
     }
@@ -121,15 +124,15 @@ export function buildLevel(side, config = {}) {
     for (let i = 0; i < platformCount; i++) {
       platformSlots.push({
         x: xs[i] - platW / 2,
-        y: H - GROUND_H - (3.6 + Math.floor(i / 2) * 2.7) * TILE,
+        y: H - GROUND_H - (3.0 + Math.floor(i / 2) * 2.3) * TILE,
         w: i >= 4 ? platW * 0.9 : platW
       });
     }
   } else {
     const tiers = [
-      { y: H - GROUND_H - 3.6 * TILE, dx: W * 0.25 },
-      { y: H - GROUND_H - 6.8 * TILE, dx: W * 0.12 },
-      { y: H - GROUND_H - 10.0 * TILE, dx: 0 },
+      { y: H - GROUND_H - 3.0 * TILE, dx: W * 0.25 },
+      { y: H - GROUND_H - 5.6 * TILE, dx: W * 0.12 },
+      { y: H - GROUND_H - 8.2 * TILE, dx: 0 },
     ];
     for (const t of tiers) {
       if (platformSlots.length >= platformCount) break;

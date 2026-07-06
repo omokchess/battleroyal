@@ -28,7 +28,6 @@ import { saveWorkshopWeaponLocal, equipWorkshopWeaponLocal, v2ToV1Runtime } from
 // Local workshop storage + equip live in WorkshopStore now; re-export the
 // legacy-named helpers so existing import sites (main.js) keep working.
 export { equippedWorkshopWeapon, equipWorkshopWeapon, clearWorkshopWeapon, equippedWorkshopWeaponName } from './WorkshopStore.js';
-import { BlockEditor } from './BlockEditor.js';
 
 const MAX_KF = 16;                                 // editor keyframe budget (admin authoring)
 const HIT_WINDOW = { start: 0.3, end: 0.7 };       // fixed cosmetic impact band (normalized)
@@ -69,7 +68,7 @@ const ME_TUT_STEPS = [
   { target: 'meNewFrame', title: '② 다음 장 만들기', text: '<b style="color:#7df09a">＋ 새 프레임</b>을 누르면 지금 포즈를 그대로 이어받은 다음 장이 생겨요. 조금씩 바꿔 휘두르는 동작을 완성하세요. (◀ ▶로 장 넘기기)', auto: 'newframe' },
   { target: 'mePlay', title: '③ 재생해 보기', text: '<b style="color:#45f3ff">▶ 재생</b>으로 동작이 자연스러운지 확인하세요. 파란 잔상은 이전 장의 포즈예요.', auto: 'play' },
   { target: 'meStatsPanel', title: '④ 무기 스탯 정하기', text: '오른쪽에서 데미지·사거리 등을 조절하세요. 모든 무기는 <b style="color:#7df09a">예산 100점</b> 안에서만 강해질 수 있어 공정합니다.', auto: 'stat' },
-  { target: 'meSave', title: '⑤ 저장 + 장착!', text: '<b style="color:#7df09a">저장 + 장착</b>은 이 기기에만 저장하고 바로 장착합니다(공유 안 함). 다른 유저와 나누고 싶으면 그 옆 <b style="color:#ffb070">⬆ 업로드</b>를 누르면 워크샵에 올라가요. (⚙ 기믹 코딩으로 특수능력도!)', auto: 'save' },
+  { target: 'meSave', title: '⑤ 저장 + 장착!', text: '<b style="color:#7df09a">저장 + 장착</b>은 이 기기에만 저장하고 바로 장착합니다(공유 안 함). 다른 유저와 나누고 싶으면 그 옆 <b style="color:#ffb070">⬆ 업로드</b>를 누르면 워크샵에 올라가요.', auto: 'save' },
 ];
 
 // User-authored motion presets: [{ id, name, tag, motion, equipped }]. Saved
@@ -268,13 +267,6 @@ export class MotionEditor {
     STAT_KEYS.forEach(k => $('ms_' + k)?.addEventListener('input', (e) => this._updateStat(k, parseFloat(e.target.value))));
     $('ms_dashDistance')?.addEventListener('input', (e) => this._updateStat('dashDistance', parseFloat(e.target.value)));
     $('ms_status')?.addEventListener('change', (e) => this._updateStat('status', e.target.value));
-    $('meBlockBtn')?.addEventListener('click', () => {
-      if (!this.blockEditor) this.blockEditor = new BlockEditor();
-      const stats = this._editingV2 ? { ...this._editingV2.baseStats, ...(this._activeCombatPreset()?.combat || {}) } : this.stats;
-      // Scope the block palette to THIS preset's events (평타 기믹 vs 스킬1 기믹 …).
-      this.blockEditor.open(this.blocks, 'workshop', (ast) => { this.blocks = ast; this._updateBlockCount(); }, stats, this._activeKey);
-    });
-
     $('meColor')?.addEventListener('input', (e) => applyLook({ color: e.target.value }));
     $('meColorClear')?.addEventListener('click', () => applyLook({ color: null }));
     $('meLineW')?.addEventListener('input', (e) => applyLook({ lineW: parseInt(e.target.value, 10) }));
@@ -363,7 +355,7 @@ export class MotionEditor {
   _tutFinish() {
     try { localStorage.setItem(ME_TUT_KEY, '1'); } catch {}
     this._tutStop();
-    this._setStatus('🎉 튜토리얼 완료! 이제 프리셋 태그·⚓기준점·⚙기믹 코딩까지 자유롭게 실험해 보세요.');
+    this._setStatus('🎉 튜토리얼 완료! 이제 프리셋 태그·⚓기준점까지 자유롭게 실험해 보세요.');
   }
   /** Tear down without marking done (e.g., editor closed mid-way). */
   _tutStop() {
@@ -619,7 +611,6 @@ export class MotionEditor {
     if (isDash && $('ms_dashDistance')) { $('ms_dashDistance').value = String(p.dashDistance || 120); if ($('ms_dashDistance_v')) $('ms_dashDistance_v').textContent = p.dashDistance || 120; }
     $('meCombatStats')?.classList.toggle('hidden', !isCombat);
     $('meDashStats')?.classList.toggle('hidden', !isDash);
-    $('meBlockBtn')?.classList.toggle('hidden', !(isCombat || isDash));
     $('meHitboxRow')?.classList.toggle('hidden', !isCombat);   // hitboxes = combat only
     const cn = $('meCombatPresetName'); if (cn) cn.textContent = PRESET_LABELS[key] || key;
     this._renderBudget(); this._updateBlockCount(); this._renderAll();

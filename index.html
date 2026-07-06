@@ -953,7 +953,6 @@
                 <select id="meEffectAsset" class="bg-[#14100b] border border-gray-600 text-white text-[9px] px-1 py-0.5 w-full mt-1"><option value="spark">반짝임</option><option value="slash">베기</option><option value="burst">폭발</option><option value="ring">링</option><option value="smoke">연기</option></select>
                 <div id="meEffectList" class="mt-1 flex flex-col gap-0.5 max-h-16 overflow-y-auto"></div>
               </div>
-              <button id="meBlockBtn" class="w-full bg-[#14100b] hover:bg-gray-800 border border-[#45f3ff] text-[#45f3ff] text-[10px] py-2 cursor-pointer active:scale-95 mt-1">⚙ 이 프리셋 기믹 코딩 <span id="meBlockCount" class="text-gray-400 normal-case"></span></button>
             </div>
 
             <!-- name + save/upload -->
@@ -987,31 +986,7 @@
       </div>
     </div>
 
-    <!-- BLOCK GIMMICK EDITOR (weapon blockcoding) -->
-    <div id="blockEditor" class="hidden absolute inset-0 z-[80] flex flex-col bg-[#14100b] font-mono">
-      <div class="flex items-center gap-2 px-3 py-2 border-b-2 border-[#45f3ff]/40 shrink-0">
-        <span class="text-[#45f3ff] font-bold text-sm">⚙ 기믹 코딩</span>
-        <div id="beEventTabs" class="flex gap-1 overflow-x-auto flex-1"></div>
-        <button id="beClose" class="text-gray-400 hover:text-white text-lg px-2 cursor-pointer shrink-0">✕</button>
-      </div>
-      <div class="flex-1 flex min-h-0 flex-col lg:flex-row">
-        <div id="bePalette" class="lg:w-56 shrink-0 overflow-y-auto border-b lg:border-b-0 lg:border-r border-gray-700 p-2 max-h-[28vh] lg:max-h-none"></div>
-        <div id="beWorkspace" class="flex-1 overflow-y-auto p-3 min-h-0"></div>
-        <div class="lg:w-64 shrink-0 border-t lg:border-t-0 lg:border-l border-gray-700 p-2 overflow-y-auto max-h-[26vh] lg:max-h-none">
-          <div class="text-[10px] text-gray-400 uppercase mb-1">프리뷰 · 테스트</div>
-          <canvas id="beCanvas" width="240" height="180" class="w-full bg-[#0d0a06] border border-gray-700 mb-2"></canvas>
-          <div id="beTestOut" class="text-[10px] text-gray-400 leading-snug mb-2"></div>
-          <div class="text-[10px] text-gray-400 uppercase mb-1">출력 예산 <span class="text-gray-600 normal-case">(초당)</span></div>
-          <div id="beBudget" class="bg-[#0d0a06] border border-gray-700 rounded p-2"></div>
-        </div>
-      </div>
-      <div class="flex items-center gap-2 px-3 py-2 border-t-2 border-[#45f3ff]/40 shrink-0 text-[10px]">
-        <span class="text-gray-400">블록 <b id="beBlockGauge" class="text-[#7df09a]">0</b>/<span id="beBlockMax">80</span></span>
-        <div class="w-24 h-1.5 bg-[#0d0a06] border border-gray-700"><div id="beBlockBar" class="h-full bg-[#7df09a]" style="width:0%"></div></div>
-        <button id="beTest" class="ml-auto med-btn px-3 py-1.5">▶ 테스트</button>
-        <button id="beSave" class="med-btn med-btn--blood px-3 py-1.5">저장</button>
-      </div>
-    </div>
+    <!-- (Weapon block-gimmick editor removed — motion workshop covers its needs) -->
 
     <!-- ADMIN MODAL -->
     <div id="adminModal" data-close-modal="adminModal" class="hidden absolute inset-0 z-[80] flex items-center justify-center bg-black/80 p-4">

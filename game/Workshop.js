@@ -37,6 +37,8 @@ export const ENVELOPE = {
   hitboxAreaMax:   14000,          // w*h px²
   activeLenMax:    0.4,            // active-window length (normalized motion time)
   maxHitboxes:     2,
+  maxProjectileEvents: 5,
+  maxTeleportEvents: 5,
 };
 
 export const VALID_STATUS = new Set(['none', 'slow', 'bleed', 'burn', 'stun']);
@@ -175,6 +177,10 @@ export function clampWorkshopWeapon(raw) {
     else delete m.hitboxes;
     // Preserve the weapon flip timeline (sanitizeMotion drops it) — cosmetic.
     if (Array.isArray(rawSet[state].flipXKeys)) m.flipXKeys = sanitizeFlipKeys(rawSet[state].flipXKeys);
+    if (['attack', 'heavy', 'skill', 'skill2', 'skill3'].includes(state)) {
+      m.projectileEvents = sanitizeProjectileEvents(rawSet[state].projectileEvents);
+      m.teleportEvents = sanitizeTeleportEvents(rawSet[state].teleportEvents);
+    }
     motionSet[state] = m;
   }
 
@@ -279,8 +285,12 @@ export function sanitizeProjectile(p) {
     radius: clampNum(hbIn.radius, PROJECTILE_ENV.hbRadius, 8),
   };
   const dir = ['cursor', 'facing', 'angle'].includes(r.directionSource) ? r.directionSource : 'cursor';
+  const rawImageId = typeof r.imageId === 'string' ? r.imageId : '';
+  const imageId = PROJECTILE_IMAGES.includes(rawImageId)
+    ? rawImageId
+    : (rawImageId.startsWith('custom:') ? sanitizeText(rawImageId, 128) : 'arrow');
   return {
-    imageId: PROJECTILE_IMAGES.includes(r.imageId) ? r.imageId : 'arrow',
+    imageId,
     directionSource: dir,
     angle: clampNum(r.angle, [-360, 360], 0),
     speed: clampNum(r.speed, PROJECTILE_ENV.speed, 600),
@@ -289,6 +299,35 @@ export function sanitizeProjectile(p) {
     scale: clampNum(r.scale, PROJECTILE_ENV.scale, 1),
     hitbox,
   };
+}
+
+export function sanitizeProjectileEvents(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const e of list.slice(0, ENVELOPE.maxProjectileEvents)) {
+    if (!e || typeof e !== 'object') continue;
+    out.push({
+      time: clampNum(e.time, [0, 1], 0.5),
+      projectile: sanitizeProjectile(e.projectile || e),
+    });
+  }
+  return out.sort((a, b) => a.time - b.time);
+}
+
+export function sanitizeTeleportEvents(list) {
+  if (!Array.isArray(list)) return [];
+  const dirs = new Set(['cursor', 'facing', 'angle', 'up', 'down', 'back']);
+  const out = [];
+  for (const e of list.slice(0, ENVELOPE.maxTeleportEvents)) {
+    if (!e || typeof e !== 'object') continue;
+    out.push({
+      time: clampNum(e.time, [0, 1], 0.5),
+      directionSource: dirs.has(e.directionSource) ? e.directionSource : 'cursor',
+      angle: clampNum(e.angle, [-360, 360], 0),
+      distance: clampNum(e.distance, [0, 260], 80),
+    });
+  }
+  return out.sort((a, b) => a.time - b.time);
 }
 
 /** Per-preset combat stats (cooldown kept but excluded from the budget). */
@@ -329,6 +368,8 @@ export function sanitizePreset(raw, key) {
     out.hitboxes = clampWorkshopHitboxes(r.hitboxes);
     out.ranged = !!r.ranged;
     out.projectile = sanitizeProjectile(r.projectile);
+    out.projectileEvents = sanitizeProjectileEvents(r.projectileEvents);
+    out.teleportEvents = sanitizeTeleportEvents(r.teleportEvents);
     out.blocks = sanitizeBlocksData(r.blocks);
   } else if (kind === 'dash') {
     out.dashDistance = Math.round(clampNum(r.dashDistance, V2_LIMITS.dashDistance, 120));
@@ -413,7 +454,7 @@ export function clampWorkshopWeaponV2(raw) {
   };
   const vv = (r.weaponVisual && typeof r.weaponVisual === 'object') ? r.weaponVisual : {};
   const weaponVisual = {
-    imageId: vv.imageId ? sanitizeText(vv.imageId, 32) : null,
+    imageId: vv.imageId ? sanitizeText(vv.imageId, 128) : null,
     scale: clampNum(vv.scale, [0.3, 4.5], 1),
     rotationOffset: clampNum(vv.rotationOffset, [-360, 360], 0),
     offsetX: clampNum(vv.offsetX, [-120, 120], 0),

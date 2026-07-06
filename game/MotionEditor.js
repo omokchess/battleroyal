@@ -23,7 +23,7 @@ import { resolveMotion, weaponSetId, sanitizeMotion, registerMotionSet, MOTION_L
 import { captureMotionFromWebcam } from './PoseCapture.js';
 import { drawProjectileShape, drawFxShape } from './ProjectileArt.js';
 import { equippedStickLook, saveStickLook } from './StickLook.js';
-import { clampWorkshopStats, statCost, enforceBudget, clampWorkshopWeapon, POINT_BUDGET, toWorkshopWeaponV2, clampWorkshopWeaponV2, COMBAT_PRESET_KINDS, NONCOMBAT_PRESET_KINDS, PRIMARY_PRESET_KEYS, PRESET_LABELS, ALL_PRESET_KINDS, makeEmptyWeaponV2, makeEmptyPreset, statCostV2, sanitizeCombat, VALID_STATUS, sanitizeFlipKeys, sampleFlip } from './Workshop.js';
+import { clampWorkshopStats, statCost, enforceBudget, clampWorkshopWeapon, POINT_BUDGET, toWorkshopWeaponV2, clampWorkshopWeaponV2, COMBAT_PRESET_KINDS, NONCOMBAT_PRESET_KINDS, PRIMARY_PRESET_KEYS, PRESET_LABELS, ALL_PRESET_KINDS, makeEmptyWeaponV2, makeEmptyPreset, statCostV2, sanitizeCombat, sanitizeProjectile, sanitizeProjectileEvents, sanitizeTeleportEvents, sanitizeEffects, VALID_STATUS, sanitizeFlipKeys, sampleFlip } from './Workshop.js';
 import { saveWorkshopWeaponLocal, equipWorkshopWeaponLocal, v2ToV1Runtime } from './WorkshopStore.js';
 import { shrinkDataUrlToBudget, WEAPON_IMAGE_BUDGET } from './WeaponImages.js';
 // Local workshop storage + equip live in WorkshopStore now; re-export the
@@ -175,6 +175,7 @@ export class MotionEditor {
     this.dragKfIndex = -1;
     this.dragImpact = false;
     this.dragHitbox = null;     // 'move' | 'resize' | 'aStart' | 'aEnd'
+    this._selectedEffectIndex = -1;
     this._raf = null;
     this._lastT = 0;
 
@@ -206,6 +207,13 @@ export class MotionEditor {
     $('meTutReplay')?.addEventListener('click', () => this._tutStart());
     $('meFlipToggle')?.addEventListener('click', () => this._toggleFlipAt(this.scrubT));
     $('meEffectAdd')?.addEventListener('click', () => this._addEffect());
+    $('meEffectAsset')?.addEventListener('change', (e) => this._updateSelectedEffect('assetId', e.target.value));
+    $('meEffectX')?.addEventListener('input', (e) => this._updateSelectedEffect('x', parseFloat(e.target.value)));
+    $('meEffectY')?.addEventListener('input', (e) => this._updateSelectedEffect('y', parseFloat(e.target.value)));
+    $('meEffectScale')?.addEventListener('input', (e) => this._updateSelectedEffect('scale', parseFloat(e.target.value)));
+    $('meEffectRot')?.addEventListener('input', (e) => this._updateSelectedEffect('rotation', parseFloat(e.target.value)));
+    $('meEffectAlpha')?.addEventListener('input', (e) => this._updateSelectedEffect('alpha', parseFloat(e.target.value)));
+    $('meEffectBone')?.addEventListener('change', (e) => this._updateSelectedEffect('followBone', e.target.value));
     $('meDualWield')?.addEventListener('change', (e) => {
       if (!this._editingV2) return;
       this._editingV2.weaponVisual = { ...(this._editingV2.weaponVisual || { imageId: null, scale: 1 }), dual: !!e.target.checked };
@@ -222,6 +230,10 @@ export class MotionEditor {
     $('pj_hb_radius')?.addEventListener('input', (e) => this._setProjectileHb('radius', parseFloat(e.target.value)));
     $('pj_shape_rect')?.addEventListener('click', () => this._setProjectileHb('shape', 'rect'));
     $('pj_shape_circle')?.addEventListener('click', () => this._setProjectileHb('shape', 'circle'));
+    $('pj_event_add')?.addEventListener('click', () => this._addProjectileEvent());
+    $('tp_event_add')?.addEventListener('click', () => this._addTeleportEvent());
+    $('tp_directionSource')?.addEventListener('change', () => this._syncFrameEventLists());
+    $('tp_distance')?.addEventListener('input', () => this._syncFrameEventLists());
     $('meCapture')?.addEventListener('click', () => this._capture());
     $('meAddHitbox')?.addEventListener('click', () => this._toggleHitbox());
     const dur = $('meDuration');
@@ -591,7 +603,12 @@ export class MotionEditor {
     p.motion = this.motion;
     p.weaponTimeline = { flipXKeys: sanitizeFlipKeys(this._flipKeys || []) };
     p.previewOffset = this._previewOffset || { x: 0, y: 0 };
-    if (COMBAT_PRESET_KINDS.has(key)) { p.hitboxes = Array.isArray(this.motion.hitboxes) ? this.motion.hitboxes : []; p.blocks = this.blocks; }
+    if (COMBAT_PRESET_KINDS.has(key)) {
+      p.hitboxes = Array.isArray(this.motion.hitboxes) ? this.motion.hitboxes : [];
+      p.projectileEvents = sanitizeProjectileEvents(p.projectileEvents || []);
+      p.teleportEvents = sanitizeTeleportEvents(p.teleportEvents || []);
+      p.blocks = this.blocks;
+    }
     else if (key === 'dash') { p.blocks = this.blocks; }
   }
   /** Load the active preset into the editor + toggle the combat/dash UI. */
@@ -614,6 +631,7 @@ export class MotionEditor {
     $('meDashStats')?.classList.toggle('hidden', !isDash);
     $('meHitboxRow')?.classList.toggle('hidden', !isCombat);   // hitboxes = combat only
     const cn = $('meCombatPresetName'); if (cn) cn.textContent = PRESET_LABELS[key] || key;
+    this._syncFrameEventLists();
     this._renderBudget(); this._updateBlockCount(); this._renderAll();
   }
   // ── Ranged / projectile (per combat preset) ────────────────────────────────
@@ -654,7 +672,7 @@ export class MotionEditor {
     $('meProjectilePanel')?.classList.toggle('hidden', !ranged);
     const pj = (p && p.projectile) || {};
     const hb = pj.hitbox || {};
-    if ($('pj_imageId')) $('pj_imageId').value = pj.imageId || 'arrow';
+    this._populateProjectileSelect(pj.imageId || 'arrow');
     if ($('pj_directionSource')) $('pj_directionSource').value = pj.directionSource || 'cursor';
     const setR = (id, v) => { if ($(id)) { $(id).value = String(v); if ($(id + '_v')) $(id + '_v').textContent = (id === 'pj_scale') ? Number(v).toFixed(2) : v; } };
     setR('pj_speed', pj.speed ?? 600); setR('pj_lifetimeMs', pj.lifetimeMs ?? 1200); setR('pj_scale', pj.scale ?? 1);
@@ -667,7 +685,74 @@ export class MotionEditor {
     if ($('pj_hb_width')) $('pj_hb_width').value = String(hb.width ?? 24);
     if ($('pj_hb_height')) $('pj_hb_height').value = String(hb.height ?? 12);
     if ($('pj_hb_radius')) $('pj_hb_radius').value = String(hb.radius ?? 8);
+    if ($('tp_distance')) $('tp_distance').value = String(80);
+    if ($('tp_directionSource')) $('tp_directionSource').value = 'cursor';
+    this._syncFrameEventLists();
     if (ranged) this._renderProjectilePreview();
+  }
+
+  _populateProjectileSelect(value = 'arrow') {
+    const sel = document.getElementById('pj_imageId');
+    if (!sel) return;
+    const builtins = [
+      ['arrow', '화살'], ['bolt', '볼트'], ['magicbolt', '마법탄'],
+      ['flame', '불꽃'], ['iceshard', '얼음 파편'], ['bullet', '탄환']
+    ].map(([id, label]) => `<option value="${id}">${label}</option>`).join('');
+    const custom = this.customWeapons.length
+      ? `<optgroup label="내 이미지">${this.customWeapons.map(c => `<option value="${escOpt(c.id)}">🖼 ${escOpt(c.name)}</option>`).join('')}</optgroup>`
+      : '';
+    sel.innerHTML = builtins + custom;
+    sel.value = [...sel.options].some(o => o.value === value) ? value : 'arrow';
+  }
+
+  _addProjectileEvent() {
+    const p = this._activeCombatPreset(); if (!p) return;
+    const events = sanitizeProjectileEvents(p.projectileEvents || []);
+    if (events.length >= 5) { this._setStatus('투사체 이벤트는 한 모션에 최대 5개입니다.'); return; }
+    events.push({ time: Math.max(0, Math.min(1, this.scrubT || 0)), projectile: sanitizeProjectile(p.projectile || {}) });
+    p.projectileEvents = sanitizeProjectileEvents(events);
+    this._syncFrameEventLists();
+    this._setStatus(`현재 프레임에 투사체 발사 이벤트를 추가했습니다 (${p.projectileEvents.length}/5).`);
+  }
+
+  _addTeleportEvent() {
+    const p = this._activeCombatPreset(); if (!p) return;
+    const $ = (id) => document.getElementById(id);
+    const events = sanitizeTeleportEvents(p.teleportEvents || []);
+    if (events.length >= 5) { this._setStatus('텔레포트 이벤트는 한 모션에 최대 5개입니다.'); return; }
+    events.push({
+      time: Math.max(0, Math.min(1, this.scrubT || 0)),
+      directionSource: $('tp_directionSource')?.value || 'cursor',
+      distance: parseFloat($('tp_distance')?.value || '80')
+    });
+    p.teleportEvents = sanitizeTeleportEvents(events);
+    this._syncFrameEventLists();
+    this._setStatus(`현재 프레임에 텔레포트 이벤트를 추가했습니다 (${p.teleportEvents.length}/5).`);
+  }
+
+  _syncFrameEventLists() {
+    const p = this._activeCombatPreset();
+    const pjList = document.getElementById('pj_event_list');
+    const tpList = document.getElementById('tp_event_list');
+    const render = (events, type) => events.length ? events.map((ev, i) =>
+      `<button type="button" data-event-type="${type}" data-event-index="${i}" class="mr-1 mb-1 px-1 py-0.5 border border-gray-700 hover:border-red-400 text-left">`
+      + `${Math.round((ev.time || 0) * 100)}% ${type === 'projectile' ? '발사' : `이동 ${Math.round(ev.distance || 0)}px`} ✕</button>`).join('') : '<span class="text-gray-600">등록된 이벤트 없음</span>';
+    if (pjList) pjList.innerHTML = render(sanitizeProjectileEvents(p?.projectileEvents || []), 'projectile');
+    if (tpList) tpList.innerHTML = render(sanitizeTeleportEvents(p?.teleportEvents || []), 'teleport');
+    const remove = (e) => this._removeFrameEvent(e);
+    if (pjList && !pjList._meBound) { pjList._meBound = true; pjList.addEventListener('click', remove); }
+    if (tpList && !tpList._meBound) { tpList._meBound = true; tpList.addEventListener('click', remove); }
+  }
+
+  _removeFrameEvent(e) {
+    const b = e.target.closest('[data-event-type][data-event-index]');
+    const p = this._activeCombatPreset();
+    if (!b || !p) return;
+    const key = b.dataset.eventType === 'projectile' ? 'projectileEvents' : 'teleportEvents';
+    const arr = Array.isArray(p[key]) ? p[key].slice() : [];
+    arr.splice(Number(b.dataset.eventIndex), 1);
+    p[key] = key === 'projectileEvents' ? sanitizeProjectileEvents(arr) : sanitizeTeleportEvents(arr);
+    this._syncFrameEventLists();
   }
   _renderProjectilePreview() {
     const cv = document.getElementById('pjPreview'); if (!cv) return;
@@ -675,7 +760,7 @@ export class MotionEditor {
     const ctx = cv.getContext('2d'); const W = cv.width, H = cv.height;
     ctx.clearRect(0, 0, W, H); ctx.fillStyle = '#14100b'; ctx.fillRect(0, 0, W, H);
     const cx = W / 2, cy = H / 2;
-    drawProjectileShape(ctx, cx, cy, 0, pj.imageId || 'arrow', 34 * (pj.scale || 1));
+    this._drawProjectilePreviewShape(ctx, cx, cy, pj.imageId || 'arrow', 34 * (pj.scale || 1));
     // translucent hitbox
     const hb = pj.hitbox || {};
     ctx.fillStyle = 'rgba(255,90,60,0.30)'; ctx.strokeStyle = '#ff7a5a'; ctx.lineWidth = 1.5;
@@ -687,6 +772,28 @@ export class MotionEditor {
     }
   }
 
+  _drawProjectilePreviewShape(ctx, x, y, imageId, size) {
+    const rec = this._customWeapon(imageId);
+    if (rec && rec.src) {
+      let img = this._wimgCache[rec.id];
+      if (!img) {
+        img = new Image();
+        img.onload = () => this._renderProjectilePreview();
+        img.src = rec.src;
+        this._wimgCache[rec.id] = img;
+      }
+      if (img.complete && img.naturalWidth) {
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(img, x - size / 2, y - size / 2, size, size);
+        ctx.imageSmoothingEnabled = true;
+        ctx.restore();
+        return;
+      }
+    }
+    drawProjectileShape(ctx, x, y, 0, imageId, size);
+  }
+
   // ── Frame effects (cosmetic, per preset) ───────────────────────────────────
   _activePreset() { return this._editingV2 && this._editingV2.presets[this._activeKey]; }
   _addEffect() {
@@ -696,6 +803,7 @@ export class MotionEditor {
     const assetId = document.getElementById('meEffectAsset')?.value || 'spark';
     p.effects.push({ time: Math.round(this.scrubT * 1000) / 1000, assetId, x: 0, y: 0, scale: 1, rotation: 0, alpha: 1, followBone: 'weaponTip' });
     p.effects.sort((a, b) => a.time - b.time);
+    this._selectedEffectIndex = p.effects.findIndex(e => Math.abs(e.time - Math.round(this.scrubT * 1000) / 1000) < 0.001 && e.assetId === assetId);
     this._renderEffectList(); this._renderPreview();
     this._setStatus(`이펙트 "${assetId}" 추가 @ ${(this.scrubT * 100).toFixed(0)}%.`);
   }
@@ -703,13 +811,42 @@ export class MotionEditor {
     const host = document.getElementById('meEffectList'); const p = this._activePreset();
     if (!host) return;
     const list = (p && p.effects) || [];
-    host.innerHTML = list.map((e, i) => `<div class="flex items-center gap-1 text-[9px] text-gray-300" data-fx="${i}">
-      <span class="text-[#ffd24a]">${(e.time * 100).toFixed(0)}%</span><span class="flex-1 truncate">${escOpt(e.assetId)}</span>
+    if (this._selectedEffectIndex >= list.length) this._selectedEffectIndex = list.length - 1;
+    host.innerHTML = list.map((e, i) => `<div class="flex items-center gap-1 text-[9px] ${i === this._selectedEffectIndex ? 'text-[#ffd24a]' : 'text-gray-300'}" data-fx="${i}">
+      <button class="flex items-center gap-1 flex-1 min-w-0 text-left hover:text-[#ffd24a]" data-fxpick="${i}"><span class="text-[#ffd24a]">${(e.time * 100).toFixed(0)}%</span><span class="truncate">${escOpt(e.assetId)} x${Number(e.scale || 1).toFixed(1)}</span></button>
       <button class="text-gray-600 hover:text-red-400 px-1" data-fxdel="${i}">✕</button></div>`).join('') ||
       '<span class="text-[9px] text-gray-600">없음</span>';
-    host.querySelectorAll('[data-fxdel]').forEach(b => b.addEventListener('click', () => {
-      const i = Number(b.dataset.fxdel); if (p && p.effects) { p.effects.splice(i, 1); this._renderEffectList(); this._renderPreview(); }
+    host.querySelectorAll('[data-fxpick]').forEach(b => b.addEventListener('click', () => {
+      this._selectedEffectIndex = Number(b.dataset.fxpick);
+      this._syncEffectControls();
+      this._renderEffectList();
+      this._renderPreview();
     }));
+    host.querySelectorAll('[data-fxdel]').forEach(b => b.addEventListener('click', () => {
+      const i = Number(b.dataset.fxdel); if (p && p.effects) { p.effects.splice(i, 1); if (this._selectedEffectIndex >= i) this._selectedEffectIndex--; this._renderEffectList(); this._syncEffectControls(); this._renderPreview(); }
+    }));
+    this._syncEffectControls();
+  }
+  _syncEffectControls() {
+    const p = this._activePreset();
+    const e = p && Array.isArray(p.effects) ? p.effects[this._selectedEffectIndex] : null;
+    const set = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined && v !== null) el.value = String(v); };
+    set('meEffectAsset', e?.assetId || 'spark');
+    set('meEffectX', e?.x ?? 0);
+    set('meEffectY', e?.y ?? 0);
+    set('meEffectScale', e?.scale ?? 1);
+    set('meEffectRot', e?.rotation ?? 0);
+    set('meEffectAlpha', e?.alpha ?? 1);
+    set('meEffectBone', e?.followBone || 'weaponTip');
+  }
+  _updateSelectedEffect(field, value) {
+    const p = this._activePreset();
+    if (!p || !Array.isArray(p.effects) || this._selectedEffectIndex < 0 || !p.effects[this._selectedEffectIndex]) return;
+    p.effects[this._selectedEffectIndex][field] = value;
+    p.effects = sanitizeEffects(p.effects);
+    this._selectedEffectIndex = Math.max(0, Math.min(this._selectedEffectIndex, p.effects.length - 1));
+    this._renderEffectList();
+    this._renderPreview();
   }
   /** Draw a preset's effects near their followBone at the current scrub time. */
   _drawEffects(ctx, joints, scale) {
@@ -816,6 +953,7 @@ export class MotionEditor {
       : '';
     wsel.innerHTML = base + custom;
     wsel.value = this.weapon;
+    this._populateProjectileSelect(document.getElementById('pj_imageId')?.value || 'arrow');
   }
   _customWeapon(id) { return this.customWeapons.find(c => c.id === id) || null; }
   /** The (lazily loaded) Image for the current weapon, or null for a built-in. */
@@ -854,7 +992,7 @@ export class MotionEditor {
       const rec = { id: 'custom:' + Date.now().toString(36), name, src, size: 2.0, anchors: anchors || null };
       this.customWeapons.push(rec); saveCustomWeapons(this.customWeapons);
       this.weapon = rec.id;
-      this._populateWeaponSelect(); this._syncWeaponUI();
+      this._populateWeaponSelect(); this._populateProjectileSelect(document.getElementById('pj_imageId')?.value || 'arrow'); this._syncWeaponUI();
       this._loadTemplate();
       this._setStatus('무기 이미지 추가됨! 주황 점을 끌어 방향을, 슬라이더로 크기를, ⚓기준점으로 손잡이·끝을 다시 맞출 수 있어요.');
     };
@@ -949,7 +1087,7 @@ export class MotionEditor {
     this.customWeapons = this.customWeapons.filter(x => x.id !== c.id);
     saveCustomWeapons(this.customWeapons); delete this._wimgCache[c.id];
     this.weapon = 'sword';
-    this._populateWeaponSelect(); this._syncWeaponUI(); this._loadTemplate();
+    this._populateWeaponSelect(); this._populateProjectileSelect(document.getElementById('pj_imageId')?.value || 'arrow'); this._syncWeaponUI(); this._loadTemplate();
     this._setStatus('무기 이미지를 삭제했습니다.');
   }
 

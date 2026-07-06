@@ -728,8 +728,8 @@
           </button>
         </div>
 
-        <!-- JUMP (platformer): hold for a higher jump. Sits above the move
-             stick so the left thumb can run and jump. -->
+        <!-- JUMP (platformer): hold for a higher jump. Placed beside the right
+             action cluster so movement and jump are separated on touch. -->
         <button id="jumpBtn" type="button" class="mobile-jump-btn pointer-events-auto select-none bg-[#2c2016] bg-opacity-80 border-2 border-[#5fbf4f] text-[#9fe79a] rounded-full font-mono font-bold uppercase active:scale-90 transition-transform shadow-[0_0_12px_rgba(95,191,79,0.4)] flex flex-col items-center justify-center touch-none">
           <span class="text-lg leading-none">▲</span><span class="text-[8px]">JUMP</span>
         </button>
@@ -937,6 +937,21 @@
                   </div>
                   <label id="pj_circleField" class="hidden flex items-center gap-1">반지름<input id="pj_hb_radius" type="range" min="3" max="80" step="1" class="flex-1 min-w-0"/></label>
                   <canvas id="pjPreview" width="180" height="70" class="w-full bg-[#14100b] border border-gray-700"></canvas>
+                  <div class="border-t border-gray-700 pt-1 mt-1 flex flex-col gap-1">
+                    <div class="flex items-center justify-between gap-1">
+                      <span class="text-[9px] text-[#ffd24a] font-bold">프레임 이벤트</span>
+                      <button id="pj_event_add" class="med-btn text-[9px] px-1.5 py-0.5">현재 프레임 발사 추가</button>
+                    </div>
+                    <div id="pj_event_list" class="text-[9px] text-gray-400 leading-tight"></div>
+                  </div>
+                  <div class="border-t border-gray-700 pt-1 mt-1 flex flex-col gap-1">
+                    <div class="grid grid-cols-2 gap-1">
+                      <label class="flex items-center gap-1">텔레포트 방향<select id="tp_directionSource" class="bg-[#14100b] border border-gray-600 text-white px-1 py-0.5 flex-1 min-w-0"><option value="cursor">마우스 커서</option><option value="facing">바라보는 방향</option><option value="back">뒤쪽</option><option value="up">위</option><option value="down">아래</option><option value="angle">고정 각도</option></select></label>
+                      <label class="flex items-center gap-1">거리<input id="tp_distance" type="range" min="0" max="260" step="5" class="flex-1 min-w-0"/></label>
+                    </div>
+                    <button id="tp_event_add" class="med-btn text-[9px] px-1.5 py-0.5">현재 프레임 텔레포트 추가</button>
+                    <div id="tp_event_list" class="text-[9px] text-gray-400 leading-tight"></div>
+                  </div>
                   <div class="text-[9px] text-gray-500 leading-tight">반투명 상자 = 실제 타격 판정(이미지 크기와 별개).</div>
                 </div>
               </div>
@@ -953,6 +968,14 @@
                   <button id="meEffectAdd" class="bg-[#14100b] hover:bg-gray-800 border border-[#ffd24a] text-[#ffd24a] text-[9px] px-1.5 py-0.5 cursor-pointer active:scale-95">＋ 추가</button>
                 </div>
                 <select id="meEffectAsset" class="bg-[#14100b] border border-gray-600 text-white text-[9px] px-1 py-0.5 w-full mt-1"><option value="spark">반짝임</option><option value="slash">베기</option><option value="burst">폭발</option><option value="ring">링</option><option value="smoke">연기</option></select>
+                <div id="meEffectEdit" class="mt-1 grid grid-cols-2 gap-1 text-[9px] text-gray-300">
+                  <label class="flex items-center gap-1">X<input id="meEffectX" type="range" min="-200" max="200" step="2" class="flex-1 min-w-0"/></label>
+                  <label class="flex items-center gap-1">Y<input id="meEffectY" type="range" min="-200" max="200" step="2" class="flex-1 min-w-0"/></label>
+                  <label class="flex items-center gap-1">크기<input id="meEffectScale" type="range" min="0.1" max="4" step="0.05" class="flex-1 min-w-0"/></label>
+                  <label class="flex items-center gap-1">회전<input id="meEffectRot" type="range" min="-360" max="360" step="5" class="flex-1 min-w-0"/></label>
+                  <label class="flex items-center gap-1">투명<input id="meEffectAlpha" type="range" min="0" max="1" step="0.05" class="flex-1 min-w-0"/></label>
+                  <label class="flex items-center gap-1">부착<select id="meEffectBone" class="bg-[#14100b] border border-gray-600 text-white px-1 py-0.5 flex-1 min-w-0"><option value="weaponTip">무기 끝</option><option value="handN">손</option><option value="handR">보조손</option><option value="root">골반</option><option value="head">머리</option></select></label>
+                </div>
                 <div id="meEffectList" class="mt-1 flex flex-col gap-0.5 max-h-16 overflow-y-auto"></div>
               </div>
             </div>

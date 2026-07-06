@@ -72,8 +72,11 @@ export const Protocol = {
   },
 
   // Request a weapon swap (applied on the next respawn).
-  selectWeapon(weapon) {
-    return { type: MsgType.WEAPON_SELECT, weapon };
+  selectWeapon(weapon, workshopWeapon = null, label = '') {
+    const msg = { type: MsgType.WEAPON_SELECT, weapon };
+    if (workshopWeapon && typeof workshopWeapon === 'object') msg.workshopWeapon = workshopWeapon;
+    if (label) msg.label = String(label).slice(0, 32);
+    return msg;
   },
 
   // System snapshot state. zone (storm) + healingItems are dynamic and ride

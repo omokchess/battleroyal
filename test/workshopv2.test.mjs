@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   clampWorkshopWeaponV2, migrateV1toV2, toWorkshopWeaponV2, makeEmptyWeaponV2, makeEmptyPreset,
-  statCostV2, combatCost, sanitizeFlipKeys, sampleFlip, sanitizeProjectile, sanitizeEffects,
+  statCostV2, combatCost, sanitizeFlipKeys, sampleFlip, sanitizeProjectile, sanitizeProjectileEvents, sanitizeTeleportEvents, sanitizeEffects,
   POINT_BUDGET, PROJECTILE_IMAGES,
 } from '../game/Workshop.js';
 
@@ -89,6 +89,12 @@ test('projectile sanitize: valid imageId + hitbox clamped + direction source', (
   assert.ok(p.hitbox.width >= 4, 'negative width fixed');
 });
 
+test('projectile sanitize preserves custom image ids', () => {
+  const id = 'custom:' + 'p'.repeat(72);
+  const p = sanitizeProjectile({ imageId: id, speed: 400 });
+  assert.equal(p.imageId, id);
+});
+
 test('non-combat / dash presets carry no combat or hitboxes', () => {
   const run = makeEmptyPreset('run');
   assert.equal(run.combat, undefined);
@@ -112,4 +118,29 @@ test('effects sanitize: capped, followBone whitelisted, alpha 0..1', () => {
   assert.equal(fx[0].time, 0.1, 'sorted by time');
   assert.ok(fx.every((e) => e.alpha >= 0 && e.alpha <= 1));
   assert.equal(fx.find((e) => e.assetId === 'boom').followBone, null, 'unknown bone → null');
+});
+
+test('frame events sanitize: projectiles capped to 5 and teleports clamped', () => {
+  const shots = sanitizeProjectileEvents(Array.from({ length: 8 }, (_, i) => ({
+    time: 1 - i * 0.1,
+    projectile: { imageId: 'bolt', speed: 99999, hitbox: { shape: 'circle', radius: 999 } },
+  })));
+  assert.equal(shots.length, 5);
+  assert.deepEqual(shots.map(e => e.time), [...shots.map(e => e.time)].sort((a, b) => a - b));
+  assert.ok(shots.every(e => e.projectile.speed <= 1200));
+
+  const teleports = sanitizeTeleportEvents([{ time: 2, directionSource: 'hacked', distance: 9999 }]);
+  assert.equal(teleports[0].time, 1);
+  assert.equal(teleports[0].directionSource, 'cursor');
+  assert.equal(teleports[0].distance, 260);
+});
+
+test('V2 weaponVisual keeps long custom image ids', () => {
+  const id = 'custom:' + 'a'.repeat(80);
+  const w = clampWorkshopWeaponV2({
+    schemaVersion: 2,
+    weaponVisual: { imageId: id, scale: 2 },
+    presets: { basic: makeEmptyPreset('basic') },
+  });
+  assert.equal(w.weaponVisual.imageId, id);
 });

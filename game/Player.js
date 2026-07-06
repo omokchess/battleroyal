@@ -162,7 +162,14 @@ export class Player {
     const safe = clampWorkshopWeapon(def);
     // The V1 clamp drops weaponVisual; keep the small id-only visual for rendering.
     if (def && def.weaponVisual && (def.weaponVisual.imageId || def.weaponVisual.dual)) {
-      safe.weaponVisual = { imageId: def.weaponVisual.imageId ? String(def.weaponVisual.imageId).slice(0, 48) : null, scale: Number(def.weaponVisual.scale) || 1, dual: !!def.weaponVisual.dual };
+      safe.weaponVisual = {
+        imageId: def.weaponVisual.imageId ? String(def.weaponVisual.imageId).slice(0, 128) : null,
+        scale: Number(def.weaponVisual.scale) || 1,
+        rotationOffset: Number(def.weaponVisual.rotationOffset) || 0,
+        offsetX: Number(def.weaponVisual.offsetX) || 0,
+        offsetY: Number(def.weaponVisual.offsetY) || 0,
+        dual: !!def.weaponVisual.dual
+      };
     }
     // Ranged basic attack (projectile config) — kept for the fire path + renderer.
     if (def && def.ranged && def.projectile) { safe.ranged = true; safe.projectile = def.projectile; }
@@ -185,6 +192,7 @@ export class Player {
       safe.presetRanged = pr;
     }
     this.workshopWeapon = safe;
+    if (def && def.id) this.workshopWeapon.id = String(def.id).slice(0, 64);
     // Block-gimmick VM (host runs it; the constructor sanitizes + caps the AST).
     this.blockVM = safe.blocks ? new BlockVM(safe.blocks, 'workshop') : null;
     this.blockVars = {};       // weapon-instance locals (reset on respawn)

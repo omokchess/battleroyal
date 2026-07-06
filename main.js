@@ -17,7 +17,7 @@ import { isMobileDevice, isPhoneDevice } from './game/Device.js';
 import { normalizeRoomConfig, roomConfigBadges } from './game/RoomConfig.js';
 import { Sound } from './game/Sound.js';
 import { MotionEditor, loadStoredMotionSets, equippedMotionSetId, equippedWorkshopWeapon, equipWorkshopWeapon, clearWorkshopWeapon, equippedWorkshopWeaponName } from './game/MotionEditor.js';
-import { loadWorkshopWeaponsV2, saveWorkshopWeaponLocal, equipWorkshopWeaponLocal, equippedWorkshopWeaponId, unequipWorkshopWeapon, deleteWorkshopWeaponLocal, importWorkshopWeapon } from './game/WorkshopStore.js';
+import { loadWorkshopWeaponsV2, saveWorkshopWeaponLocal, equipWorkshopWeaponLocal, equippedWorkshopWeaponId, unequipWorkshopWeapon, deleteWorkshopWeaponLocal, importWorkshopWeapon, v2ToV1Runtime } from './game/WorkshopStore.js';
 import { PRESET_LABELS, PRIMARY_PRESET_KEYS, COMBAT_PRESET_KINDS, makeEmptyWeaponV2 } from './game/Workshop.js';
 import { equippedStickLook } from './game/StickLook.js';
 
@@ -27,6 +27,7 @@ const bootScreen = document.getElementById('bootScreen');
 const lobbyMenu = document.getElementById('lobbyMenu');
 const gameScreen = document.getElementById('gameScreen');
 const gameCanvas = document.getElementById('gameCanvas');
+const SELECTED_BASE_WEAPON_KEY = 'pixelroyale_selected_base_weapon';
 
 const nicknameInput = document.getElementById('nicknameInput');
 const hostRoomInput = document.getElementById('hostRoomInput');
@@ -169,6 +170,7 @@ function setupWeaponSelector() {
       card.classList.add('selected');
 
       const chosenWeapon = card.dataset.weapon;
+      try { if (chosenWeapon) localStorage.setItem(SELECTED_BASE_WEAPON_KEY, chosenWeapon); } catch {}
       displayWeaponStats(chosenWeapon);
     });
   });
@@ -187,11 +189,11 @@ function setupWeaponSelector() {
     iconBox.innerHTML = weaponIconMarkup(w);
   });
 
-  // Pre-select default sword
-  const defaultCard = document.querySelector('.weapon-card[data-weapon="sword"]');
-  if (defaultCard) {
-    defaultCard.click();
-  }
+  let savedWeapon = null;
+  try { savedWeapon = localStorage.getItem(SELECTED_BASE_WEAPON_KEY); } catch {}
+  const savedCard = savedWeapon ? document.querySelector(`.weapon-card[data-weapon="${savedWeapon}"]`) : null;
+  const defaultCard = savedCard || document.querySelector('.weapon-card[data-weapon="sword"]') || weaponCards[0];
+  if (defaultCard) defaultCard.click();
 }
 
 function displayWeaponStats(weaponType) {
@@ -1747,18 +1749,30 @@ function setWeaponPanelOpen(open) {
 function buildWeaponSwitchPanel() {
   const list = document.getElementById('weaponSwitchList');
   if (!list) return;
-  list.innerHTML = Object.keys(Weapons).map(key => {
+  const baseHtml = Object.keys(Weapons).map(key => {
     const cfg = Weapons[key];
     return `<button type="button" data-weapon="${key}" class="weapon-switch" style="color:${cfg.color}">`
       + `<span class="ws-accent" aria-hidden="true"></span>`
       + `<span class="ws-name">${cfg.name}</span>`
       + `</button>`;
   }).join('');
+  const workshopHtml = loadWorkshopWeaponsV2().map(w => (
+    `<button type="button" data-ws="${escapeHtml(w.id)}" class="weapon-switch" style="color:${w.color || '#ffb070'}">`
+      + `<span class="ws-accent" aria-hidden="true"></span>`
+      + `<span class="ws-name">${escapeHtml(w.name)} <small style="color:#ffd7a8">공방</small></span>`
+      + `</button>`
+  )).join('');
+  list.innerHTML = baseHtml + workshopHtml;
 
   list.addEventListener('click', (e) => {
     const btn = e.target.closest('.weapon-switch');
     if (!btn || !activeGame) return;
-    activeGame.requestWeaponChange(btn.dataset.weapon);
+    if (btn.dataset.ws) {
+      const w = loadWorkshopWeaponsV2().find(x => x.id === btn.dataset.ws);
+      if (w) activeGame.requestWeaponChange(`ws:${w.id}`, v2ToV1Runtime(w), w.name);
+    } else {
+      activeGame.requestWeaponChange(btn.dataset.weapon);
+    }
     setWeaponPanelOpen(false); // mobile: dismiss after picking (desktop bar stays open via CSS)
   });
 
@@ -2069,11 +2083,16 @@ function setupLobbyHub() {
     const fromLeft = LEFT_MODULES.has(mod);   // 무기고/방 제작/랭킹 enter from the left
     // Quick play (offline bot match) + weapon workshop reuse their existing
     // (hidden legacy-layout) buttons' handlers — the hub card forwards the click.
-    if (mod === 'quickplay') { document.getElementById('quickPlayBtn')?.click(); return; }
+    if (mod === 'quickplay') { openRoomCustom('quickplay'); return; }
     if (mod === 'workshop') { document.getElementById('workshopBtn')?.click(); return; }  // user weapon workshop (all users)
     if (mod === 'shop') { openShellMove('워크샵', 'WORKSHOP', 'shopModal', 'shopBtn', 'shopBody', fromLeft); return; }
     if (mod === 'rank') { openShellMove('랭킹', 'RANK', 'leaderboardModal', 'rankBtn', 'leaderboardBody', fromLeft); return; }
-    if (mod === 'armory') { openShellModule('무기고', 'ARMORY', buildArmoryInto, fromLeft); return; }
+    if (mod === 'armory') {
+      const hasBase = !!document.querySelector('.weapon-card');
+      const hasWorkshop = loadWorkshopWeaponsV2().length > 0;
+      if (!hasBase && !hasWorkshop) { document.getElementById('workshopBtn')?.click(); return; }
+      openShellModule('무기고', 'ARMORY', buildArmoryInto, fromLeft); return;
+    }
     if (mod === 'options') { openShellModule('설정', 'OPTIONS', buildOptionsInto, fromLeft); return; }
     if (mod === 'create') { openShellModule('방 제작', 'CREATE', buildCreateInto, fromLeft); return; }
     if (mod === 'arena') { openShellModule('결투장', 'ARENA', buildArenaInto, fromLeft); return; }
@@ -2237,6 +2256,9 @@ function buildArmoryInto(body) {
   let wsList = loadWorkshopWeaponsV2();
   const equippedWsId = () => equippedWorkshopWeaponId();
   let selected = equippedWsId() ? ('ws:' + equippedWsId()) : (document.querySelector('.weapon-card.selected')?.dataset.weapon || weapons[0]);
+  const openWorkshopFromEmptyArmory = () => {
+    document.getElementById('workshopBtn')?.click();
+  };
 
   // Build every chip ONCE (base arsenal + local workshop weapons). Workshop
   // chips carry a 공방 badge; both share the 근접/원거리/특수 category filter.
@@ -2279,6 +2301,16 @@ function buildArmoryInto(body) {
 
   // Dispatch: workshop weapon detail vs the base-weapon stat-bar detail.
   function renderDetail() {
+    if (!selected && !weapons.length && !wsList.length) {
+      detailEl.innerHTML = `
+        <div class="h-full min-h-[220px] flex flex-col items-center justify-center text-center gap-3">
+          <div class="font-bold text-[#ffd24a]">보유한 무기가 없습니다.</div>
+          <div class="font-mono text-[11px] med-muted">무기 공방에서 새 무기를 만들거나 워크샵 무기를 받아오세요.</div>
+          <button id="armoryGoWorkshop" class="med-btn med-btn--blood font-mono text-xs px-5 py-2">무기 공방으로 이동</button>
+        </div>`;
+      detailEl.querySelector('#armoryGoWorkshop')?.addEventListener('click', openWorkshopFromEmptyArmory);
+      return;
+    }
     if (typeof selected === 'string' && selected.startsWith('ws:')) return renderWorkshopDetail(selected.slice(3));
     return renderBaseDetail();
   }
@@ -2286,7 +2318,7 @@ function buildArmoryInto(body) {
   /** Workshop weapon detail: identity, preset summary, equip / edit / delete. */
   function renderWorkshopDetail(id) {
     const w = wsList.find(x => x.id === id);
-    if (!w) { selected = weapons[0]; buildChips(); markSelected(); return renderBaseDetail(); }
+    if (!w) { selected = weapons[0] || (wsList[0] ? 'ws:' + wsList[0].id : null); buildChips(); markSelected(); return renderDetail(); }
     const equipped = equippedWsId() === id;
     const presetChips = PRIMARY_PRESET_KEYS.filter(k => w.presets[k]).map(k => {
       const p = w.presets[k]; const c = p.combat;
@@ -2320,13 +2352,14 @@ function buildArmoryInto(body) {
       if (!confirm(`"${w.name}" 을(를) 삭제할까요?`)) return;
       deleteWorkshopWeaponLocal(id);
       wsList = loadWorkshopWeaponsV2();
-      selected = weapons[0]; buildChips(); applyFilter(); markSelected(); renderDetail();
+      selected = weapons[0] || (wsList[0] ? 'ws:' + wsList[0].id : null); buildChips(); applyFilter(); markSelected(); renderDetail();
       showToast('삭제되었습니다');
     });
   }
 
   function renderBaseDetail() {
     const w = selected, c = Weapons[w];
+    if (!c) { selected = wsList[0] ? 'ws:' + wsList[0].id : null; return renderDetail(); }
     const skins = accountUI.getEquippedWeaponSkins?.() || {};
     const skinKey = w === 'pistols' ? 'crossbow' : w;
     const tags = armoryStatusTags(w).map(([t, col]) => `<span class="armory-tag" style="color:${col}">${t}</span>`).join(' ');

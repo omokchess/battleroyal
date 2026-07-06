@@ -171,17 +171,18 @@
 .mobile-action-bottom { left: 50%; bottom: 0; transform: translateX(-50%); }
 .mobile-action-attack { right: 0.7rem; bottom: 0.7rem; }
 
-/* Platformer jump button — anchored above the left move stick. */
+/* Platformer jump button — sits just left of the right action cluster. */
 .mobile-jump-btn {
   position: absolute;
-  left: 2.4rem;
-  bottom: 9rem;
+  left: auto;
+  right: 14.4rem;
+  bottom: 2.2rem;
   width: 4.2rem;
   height: 4.2rem;
   z-index: 4;
 }
 @media (min-width: 768px) {
-  .mobile-jump-btn { left: 3.8rem; bottom: 12.5rem; width: 5.4rem; height: 5.4rem; }
+  .mobile-jump-btn { left: auto; right: 17.8rem; bottom: 3.6rem; width: 5.4rem; height: 5.4rem; }
 }
 .weapon-switch.weapon-current::after { content: "착용"; background: #d4af37; }
 .weapon-switch.weapon-pending::after { content: "대기"; background: #fbbf24; }

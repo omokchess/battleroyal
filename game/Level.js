@@ -112,7 +112,7 @@ export function buildLevel(side, config = {}) {
       const step = Math.floor(i / 2);
       platformSlots.push({
         x: cx + sideSign * W * (0.18 + step * 0.09) - platW / 2,
-        y: H - GROUND_H - (4.4 + i * 1.75) * TILE,
+        y: H - GROUND_H - (3.4 + i * 1.55) * TILE,
         w: platW
       });
     }
@@ -121,15 +121,15 @@ export function buildLevel(side, config = {}) {
     for (let i = 0; i < platformCount; i++) {
       platformSlots.push({
         x: xs[i] - platW / 2,
-        y: H - GROUND_H - (4.8 + Math.floor(i / 2) * 3.1) * TILE,
+        y: H - GROUND_H - (3.6 + Math.floor(i / 2) * 2.7) * TILE,
         w: i >= 4 ? platW * 0.9 : platW
       });
     }
   } else {
     const tiers = [
-      { y: H - GROUND_H - 5 * TILE, dx: W * 0.25 },
-      { y: H - GROUND_H - 8 * TILE, dx: W * 0.12 },
-      { y: H - GROUND_H - 11.2 * TILE, dx: 0 },
+      { y: H - GROUND_H - 3.6 * TILE, dx: W * 0.25 },
+      { y: H - GROUND_H - 6.8 * TILE, dx: W * 0.12 },
+      { y: H - GROUND_H - 10.0 * TILE, dx: 0 },
     ];
     for (const t of tiers) {
       if (platformSlots.length >= platformCount) break;

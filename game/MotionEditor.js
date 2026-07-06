@@ -1558,7 +1558,17 @@ export class MotionEditor {
       // Bridge: attach a V1 runtime projection so the existing publish path
       // (stats/motionSet/blocks) stores a usable doc alongside the V2 fields.
       const v1 = v2ToV1Runtime(w) || {};
-      await this.onUploadWorkshop({ ...w, stats: v1.stats, motionSet: v1.motionSet, blocks: v1.blocks });
+      // Carry the custom weapon's actual pixels so RECIPIENTS see the image too
+      // (the imageId alone only resolves on the author's device). Bounded on save.
+      let weaponImage = null;
+      const imgId = w.weaponVisual && w.weaponVisual.imageId;
+      if (imgId && imgId.startsWith('custom:')) {
+        const rec = this._customWeapon(imgId);
+        if (rec && rec.src && rec.src.length <= 400000) {
+          weaponImage = { id: rec.id, name: rec.name, src: rec.src, size: rec.size || 2, anchors: rec.anchors || null };
+        }
+      }
+      await this.onUploadWorkshop({ ...w, stats: v1.stats, motionSet: v1.motionSet, blocks: v1.blocks, weaponImage });
       this._setStatus(`"${w.name}" 업로드 완료! 워크샵에서 다른 유저가 사용할 수 있습니다.`);
     } catch (e) {
       // Local save stays intact — only the share failed.

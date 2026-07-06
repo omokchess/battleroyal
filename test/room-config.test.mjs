@@ -21,12 +21,12 @@ test('normalizeRoomConfig rejects unknown enum values (anti-cheat on network inp
   assert.equal(c.platforms, 'some');
   assert.equal(c.platformShape, 'balanced');
   assert.equal(c.healingRate, 'normal');
-  assert.equal(c.storm, true);           // any truthy coerces to boolean
+  assert.equal(c.storm, false);          // lava/storm is removed from live rules
 });
 
 test('normalizeRoomConfig keeps valid values', () => {
   const c = normalizeRoomConfig({ arenaSize: 'medium', storm: true, cover: 'many', platforms: 'few', platformShape: 'stairs', healing: true, healingRate: 'fast' });
-  assert.deepEqual(c, { ...DEFAULT_ROOM_CONFIG, storm: true, cover: 'many', platforms: 'few', platformShape: 'stairs', healing: true, healingRate: 'fast' });
+  assert.deepEqual(c, { ...DEFAULT_ROOM_CONFIG, storm: false, cover: 'many', platforms: 'few', platformShape: 'stairs', healing: true, healingRate: 'fast' });
 });
 
 test('arenaDimensions uses the single medium square map', () => {
@@ -38,7 +38,7 @@ test('roomConfigBadges shows visible gameplay toggles only', () => {
   assert.deepEqual(roomConfigBadges({}), ['플랫폼 보통']);
   assert.deepEqual(
     roomConfigBadges({ arenaSize: 'medium', storm: true, cover: 'many', platforms: 'many', healing: true }),
-    ['자기장', '엄폐물 많음', '플랫폼 많음', '회복']
+    ['엄폐물 많음', '플랫폼 많음', '회복']
   );
   // cover 'none' must not produce a badge
   assert.deepEqual(roomConfigBadges({ arenaSize: 'small', cover: 'none', platforms: 'none' }), []);

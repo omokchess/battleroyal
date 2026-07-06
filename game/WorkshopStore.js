@@ -20,6 +20,7 @@ import {
   clampWorkshopWeaponV2, toWorkshopWeaponV2, clampWorkshopWeapon,
   PRIMARY_PRESET_KEYS, COMBAT_PRESET_KINDS, NONCOMBAT_PRESET_KINDS,
 } from './Workshop.js';
+import { saveCustomWeaponRecord } from './WeaponImages.js';
 
 const WS_STORE = 'pixelroyale_workshop_weapons_v2';        // { id: WorkshopWeaponV2 }
 const WS_EQUIP = 'pixelroyale_equipped_workshop_weapon_v2';// equipped weapon id
@@ -69,8 +70,15 @@ export function deleteWorkshopWeaponLocal(id) {
   if (equippedWorkshopWeaponId() === id) unequipWorkshopWeapon();
 }
 
-/** Import a browsed/published weapon (V1 or V2) into the local armory. */
+/** Import a browsed/published weapon (V1 or V2) into the local armory. When the
+ *  published doc carried the author's custom weapon pixels (weaponImage), fold
+ *  them into THIS device's image store so the recipient sees the image too — not
+ *  just the default stick. */
 export function importWorkshopWeapon(raw) {
+  const imgId = raw && raw.weaponVisual && raw.weaponVisual.imageId;
+  if (raw && raw.weaponImage && imgId && String(imgId).startsWith('custom:')) {
+    saveCustomWeaponRecord({ ...raw.weaponImage, id: imgId });
+  }
   return saveWorkshopWeaponLocal(toWorkshopWeaponV2(raw));
 }
 

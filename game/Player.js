@@ -261,7 +261,7 @@ export class Player {
    * Input mapping (re-uses the synced movement keys so no protocol change):
    *   a / ArrowLeft = left, d / ArrowRight = right,
    *   w / ArrowUp / Space = jump (held for variable height),
-   *   s / ArrowDown = drop through one-way platforms (with jump).
+   *   s / ArrowDown + jump = drop through one-way platforms.
    */
   updatePosition(deltaTime, keys, level) {
     if (this.isDead) { this._tickTimers(deltaTime); return; }
@@ -368,7 +368,7 @@ export class Player {
     this.vy = Math.min(this.vy + grav * dt, PHYS.maxFall);
 
     // --- Integrate + collide ---
-    const dropThrough = downHeld || this.dropThroughLeft > 0;
+    const dropThrough = this.dropThroughLeft > 0;
     const hit = Collision.moveAndCollide(this, level, dt, { dropThrough });
 
     const wasGrounded = this.grounded;

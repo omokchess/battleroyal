@@ -53,11 +53,12 @@ let costumeCatalog = [];       // [{ id, name, price, color, accent_color }]
 let ownedIds = new Set();      // 보유 코스튬 id (레거시 — getEquippedCostume 용)
 let callbacks = {};            // { onEnterLobby, onRequireLogin }
 
-// 범용 상점(카테고리 탭) 상태.
+// Legacy shop state remains for profile compatibility. The visible "shop" entry
+// is now a workshop browser only; coin purchases and cosmetic tabs are disabled.
 let itemCatalog = [];          // [{ id, category, name, price, data, unlock_type, unlock_threshold }]
 let ownedItemIds = new Set();  // 보유 아이템 id
 let equipped = equippedFromProfile(null); // { costume, weaponskin, killfx, dashtrail, respawnfx, title } (전체 id)
-let activeCategory = 'killfx';
+let activeCategory = 'workshop';
 let activeSkinWeapon = 'sword'; // (legacy) 무기 스킨 탭 제거됨 — 무기는 워크샵/무기 탭으로 이동
 
 const WEAPON_KO = {
@@ -67,13 +68,7 @@ const WEAPON_KO = {
   rapier: '레이피어', scythe: '낫', sniper: '강궁', spear: '창', sword: '검',
 };
 
-const SHOP_CATEGORIES = [
-  // '무기 스킨' 탭 제거 — 무기는 무기고 '무기' 탭 / 상점 '🔧 워크샵' 탭으로 이동.
-  { key: 'killfx',     label: '처치 이펙트' },
-  { key: 'dashtrail',  label: '대시 트레일' },
-  { key: 'respawnfx',  label: '부활 이펙트' },
-  { key: 'title',      label: '칭호' },
-];
+const SHOP_CATEGORIES = [];
 
 // 워크샵 탭: 다른 유저가 만든 공방 무기를 상점에서 바로 둘러보고 장착. 렌더러는
 // main.js가 주입한다 (renderWorkshopList가 게임 쪽 장착/사운드에 의존하므로).
@@ -159,6 +154,7 @@ function clampFetched(w) {
   const out = { id: w.id, author_id: w.author_id, author_name: w.author_name, likes: w.likes, plays: w.plays, status: w.status, ...safe };
   // Preserve V2 fields so 무기고에 추가 (importWorkshopWeapon) migrates them faithfully.
   if (Number(w.schemaVersion) === 2) { out.schemaVersion = 2; out.category = w.category; out.baseStats = w.baseStats; out.presets = w.presets; if (w.weaponVisual) out.weaponVisual = w.weaponVisual; }
+  if (w.weaponImage) out.weaponImage = w.weaponImage;   // custom pixels → recipient's local store on import
   return out;
 }
 export function publishMyWorkshopWeapon(def) { return publishWorkshopWeapon(def, getUsername()); }
@@ -194,18 +190,7 @@ export function getTierScore() {
  * 풀어서 반환 → P2P 로 다른 플레이어에게 전달해 그대로 그릴 수 있게 한다.
  */
 export function getEquippedCosmetics() {
-  const resolve = (cat) => {
-    const id = equipped[cat] || (cat + ':none');
-    const item = itemCatalog.find((i) => i.id === id);
-    return { id, data: item?.data || {} };
-  };
-  return {
-    weaponskins: equipped.weaponskins || {},
-    killfx: resolve('killfx'),
-    dashtrail: resolve('dashtrail'),
-    respawnfx: resolve('respawnfx'),
-    title: resolve('title'),
-  };
+  return { weaponskins: {} };
 }
 
 export function getEquippedWeaponSkins() {
@@ -506,27 +491,14 @@ async function openLeaderboard() {
     </table>`;
 }
 
-// ── 상점 모달 (카테고리 탭) ─────────────────────────────────
+// ── 워크샵 모달 ─────────────────────────────────
 async function openShop() {
   const modal = $('shopModal');
   const body = $('shopBody');
   if (!modal || !body) return;
   modal.classList.remove('hidden');
 
-  // 비로그인(게스트) → 로그인 유도 (플레이는 로그인 없이도 가능).
-  if (!profile) {
-    const coinEl = $('shopCoins');
-    if (coinEl) coinEl.textContent = '0';
-    body.innerHTML = `<div class="col-span-full text-center py-10 font-mono text-sm text-gray-300 leading-relaxed">
-      상점은 <span class="text-[#45f3ff]">로그인</span> 후 이용할 수 있어요.<br>
-      <span class="text-[11px] text-gray-500">게임 플레이는 로그인 없이도 가능합니다.</span></div>`;
-    return;
-  }
-
-  // 최신 데이터로 갱신.
-  if (!itemCatalog.length) itemCatalog = await fetchItems();
-  ownedItemIds = await fetchMyItemIds();
-  equipped = await fetchMyEquipped();
+  activeCategory = 'workshop';
   renderShop();
 }
 
@@ -635,54 +607,13 @@ function renderWeaponSkinTab() {
 
 function renderShop() {
   const body = $('shopBody');
-  const coinEl = $('shopCoins');
   if (!body) return;
-  if (coinEl) coinEl.textContent = Number(profile?.coins ?? 0).toLocaleString();
-
-  // 마이그레이션 전(items 없음)이면 레거시 코스튬 카탈로그로 폴백.
-  const items = itemCatalog.length
-    ? itemCatalog
-    : costumeCatalog.map((c) => ({
-        id: 'costume:' + c.id, category: 'costume', name: c.name, price: c.price,
-        data: { color: c.color, accentColor: c.accent_color }, unlock_type: 'coin',
-        unlock_threshold: 0, sort_order: c.sort_order || 0,
-      }));
-
-  const cats = SHOP_CATEGORIES.filter((c) => items.some((i) => i.category === c.key));
-  const activeCats = cats.length ? cats : SHOP_CATEGORIES.slice(0, 1);
-  // 워크샵 탭은 카탈로그 아이템과 무관하게 항상 노출 (렌더러가 주입된 경우).
-  if (workshopTabRenderer) activeCats.push({ key: 'workshop', label: '🔧 워크샵' });
-  if (!activeCats.some((c) => c.key === activeCategory)) activeCategory = activeCats[0].key;
-
-  const tabs = activeCats.map((c) => `
-    <button data-cat="${c.key}" class="px-2.5 py-1 text-[10px] font-mono uppercase border-2 cursor-pointer active:scale-95 transition-all ${c.key === activeCategory ? 'border-[#45f3ff] text-[#45f3ff] bg-[#0b3038]' : 'border-gray-700 text-gray-400 hover:border-gray-500'}">${c.label}</button>`).join('');
-
-  let content;
-  if (activeCategory === 'workshop') {
-    content = '<div id="shopWorkshopHost" class="col-span-full"></div>';
-  } else if (activeCategory === 'weaponskin') {
-    content = renderWeaponSkinTab();
+  body.innerHTML = '<div id="shopWorkshopHost" class="col-span-full"></div>';
+  if (workshopTabRenderer) {
+    workshopTabRenderer($('shopWorkshopHost'));
   } else {
-    const catItems = items
-      .filter((i) => i.category === activeCategory)
-      .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
-    const cards = catItems.map(renderItemCard).join('');
-    content = cards || '<div class="col-span-full text-center text-gray-500 text-xs py-6">아이템이 없습니다.</div>';
+    body.innerHTML = '<div class="col-span-full text-center text-gray-500 text-xs py-6">워크샵을 불러올 수 없습니다.</div>';
   }
-
-  body.innerHTML = `
-    <div class="col-span-full flex flex-wrap gap-1.5 mb-3">${tabs}</div>
-    ${content}`;
-  if (activeCategory === 'workshop') workshopTabRenderer?.($('shopWorkshopHost'));
-
-  body.querySelectorAll('[data-cat]').forEach((el) =>
-    el.addEventListener('click', () => { activeCategory = el.getAttribute('data-cat'); renderShop(); }));
-  body.querySelectorAll('[data-skin-weapon]').forEach((el) =>
-    el.addEventListener('click', () => { activeSkinWeapon = el.getAttribute('data-skin-weapon'); renderShop(); }));
-  body.querySelectorAll('[data-buy]').forEach((el) =>
-    el.addEventListener('click', () => handleBuyItem(el.getAttribute('data-buy'))));
-  body.querySelectorAll('[data-equip]').forEach((el) =>
-    el.addEventListener('click', () => handleEquipItem(el.getAttribute('data-equip'))));
 }
 
 async function handleBuyItem(id) {

@@ -47,3 +47,23 @@ test('weapon max hp is applied on spawn and serialization', () => {
   assert.equal(workshop.hp, workshop.maxHp);
   assert.equal(workshop.serialize().maxHp, 155);
 });
+
+test('one-way platform drop requires down plus jump', () => {
+  const level = buildLevel(1000, { platforms: 'few', platformShape: 'balanced', cover: 'none' });
+  const platform = level.oneWays[0];
+  const makePlayer = () => {
+    const p = new Player('p', 'N', 'sword', platform.x + platform.w / 2, platform.y - 20);
+    p.grounded = true;
+    p.coyoteLeft = 0.09;
+    return p;
+  };
+
+  const sOnly = makePlayer();
+  for (let i = 0; i < 8; i++) sOnly.updatePosition(1 / 60, { s: true }, level);
+  assert.ok(sOnly.y <= platform.y - 19, 'holding S alone should stay on the platform');
+
+  const sSpace = makePlayer();
+  sSpace.updatePosition(1 / 60, { s: true, w: true }, level);
+  for (let i = 0; i < 10; i++) sSpace.updatePosition(1 / 60, { s: true }, level);
+  assert.ok(sSpace.y > platform.y + 4, 'S + Space should drop through the platform');
+});

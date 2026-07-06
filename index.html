@@ -153,10 +153,10 @@
               <div class="font-mono text-[10px] med-desc mt-1">맵 · 규칙 커스텀 개설</div>
             </button>
             <button type="button" data-module="shop" class="med-parch med-ticks relative text-left p-3 cursor-pointer active:translate-y-px">
-              <div class="flex items-start justify-between"><span class="font-mono text-[11px]" style="color:var(--med-gold-dk)">[04]</span><span style="color:var(--med-iron)">⛁</span></div>
-              <div class="font-bold text-base mt-1">상점</div>
-              <div class="font-mono text-[10px] med-muted">SHOP</div>
-              <div class="font-mono text-[10px] med-desc mt-1">코스튬 · 이펙트 · 칭호</div>
+              <div class="flex items-start justify-between"><span class="font-mono text-[11px]" style="color:var(--med-gold-dk)">[04]</span><span style="color:var(--med-iron)">🔧</span></div>
+              <div class="font-bold text-base mt-1">워크샵</div>
+              <div class="font-mono text-[10px] med-muted">WORKSHOP</div>
+              <div class="font-mono text-[10px] med-desc mt-1">공개 창작 무기 탐색 · 추가</div>
             </button>
             <button type="button" data-module="rank" class="med-parch med-ticks relative text-left p-3 cursor-pointer active:translate-y-px">
               <div class="flex items-start justify-between"><span class="font-mono text-[11px]" style="color:var(--med-gold-dk)">[05]</span><span style="color:var(--med-iron)">♛</span></div>
@@ -183,7 +183,7 @@
         <div class="med-panel relative overflow-hidden px-3 py-2">
           <div class="font-mono text-[11px] whitespace-nowrap" style="color:var(--med-gold)">
             <span style="color:var(--med-blood)">⚔ 공지</span>
-            <span class="med-notice-flavor" style="color:var(--med-parch)"> · 신규 무기 6종 · 경기장 크기 5종 · 상태이상 시스템 · 상점 카테고리 확장 · 시즌 02 갱신</span>
+            <span class="med-notice-flavor" style="color:var(--med-parch)"> · 창작 무기 중심 전투 · 플랫폼 커스텀 · 워크샵 공유 · 시즌 02 갱신</span>
           </div>
         </div>
       </div>
@@ -229,7 +229,7 @@
                 <span id="accountCoins">0</span>
               </span>
               <button id="rankBtn" class="bg-[#2c2016] border border-[#c9a227] text-[#c9a227] font-mono text-[10px] px-2 py-1 uppercase cursor-pointer active:scale-95 transition-all hover:bg-gray-700">랭킹</button>
-              <button id="shopBtn" class="bg-[#2c2016] border border-[#e8d5a3] text-[#e8d5a3] font-mono text-[10px] px-2 py-1 uppercase cursor-pointer active:scale-95 transition-all hover:bg-gray-700">상점</button>
+              <button id="shopBtn" class="bg-[#2c2016] border border-[#e8d5a3] text-[#e8d5a3] font-mono text-[10px] px-2 py-1 uppercase cursor-pointer active:scale-95 transition-all hover:bg-gray-700">워크샵</button>
               <button id="logoutBtn" class="bg-[#2c2016] border border-gray-600 text-gray-400 font-mono text-[10px] px-2 py-1 uppercase cursor-pointer active:scale-95 transition-all hover:bg-gray-700">로그아웃</button>
             </div>
           </div>
@@ -306,7 +306,7 @@
         <!-- Create Room -->
         <div id="lobbyCreate" class="bg-[#14100b] border-2 border-gray-700 p-4 mt-4">
           <span class="font-mono text-xs text-[#e8d5a3] uppercase">방 만들기</span>
-          <p class="font-mono text-[10px] text-amber-300/80 mt-1 leading-snug">⚔ 방장이 되어 경기를 호스팅합니다. 경기장 크기·자기장·엄폐물·회복을 직접 설정할 수 있어요.</p>
+          <p class="font-mono text-[10px] text-amber-300/80 mt-1 leading-snug">⚔ 방장이 되어 경기를 호스팅합니다. 플랫폼·엄폐물·회복을 직접 설정할 수 있어요.</p>
           <button id="openRoomCustomBtn" class="w-full mt-2 bg-gradient-to-r from-[#cda833] to-[#7a5e1e] hover:from-[#e6c75a] hover:to-[#5a4320] border-2 border-[#e6c75a] text-white font-mono text-xs px-5 py-2.5 uppercase tracking-wider cursor-pointer font-bold active:scale-95 transition-transform">
             방 커스텀
           </button>
@@ -318,14 +318,26 @@
           <div class="border-4 border-[#c9a227] bg-[#2c2016] w-full max-w-md my-auto shadow-[0_0_24px_rgba(201,162,39,0.35)] max-h-[92vh] overflow-y-auto">
             <div class="p-5 sm:p-6">
               <div class="flex items-center justify-between mb-1">
-                <h2 class="text-lg font-bold text-[#e8d5a3] uppercase tracking-widest select-none">방 커스텀</h2>
+                <h2 id="roomCustomTitle" class="text-lg font-bold text-[#e8d5a3] uppercase tracking-widest select-none">방 커스텀</h2>
                 <button id="roomCustomClose" class="text-gray-400 hover:text-white text-2xl leading-none px-2 cursor-pointer" aria-label="닫기">&times;</button>
               </div>
               <div class="my-2 h-0.5 bg-gradient-to-r from-transparent via-[#facc15] to-transparent"></div>
 
-              <label class="block font-mono text-[10px] text-[#e8d5a3] uppercase mb-1">방 코드</label>
-              <input type="text" id="hostRoomInput" maxlength="10" placeholder="3글자 이상 (영문·숫자)"
-                class="w-full bg-[#14100b] border-2 border-gray-600 focus:border-[#c9a227] text-white px-3 py-2 font-mono text-xs focus:outline-none uppercase mb-4" />
+              <div id="roomCodeRow">
+                <label class="block font-mono text-[10px] text-[#e8d5a3] uppercase mb-1">방 코드</label>
+                <input type="text" id="hostRoomInput" maxlength="10" placeholder="3글자 이상 (영문·숫자)"
+                  class="w-full bg-[#14100b] border-2 border-gray-600 focus:border-[#c9a227] text-white px-3 py-2 font-mono text-xs focus:outline-none uppercase mb-4" />
+              </div>
+
+              <div class="mb-3 hidden" data-config-group="botCount" id="botCountRow">
+                <div class="font-mono text-[10px] text-gray-300 uppercase mb-1">AI 수</div>
+                <div class="grid grid-cols-4 gap-1">
+                  <button type="button" class="cfg-opt" data-value="1">1</button>
+                  <button type="button" class="cfg-opt" data-value="2">2</button>
+                  <button type="button" class="cfg-opt selected" data-value="3">3</button>
+                  <button type="button" class="cfg-opt" data-value="5">5</button>
+                </div>
+              </div>
 
               <div class="mb-3" data-config-group="platforms">
                 <div class="font-mono text-[10px] text-gray-300 uppercase mb-1">플랫폼</div>
@@ -354,14 +366,6 @@
                   <button type="button" class="cfg-opt" data-value="dawn">새벽</button>
                   <button type="button" class="cfg-opt" data-value="desert">사막</button>
                   <button type="button" class="cfg-opt" data-value="snow">눈</button>
-                </div>
-              </div>
-
-              <div class="mb-3" data-config-group="storm">
-                <div class="font-mono text-[10px] text-gray-300 uppercase mb-1">자기장</div>
-                <div class="grid grid-cols-2 gap-1">
-                  <button type="button" class="cfg-opt selected" data-value="off">OFF</button>
-                  <button type="button" class="cfg-opt" data-value="on">ON</button>
                 </div>
               </div>
 
@@ -412,6 +416,9 @@
 
               <button id="hostBtn" class="w-full bg-gradient-to-r from-[#cda833] to-[#7a5e1e] hover:from-[#e6c75a] hover:to-[#5a4320] border-2 border-[#e6c75a] text-white font-mono text-xs px-5 py-2.5 uppercase tracking-wider cursor-pointer font-bold active:scale-95 transition-transform">
                 방 생성
+              </button>
+              <button id="quickStartBtn" class="hidden w-full bg-gradient-to-r from-[#3aa856] to-[#1c6b33] hover:from-[#4cc96b] hover:to-[#175a2a] border-2 border-[#7df09a] text-white font-mono text-xs px-5 py-2.5 uppercase tracking-wider cursor-pointer font-bold active:scale-95 transition-transform">
+                봇전 시작
               </button>
               <p class="font-mono text-[10px] text-red-300/80 mt-3 leading-snug">🎯 더미방은 위 설정을 그대로 쓰는 연습장입니다(가만히 서 있는 연습용 더미 포함). 방 목록엔 <b class="text-red-300">빨간 테두리</b>로 표시돼요.</p>
               <button id="dummyBtn" class="w-full mt-1 bg-[#14100b] hover:bg-[#1a0e12] border-2 border-red-500 text-red-300 font-mono text-xs px-5 py-2.5 uppercase tracking-wider cursor-pointer font-bold active:scale-95 transition-transform">
@@ -739,13 +746,13 @@
       </div>
     </div>
 
-    <!-- COSTUME SHOP MODAL -->
+    <!-- WORKSHOP MODAL -->
     <div id="shopModal" data-close-modal="shopModal" class="hidden absolute inset-0 z-[70] flex items-center justify-center bg-black/70 p-4">
       <div class="w-full max-w-lg bg-[#2c2016] border-4 border-[#e8d5a3] p-5 max-h-[85vh] flex flex-col shadow-[0_0_20px_rgba(201,162,39,0.2)]">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="font-display text-xl text-[#e8d5a3] font-bold uppercase tracking-widest">코스튬 상점</h2>
+          <h2 class="font-display text-xl text-[#e8d5a3] font-bold uppercase tracking-widest">워크샵</h2>
           <div class="flex items-center gap-3">
-            <span class="font-mono text-xs text-yellow-300 font-bold">보유 <span id="shopCoins">0</span> 코인</span>
+            <span class="font-mono text-xs text-yellow-300 font-bold">창작 무기</span>
             <button data-close-modal="shopModal" class="text-gray-400 hover:text-white font-mono text-lg leading-none px-2 cursor-pointer">✕</button>
           </div>
         </div>

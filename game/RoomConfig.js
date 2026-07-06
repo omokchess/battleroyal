@@ -7,7 +7,7 @@
  * 방 커스텀 설정(roomConfig)의 단일 소스.
  *
  * 모든 기본값은 "현행과 동일"하게 맞춰져 있어, 설정을 건드리지 않으면 게임은
- * 지금과 똑같이 동작한다(초소형 맵 700, 자기장/엄폐물/회복 전부 OFF).
+ * 지금과 똑같이 동작한다(중형 맵 1000, 용암/엄폐물/회복 전부 OFF).
  *
  * 설계 원칙:
  *  - 호스트가 roomConfig 를 들고, ROOM_JOINED 으로 참가자에게 전달한다.
@@ -98,7 +98,9 @@ export function normalizeRoomConfig(raw) {
   const c = (raw && typeof raw === 'object') ? raw : {};
   return {
     arenaSize:   oneOf(c.arenaSize, ARENA_SIZES, DEFAULT_ROOM_CONFIG.arenaSize),
-    storm:       Boolean(c.storm),
+    // Lava/storm pressure was removed from live rules. Keep the field in the
+    // wire shape for backward compatibility, but never allow it to turn on.
+    storm:       false,
     cover:       oneOf(c.cover, COVER_DENSITY, DEFAULT_ROOM_CONFIG.cover),
     platforms:   oneOf(c.platforms, PLATFORM_DENSITY, DEFAULT_ROOM_CONFIG.platforms),
     platformShape: oneOf(c.platformShape, PLATFORM_SHAPES, DEFAULT_ROOM_CONFIG.platformShape),
@@ -125,7 +127,6 @@ export function roomConfigBadges(config) {
   const cfg = normalizeRoomConfig(config);
   const badges = [];
   if (cfg.biome !== 'day') badges.push(BIOME_LABELS[cfg.biome]);
-  if (cfg.storm) badges.push('자기장');
   if (cfg.cover !== 'none') badges.push(`엄폐물 ${COVER_LABELS[cfg.cover]}`);
   if (cfg.platforms !== 'none') badges.push(`플랫폼 ${PLATFORM_LABELS[cfg.platforms]}`);
   if (cfg.water) badges.push('물');

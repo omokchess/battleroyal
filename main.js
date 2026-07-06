@@ -34,6 +34,7 @@ const joinRoomInput = document.getElementById('joinRoomInput');
 
 const hostBtn = document.getElementById('hostBtn');
 const dummyBtn = document.getElementById('dummyBtn');
+const quickStartBtn = document.getElementById('quickStartBtn');
 const joinBtn = document.getElementById('joinBtn');
 const leaveBtn = document.getElementById('leaveBtn');
 
@@ -41,6 +42,9 @@ const openRoomCustomBtn = document.getElementById('openRoomCustomBtn');
 const roomCustomModal = document.getElementById('roomCustomModal');
 const roomCustomClose = document.getElementById('roomCustomClose');
 const healingRateRow = document.getElementById('healingRateRow');
+const botCountRow = document.getElementById('botCountRow');
+const roomCodeRow = document.getElementById('roomCodeRow');
+const roomCustomTitle = document.getElementById('roomCustomTitle');
 
 const weaponCards = document.querySelectorAll('.weapon-card');
 const weaponStats = document.getElementById('weaponStats');
@@ -1050,19 +1054,27 @@ function hideError() {
  * 3. Room custom modal — arena size / storm / cover / healing.
  * Segmented option groups: clicking a button selects it within its group.
  */
-function openRoomCustom() {
+let roomCustomMode = 'host';
+function openRoomCustom(mode = 'host') {
   if (!roomCustomModal) return;
+  roomCustomMode = mode === 'quickplay' ? 'quickplay' : 'host';
   hideError();
+  if (roomCustomTitle) roomCustomTitle.textContent = roomCustomMode === 'quickplay' ? '바로 플레이 커스텀' : '방 커스텀';
+  roomCodeRow?.classList.toggle('hidden', roomCustomMode === 'quickplay');
+  botCountRow?.classList.toggle('hidden', roomCustomMode !== 'quickplay');
+  hostBtn?.classList.toggle('hidden', roomCustomMode === 'quickplay');
+  dummyBtn?.classList.toggle('hidden', roomCustomMode === 'quickplay');
+  quickStartBtn?.classList.toggle('hidden', roomCustomMode !== 'quickplay');
   roomCustomModal.classList.remove('hidden');
   // Prefill the room code from whatever the user may have typed before.
   const codeInput = document.getElementById('hostRoomInput');
-  if (codeInput && !codeInput.value) codeInput.focus();
+  if (codeInput && !codeInput.value && roomCustomMode !== 'quickplay') codeInput.focus();
 }
 function closeRoomCustom() {
   if (roomCustomModal) roomCustomModal.classList.add('hidden');
 }
 
-if (openRoomCustomBtn) openRoomCustomBtn.addEventListener('click', openRoomCustom);
+if (openRoomCustomBtn) openRoomCustomBtn.addEventListener('click', () => openRoomCustom('host'));
 if (roomCustomClose) roomCustomClose.addEventListener('click', closeRoomCustom);
 if (roomCustomModal) roomCustomModal.addEventListener('click', (e) => {
   if (e.target === roomCustomModal) closeRoomCustom(); // tap backdrop = cancel
@@ -1091,7 +1103,7 @@ function readRoomConfig() {
   };
   return normalizeRoomConfig({
     arenaSize: pick('arenaSize', 'medium'),
-    storm: pick('storm', 'off') === 'on',
+    storm: false,
     cover: pick('cover', 'none'),
     platforms: pick('platforms', 'some'),
     platformShape: pick('platformShape', 'balanced'),
@@ -1101,6 +1113,12 @@ function readRoomConfig() {
     water: pick('water', 'off') === 'on',
     allowWorkshop: pick('allowWorkshop', 'off') === 'on',
   });
+}
+
+function readBotCount() {
+  const raw = roomCustomModal?.querySelector('[data-config-group="botCount"] .cfg-opt.selected')?.dataset.value;
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.max(0, Math.min(8, Math.round(n))) : 3;
 }
 
 // The local player's full appearance: equipped costume colors + the cosmetic
@@ -1190,20 +1208,25 @@ function doBotMatch() {
   hideError();
   closeRoomCustom();
   const btn = document.getElementById('quickPlayBtn');
+  const startBtn = document.getElementById('quickStartBtn');
   if (btn) { btn.disabled = true; btn.textContent = '전장 준비 중...'; }
+  if (startBtn) { startBtn.disabled = true; startBtn.textContent = '전장 준비 중...'; }
 
   const demoConfig = normalizeRoomConfig({
-    arenaSize: 'medium', storm: false, platforms: 'some', platformShape: 'balanced',
-    healing: true, healingRate: 'fast', biome: 'day',
+    ...readRoomConfig(),
+    arenaSize: 'medium',
+    storm: false,
     allowWorkshop: true   // practice/bot match → let players try their workshop weapons
   });
+  const botCount = readBotCount();
 
   netManager = new NetworkManager();
   netManager.on('onInit', () => {
     if (btn) { btn.disabled = false; btn.innerHTML = '▶ 바로 플레이 <span class="text-[#d6ffe2] normal-case font-bold">(봇전 · 즉시 시작)</span>'; }
+    if (startBtn) { startBtn.disabled = false; startBtn.textContent = '봇전 시작'; }
     enterGameScreen(true);
     activeGame = new Game(gameCanvas, netManager, localAppearance(), {
-      botMatch: true, botFill: 4, botDifficulty: 'normal', roomConfig: demoConfig,
+      botMatch: true, botCount, botDifficulty: 'normal', roomConfig: demoConfig,
       matchDurationMs: 120000, killTarget: 12,
       holdAtStart: true, // frozen behind the controls card; 시작하기 → 3·2·1 (P2)
       onMatchOver: (results) => showMatchResult(results)
@@ -1215,6 +1238,7 @@ function doBotMatch() {
   });
   netManager.on('onError', (err) => {
     if (btn) { btn.disabled = false; btn.innerHTML = '▶ 바로 플레이 <span class="text-[#d6ffe2] normal-case font-bold">(봇전 · 즉시 시작)</span>'; }
+    if (startBtn) { startBtn.disabled = false; startBtn.textContent = '봇전 시작'; }
     showError(err);
     netManager.stop();
   });
@@ -1222,7 +1246,8 @@ function doBotMatch() {
 }
 
 const quickPlayBtn = document.getElementById('quickPlayBtn');
-if (quickPlayBtn) quickPlayBtn.addEventListener('click', doBotMatch);
+if (quickPlayBtn) quickPlayBtn.addEventListener('click', () => openRoomCustom('quickplay'));
+if (quickStartBtn) quickStartBtn.addEventListener('click', doBotMatch);
 
 // --- Stickman motion sets ------------------------------------------------------
 // Cosmetic motion sets from localStorage. The admin-canonical Firestore layer
@@ -2046,7 +2071,7 @@ function setupLobbyHub() {
     // (hidden legacy-layout) buttons' handlers — the hub card forwards the click.
     if (mod === 'quickplay') { document.getElementById('quickPlayBtn')?.click(); return; }
     if (mod === 'workshop') { document.getElementById('workshopBtn')?.click(); return; }  // user weapon workshop (all users)
-    if (mod === 'shop') { openShellMove('상점', 'SHOP', 'shopModal', 'shopBtn', 'shopBody', fromLeft); return; }
+    if (mod === 'shop') { openShellMove('워크샵', 'WORKSHOP', 'shopModal', 'shopBtn', 'shopBody', fromLeft); return; }
     if (mod === 'rank') { openShellMove('랭킹', 'RANK', 'leaderboardModal', 'rankBtn', 'leaderboardBody', fromLeft); return; }
     if (mod === 'armory') { openShellModule('무기고', 'ARMORY', buildArmoryInto, fromLeft); return; }
     if (mod === 'options') { openShellModule('설정', 'OPTIONS', buildOptionsInto, fromLeft); return; }
@@ -2589,8 +2614,8 @@ function buildCreateInto(body) {
   const opts = (g) => [...(groupEl(g)?.querySelectorAll('.cfg-opt') || [])].map(b => ({ label: b.textContent.trim(), value: b.dataset.value, on: b.classList.contains('selected') }));
   const selectedOf = (g) => opts(g).find(o => o.on) || opts(g)[0];
   const pickHidden = (g, value) => { [...(groupEl(g)?.querySelectorAll('.cfg-opt') || [])].find(b => b.dataset.value === value)?.click(); };
-  const GROUPS = [['platforms', '플랫폼'], ['platformShape', '플랫폼 모양'], ['biome', '지형'], ['storm', '자기장'], ['cover', '엄폐물'], ['water', '물 (특수 장애물)'], ['healing', '회복 아이템'], ['allowWorkshop', '공방 무기 허용']];
-  const ONOFF = new Set(['storm', 'water', 'healing', 'allowWorkshop']);   // rendered as sliding switches
+  const GROUPS = [['platforms', '플랫폼'], ['platformShape', '플랫폼 모양'], ['biome', '지형'], ['cover', '엄폐물'], ['water', '물 (특수 장애물)'], ['healing', '회복 아이템'], ['allowWorkshop', '공방 무기 허용']];
+  const ONOFF = new Set(['water', 'healing', 'allowWorkshop']);   // rendered as sliding switches
   const healingOn = () => selectedOf('healing')?.value === 'on';
   const PLATFORM_COUNT = { none: 0, few: 2, some: 4, many: 6 };
   const PLATFORM_DESC = { none: '발판 없음', few: '발판 2개', some: '발판 4개', many: '발판 6개' };
@@ -2685,7 +2710,7 @@ function buildCreateInto(body) {
   function renderSummary() {
     const rows = [['플랫폼', selectedOf('platforms')?.label], ['플랫폼 모양', selectedOf('platformShape')?.label],
       ['지형', selectedOf('biome')?.label],
-      ['자기장', selectedOf('storm')?.label], ['엄폐물', selectedOf('cover')?.label],
+      ['엄폐물', selectedOf('cover')?.label],
       ['물', selectedOf('water')?.label],
       ['회복', healingOn() ? `${selectedOf('healing')?.label}·${selectedOf('healingRate')?.label || '보통'}` : selectedOf('healing')?.label]];
     summaryEl.innerHTML = rows.map(([k, v]) => `<div class="flex justify-between text-[12px]"><span class="med-muted">${k}</span><span style="color:var(--med-ink)">${v || '-'}</span></div>`).join('');
@@ -2830,7 +2855,7 @@ function buildArenaInto(body) {
     const c = normalizeRoomConfig(r.config);
     const rows = [['플랫폼', PLATFORM_KO[c.platforms] || c.platforms], ['플랫폼 모양', PLATFORM_SHAPE_KO[c.platformShape] || c.platformShape],
       ['지형', BIOME_KO[c.biome] || c.biome || '낮'],
-      ['자기장', c.storm ? '켜짐' : '꺼짐'], ['엄폐물', COVER_KO[c.cover] || c.cover],
+      ['엄폐물', COVER_KO[c.cover] || c.cover],
       ['물', c.water ? '켜짐' : '꺼짐'],
       ['회복', c.healing ? `켜짐 · ${RATE_KO[c.healingRate] || ''}` : '꺼짐']];
     detailEl.innerHTML = `

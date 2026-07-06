@@ -337,6 +337,16 @@ export async function checkIsAdmin() {
 const WS_COL = 'workshop_weapons';
 const slugify = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9가-힣]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24) || 'weapon';
 
+// Firestore rejects the whole write if ANY (even deeply nested) value is
+// `undefined`, which silently blocked uploads that looked fully valid. A JSON
+// round-trip drops undefined keys (and normalizes NaN/Infinity → null) so the
+// payload is always writable. `null` for empty so field presence is stable.
+const cleanForFirestore = (v) => {
+  if (v == null) return null;
+  try { const s = JSON.stringify(v); return s === undefined ? null : JSON.parse(s); }
+  catch { return null; }
+};
+
 /** Publish (create/update) a workshop weapon owned by the signed-in user. The
  *  raw def is stored as JSON; it is re-clamped by every reader before use. */
 export async function publishWorkshopWeapon(def, authorName = 'Player') {
@@ -353,16 +363,19 @@ export async function publishWorkshopWeapon(def, authorName = 'Player') {
       name: String(def?.name || '무기').slice(0, 24),
       desc: String(def?.desc || '').slice(0, 80),
       color: def?.color || null,
-      stats: def?.stats || {},
-      data: def?.motionSet || {},
-      blocks: def?.blocks || null,        // block-gimmick AST (sanitized on load by the VM)
-      // V2 fields (re-clamped on load by clampWorkshopWeaponV2). imageId only —
-      // never raw image binary. Presets already bounded (effects/keyframes/blocks).
+      stats: cleanForFirestore(def?.stats) || {},
+      data: cleanForFirestore(def?.motionSet) || {},
+      blocks: cleanForFirestore(def?.blocks),        // block-gimmick AST (sanitized on load by the VM)
+      // V2 fields (re-clamped on load by clampWorkshopWeaponV2). Presets already
+      // bounded (effects/keyframes/blocks); all deep-cleaned of undefined above.
       schemaVersion: def?.schemaVersion === 2 ? 2 : 1,
       category: def?.category || null,
-      baseStats: def?.baseStats || null,
-      presets: def?.presets || null,
-      weaponVisual: def?.weaponVisual || null,
+      baseStats: cleanForFirestore(def?.baseStats),
+      presets: cleanForFirestore(def?.presets),
+      weaponVisual: cleanForFirestore(def?.weaponVisual),
+      // The custom weapon IMAGE travels with the doc so recipients see it too
+      // (not just the author). Bounded dataURL; null when using a stock stick.
+      weaponImage: cleanForFirestore(def?.weaponImage),
       likes: snap.exists() ? Number(snap.data().likes || 0) : 0,
       plays: snap.exists() ? Number(snap.data().plays || 0) : 0,
       reports: snap.exists() ? Number(snap.data().reports || 0) : 0,
@@ -388,6 +401,7 @@ function wsRow(id, d) {
     row.presets = d.presets || {};
     if (d.weaponVisual) row.weaponVisual = d.weaponVisual;
   }
+  if (d.weaponImage) row.weaponImage = d.weaponImage;   // custom pixels for the recipient
   return row;
 }
 

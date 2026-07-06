@@ -25,6 +25,7 @@ import { drawProjectileShape, drawFxShape } from './ProjectileArt.js';
 import { equippedStickLook, saveStickLook } from './StickLook.js';
 import { clampWorkshopStats, statCost, enforceBudget, clampWorkshopWeapon, POINT_BUDGET, toWorkshopWeaponV2, clampWorkshopWeaponV2, COMBAT_PRESET_KINDS, NONCOMBAT_PRESET_KINDS, PRIMARY_PRESET_KEYS, PRESET_LABELS, ALL_PRESET_KINDS, makeEmptyWeaponV2, makeEmptyPreset, statCostV2, sanitizeCombat, VALID_STATUS, sanitizeFlipKeys, sampleFlip } from './Workshop.js';
 import { saveWorkshopWeaponLocal, equipWorkshopWeaponLocal, v2ToV1Runtime } from './WorkshopStore.js';
+import { shrinkDataUrlToBudget, WEAPON_IMAGE_BUDGET } from './WeaponImages.js';
 // Local workshop storage + equip live in WorkshopStore now; re-export the
 // legacy-named helpers so existing import sites (main.js) keep working.
 export { equippedWorkshopWeapon, equipWorkshopWeapon, clearWorkshopWeapon, equippedWorkshopWeaponName } from './WorkshopStore.js';
@@ -1550,13 +1551,18 @@ export class MotionEditor {
       // (stats/motionSet/blocks) stores a usable doc alongside the V2 fields.
       const v1 = v2ToV1Runtime(w) || {};
       // Carry the custom weapon's actual pixels so RECIPIENTS see the image too
-      // (the imageId alone only resolves on the author's device). Bounded on save.
+      // (the imageId alone only resolves on the author's device). Shrunk to fit
+      // the shared budget rather than silently dropped when the source is large
+      // — a detailed image still reaches recipients, just downscaled.
       let weaponImage = null;
       const imgId = w.weaponVisual && w.weaponVisual.imageId;
       if (imgId && imgId.startsWith('custom:')) {
         const rec = this._customWeapon(imgId);
-        if (rec && rec.src && rec.src.length <= 400000) {
-          weaponImage = { id: rec.id, name: rec.name, src: rec.src, size: rec.size || 2, anchors: rec.anchors || null };
+        if (rec && rec.src) {
+          const src = await shrinkDataUrlToBudget(rec.src, WEAPON_IMAGE_BUDGET);
+          if (src && src.length <= WEAPON_IMAGE_BUDGET) {
+            weaponImage = { id: rec.id, name: rec.name, src, size: rec.size || 2, anchors: rec.anchors || null };
+          }
         }
       }
       await this.onUploadWorkshop({ ...w, stats: v1.stats, motionSet: v1.motionSet, blocks: v1.blocks, weaponImage });

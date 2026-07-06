@@ -31,6 +31,42 @@ export function resolveWeaponImage(imageId) {
 /** Drop a cached entry (e.g. after the user deletes/re-anchors a custom weapon). */
 export function invalidateWeaponImage(imageId) { cache.delete(imageId); }
 
+// Shared byte budget for a custom weapon image dataURL — kept the same on the
+// upload side (this file) and the Firestore rule, so nothing gets silently
+// rejected downstream after clearing this check.
+export const WEAPON_IMAGE_BUDGET = 350000;
+
+/**
+ * Re-encode a dataURL to fit under `maxBytes` by progressively downscaling —
+ * used before publishing so a detailed/noisy source image still reaches
+ * recipients (shrunk) instead of being silently dropped because it was a few
+ * KB over the limit. Resolves the original src unchanged if it already fits,
+ * or if it can't be decoded (caller re-checks the length either way).
+ */
+export function shrinkDataUrlToBudget(src, maxBytes = WEAPON_IMAGE_BUDGET) {
+  return new Promise((resolve) => {
+    if (!src || src.length <= maxBytes) { resolve(src); return; }
+    const img = new Image();
+    img.onload = () => {
+      let w = img.naturalWidth || 256, h = img.naturalHeight || 256;
+      let out = src;
+      for (let i = 0; i < 8 && out.length > maxBytes && Math.max(w, h) > 24; i++) {
+        w = Math.max(24, Math.round(w * 0.8));
+        h = Math.max(24, Math.round(h * 0.8));
+        try {
+          const cv = document.createElement('canvas');
+          cv.width = w; cv.height = h;
+          cv.getContext('2d').drawImage(img, 0, 0, w, h);
+          out = cv.toDataURL('image/png');
+        } catch { break; }   // tainted canvas or unsupported — keep last good `out`
+      }
+      resolve(out);
+    };
+    img.onerror = () => resolve(src);
+    img.src = src;
+  });
+}
+
 // ── Shared custom-weapon store access (psd_custom_weapons) ───────────────────
 // Single source of truth for the per-device image records so both the editor,
 // the publish path (attach pixels), and the import path (persist pixels for the
@@ -55,7 +91,7 @@ export function getCustomWeaponRecord(imageId) {
  */
 export function saveCustomWeaponRecord(rec) {
   if (!rec || typeof rec.id !== 'string' || !rec.id.startsWith('custom:') || typeof rec.src !== 'string') return false;
-  if (rec.src.length > 400_000) return false;               // ~400KB dataURL cap (well under Firestore's 1MB doc)
+  if (rec.src.length > WEAPON_IMAGE_BUDGET) return false;    // matches the upload-side shrink budget
   const entry = {
     id: rec.id,
     name: String(rec.name || '무기').slice(0, 40),

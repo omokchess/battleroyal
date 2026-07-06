@@ -290,6 +290,9 @@ export class Input {
       if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat) this._requestDash();
       if (key === 'f' && !e.repeat) this._requestSkillDown();
       if (key === 'r' && !e.repeat) this.teleportRequested = true;
+      // E = the click/target skill (was on LMB, which is now the basic attack).
+      // Casts in the current aim direction; no-op for weapons without one.
+      if (key === 'e' && !e.repeat) this._requestTargetCastDirection();
 
       // Prevent scrolling behaviors on gaming buttons
       if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(e.key.toLowerCase()) ||

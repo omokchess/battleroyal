@@ -5749,8 +5749,8 @@ export class Game {
         if (label) {
           const tLabel = AuxSkillConfig[local.weapon]?.target?.label || '스킬';
           label.innerHTML = local.weapon === 'magicstaff'
-            ? '<strong class="text-[#93c5fd]">LMB</strong> ICE'
-            : `<strong class="text-[#93c5fd]">LMB</strong> ${tLabel}`;
+            ? '<strong class="text-[#93c5fd]">E</strong> ICE'
+            : `<strong class="text-[#93c5fd]">E</strong> ${tLabel}`;
         }
         const iceCd = local.weapon === 'magicstaff'
           ? local.magicCooldowns?.iceShard || 0

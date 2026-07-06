@@ -247,7 +247,7 @@ export function solveStickman(pose, scale, x, y, facing = 1, opts = {}) {
 
 /** Draw a stick figure from solved screen joints. `aimAngle` only orients the
  *  held weapon. Used by both the game and the editor preview. */
-export function drawStickFromJoints(ctx, sc, headR, { color = '#cdd3da', accent = '#0d0a06', lineW = 3, scale = 14, weapon = 'sword', drawWeapon = true, aimAngle = 0, headShape = 'circle', accessory = 'none', weaponImage = null, weaponImageSize = 2.0, weaponImageAnchors = null } = {}) {
+export function drawStickFromJoints(ctx, sc, headR, { color = '#cdd3da', accent = '#0d0a06', lineW = 3, scale = 14, weapon = 'sword', drawWeapon = true, aimAngle = 0, headShape = 'circle', accessory = 'none', weaponImage = null, weaponImageSize = 2.0, weaponImageAnchors = null, weaponFlip = false } = {}) {
   const lw = Math.max(2, lineW * (scale / 14));
   const limb = (a, b, w, col) => {
     ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineCap = 'round';
@@ -255,14 +255,16 @@ export function drawStickFromJoints(ctx, sc, headR, { color = '#cdd3da', accent 
   };
   const back = shade(color, -0.32);
   limb(sc.pelvis, sc.kneeF, lw, back); limb(sc.kneeF, sc.footF, lw, back);
-  limb(sc.shoulder, sc.elbowF, lw * 0.9, back); limb(sc.elbowF, sc.handF, lw * 0.9, back);
+  // Arms start at the NECK (not the lower shoulder) so they read as attached at
+  // the top of the torso.
+  limb(sc.neck, sc.elbowF, lw * 0.9, back); limb(sc.elbowF, sc.handF, lw * 0.9, back);
   limb(sc.pelvis, sc.neck, lw * 1.15, color);
   limb(sc.pelvis, sc.kneeN, lw, color); limb(sc.kneeN, sc.footN, lw, color);
   drawHead(ctx, sc.head, sc.neck, headR, color, accent, Math.max(1, lw * 0.5), headShape, accessory);
-  limb(sc.shoulder, sc.elbowN, lw, color); limb(sc.elbowN, sc.handN, lw, color);
+  limb(sc.neck, sc.elbowN, lw, color); limb(sc.elbowN, sc.handN, lw, color);
   if (drawWeapon && sc.weaponTip) {
     if (weaponImage && weaponImage.complete && weaponImage.naturalWidth) {
-      drawImageWeapon(ctx, sc.handN, sc.weaponTip, scale, weaponImage, weaponImageSize, weaponImageAnchors);
+      drawImageWeapon(ctx, sc.handN, sc.weaponTip, scale, weaponImage, weaponImageSize, weaponImageAnchors, weaponFlip);
     } else {
       const wcol = WEAPON_STICK_COLOR[weapon] || color;
       drawHeldWeapon(ctx, sc.handN, sc.weaponTip, scale, weapon, wcol);
@@ -274,7 +276,7 @@ export function drawStickFromJoints(ctx, sc, headR, { color = '#cdd3da', accent 
 // GRIP (손잡이) and the TIP (끝) — and we map grip→hand and the grip→tip vector
 // onto the hand→weaponTip direction (so the weapon joint still aims it), scaled
 // so the grip→tip distance equals the weapon length (scale × size multiplier).
-function drawImageWeapon(ctx, hand, tip, scale, img, sizeMul, anchors) {
+function drawImageWeapon(ctx, hand, tip, scale, img, sizeMul, anchors, flip = false) {
   const a = (anchors && Number.isFinite(anchors.gx)) ? anchors : { gx: 0.15, gy: 0.5, tx: 0.95, ty: 0.5 };
   const iw = img.naturalWidth, ih = img.naturalHeight;
   const gX = a.gx * iw, gY = a.gy * ih;
@@ -287,6 +289,7 @@ function drawImageWeapon(ctx, hand, tip, scale, img, sizeMul, anchors) {
   ctx.save();
   ctx.translate(hand.x, hand.y);
   ctx.rotate(ang - Math.atan2(dy, dx));
+  if (flip) ctx.scale(1, -1);                             // 무기 좌우 반전 (blade side mirror)
   ctx.scale(s, s);
   ctx.translate(-gX, -gY);
   ctx.imageSmoothingEnabled = true;
@@ -296,7 +299,9 @@ function drawImageWeapon(ctx, hand, tip, scale, img, sizeMul, anchors) {
 
 // Head shape + optional accessory (cosmetic appearance, Phase E).
 function drawHead(ctx, head, neck, r, color, accent, lineW, shape, accessory) {
-  ctx.fillStyle = color; ctx.strokeStyle = accent; ctx.lineWidth = lineW;
+  // No black outline ring — fill only (user request). A subtle same-hue rim keeps
+  // the head readable against the body without the heavy dark circle.
+  ctx.fillStyle = color; ctx.strokeStyle = shade(color, -0.18); ctx.lineWidth = Math.max(1, lineW * 0.6);
   ctx.beginPath();
   if (shape === 'square') {
     ctx.rect(head.x - r, head.y - r, r * 2, r * 2);
@@ -334,9 +339,9 @@ function drawHead(ctx, head, neck, r, color, accent, lineW, shape, accessory) {
 export function drawStickman(opts) {
   const { ctx, x, y, scale, facing = 1, color = '#cdd3da', accent = '#0d0a06',
     lineW = 3, pose, aimAngle = 0, weapon = 'sword', headShape = 'circle', accessory = 'none',
-    weaponImage = null, weaponImageSize = 2.0, weaponImageAnchors = null } = opts;
+    weaponImage = null, weaponImageSize = 2.0, weaponImageAnchors = null, weaponFlip = false } = opts;
   const { joints, headR } = solveStickman(pose, scale, x, y, facing, { aimAngle, weapon });
-  drawStickFromJoints(ctx, joints, headR, { color, accent, lineW, scale, weapon, aimAngle, headShape, accessory, weaponImage, weaponImageSize, weaponImageAnchors });
+  drawStickFromJoints(ctx, joints, headR, { color, accent, lineW, scale, weapon, aimAngle, headShape, accessory, weaponImage, weaponImageSize, weaponImageAnchors, weaponFlip });
 }
 
 // A held weapon: a bar/blade from the hand to the (already-solved) tip.

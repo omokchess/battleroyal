@@ -976,12 +976,16 @@
 
             <!-- ② 타임라인 블록 -->
             <div class="bg-[#0d0a06] border border-gray-600 rounded p-2">
-              <div class="text-[10px] text-gray-300 uppercase mb-1">타임라인 (판정 창 = 초록)</div>
+              <div class="text-[10px] text-gray-300 uppercase mb-1">타임라인 (판정 창 = 초록 · <b style="color:#c56cff">보라</b>=무기 반전)</div>
               <canvas id="meTimeline" width="520" height="56" class="w-full bg-[#14100b] border border-gray-700 touch-none"></canvas>
               <div class="flex items-center gap-2 mt-1">
                 <label class="text-[11px] text-gray-300 uppercase">길이</label>
-                <input id="meDuration" type="range" min="0.2" max="1.5" step="0.02" value="0.42" class="flex-1 min-w-0" />
+                <input id="meDuration" type="range" min="0.15" max="3" step="0.01" value="0.42" class="flex-1 min-w-0" />
                 <span id="meDurationVal" class="text-[11px] text-[#e8d5a3] w-12 text-right">0.42s</span>
+              </div>
+              <div class="flex items-center gap-2 mt-1">
+                <button id="meFlipToggle" class="bg-[#14100b] hover:bg-gray-800 border border-[#c56cff] text-[#c56cff] text-[10px] px-2 py-1 cursor-pointer active:scale-95" title="현재 시점에서 무기 좌우 반전을 켜고 끕니다 (키 추가)">🔄 무기 반전 (현재 시점)</button>
+                <span class="text-[9px] text-gray-500 flex-1 leading-tight">◀▶/재생 중 현 시점 반전값이 즉시 미리보기·게임에 적용</span>
               </div>
               <div id="meHitboxRow" class="flex items-center justify-between mt-1 border-t border-gray-800 pt-1">
                 <span class="text-[10px] text-[#ff7a5a] uppercase font-bold">⚔ 히트박스</span>

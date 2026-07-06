@@ -560,7 +560,7 @@ export class Renderer {
     // sheet + in-hand weapon sprite. The motion only chooses joint angles — all
     // combat stays code-defined. The weapon is drawn in-hand by the stickman in
     // its weapon colour, biased to the (synced) aim so it reads in combat.
-    const { pose } = this._stick.sample(p, now);
+    const { pose, weaponFlip } = this._stick.sample(p, now);
     const look = sanitizeLook(p.stickLook);
     // A workshop weapon's custom image (resolved locally from the small id) rides
     // on the stick's hand instead of the procedural bar.
@@ -574,6 +574,7 @@ export class Renderer {
       weaponImage: wimg && wimg.img && wimg.img.complete && wimg.img.naturalWidth ? wimg.img : null,
       weaponImageSize: wimg ? wimg.size : 2.0,
       weaponImageAnchors: wimg ? wimg.anchors : null,
+      weaponFlip: !!weaponFlip,
     });
 
     if (p.burnTimeLeft > 0) this._drawBurnFlames(ctx, bodyScr, radius, z);

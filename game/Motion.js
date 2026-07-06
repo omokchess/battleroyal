@@ -387,11 +387,20 @@ export class StickAnimator {
       if (motion.loop) s.phase %= 1; else s.phase = Math.min(0.999, s.phase);
     }
 
-    return { pose: samplePose(motion, s.phase), motionName };
+    return { pose: samplePose(motion, s.phase), motionName, weaponFlip: sampleFlipAt(motion.flipXKeys, s.phase) };
   }
 }
 
 // --- small helpers ----------------------------------------------------------
+/** Sample a weapon flip timeline (normalized keys) at phase — step function.
+ *  Inlined here to avoid a Workshop.js↔Motion.js import cycle. */
+function sampleFlipAt(keys, phase) {
+  if (!Array.isArray(keys) || !keys.length) return false;
+  let v = keys[0].value;
+  for (const k of keys) { if (k.time <= phase) v = k.value; else break; }
+  return !!v;
+}
+
 function cloneMotion(m) {
   const c = {
     duration: m.duration, loop: !!m.loop,

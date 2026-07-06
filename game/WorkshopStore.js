@@ -106,9 +106,12 @@ export function v2ToV1Runtime(w) {
   if (!w) return null;
   const basic = w.presets.basic && COMBAT_PRESET_KINDS.has(w.presets.basic.kind) ? w.presets.basic : firstCombatPreset(w);
   const motionSet = {};
-  if (basic) motionSet.attack = { ...basic.motion, hitboxes: basic.hitboxes || [] };
-  if (w.presets.dash) motionSet.dash = w.presets.dash.motion;
-  for (const k of NONCOMBAT_PRESET_KINDS) if (w.presets[k]) motionSet[k] = w.presets[k].motion;
+  // Attach each preset's flip timeline onto its runtime motion so the in-game
+  // renderer can flip the weapon exactly like the editor preview does.
+  const withFlip = (p) => ({ ...p.motion, flipXKeys: (p.weaponTimeline && p.weaponTimeline.flipXKeys) || [] });
+  if (basic) motionSet.attack = { ...basic.motion, hitboxes: basic.hitboxes || [], flipXKeys: (basic.weaponTimeline && basic.weaponTimeline.flipXKeys) || [] };
+  if (w.presets.dash) motionSet.dash = withFlip(w.presets.dash);
+  for (const k of NONCOMBAT_PRESET_KINDS) if (w.presets[k]) motionSet[k] = withFlip(w.presets[k]);
   const c = basic ? basic.combat : {};
   const stats = {
     maxHp: w.baseStats.maxHp, moveSpeed: w.baseStats.moveSpeed,

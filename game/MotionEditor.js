@@ -22,7 +22,7 @@ import { solveStickman, drawStickFromJoints, samplePose, STICK_NEUTRAL, WEAPON_S
 import { resolveMotion, weaponSetId, sanitizeMotion, registerMotionSet, MOTION_LIMITS, setCanonicalWeapon } from './Motion.js';
 import { captureMotionFromWebcam } from './PoseCapture.js';
 import { equippedStickLook, saveStickLook } from './StickLook.js';
-import { clampWorkshopStats, statCost, enforceBudget, clampWorkshopWeapon, POINT_BUDGET, toWorkshopWeaponV2, clampWorkshopWeaponV2, COMBAT_PRESET_KINDS, NONCOMBAT_PRESET_KINDS, PRIMARY_PRESET_KEYS, PRESET_LABELS, ALL_PRESET_KINDS, makeEmptyWeaponV2, makeEmptyPreset, statCostV2, sanitizeCombat, VALID_STATUS } from './Workshop.js';
+import { clampWorkshopStats, statCost, enforceBudget, clampWorkshopWeapon, POINT_BUDGET, toWorkshopWeaponV2, clampWorkshopWeaponV2, COMBAT_PRESET_KINDS, NONCOMBAT_PRESET_KINDS, PRIMARY_PRESET_KEYS, PRESET_LABELS, ALL_PRESET_KINDS, makeEmptyWeaponV2, makeEmptyPreset, statCostV2, sanitizeCombat, VALID_STATUS, sanitizeFlipKeys, sampleFlip } from './Workshop.js';
 import { saveWorkshopWeaponLocal, equipWorkshopWeaponLocal, v2ToV1Runtime } from './WorkshopStore.js';
 // Local workshop storage + equip live in WorkshopStore now; re-export the
 // legacy-named helpers so existing import sites (main.js) keep working.
@@ -203,6 +203,7 @@ export class MotionEditor {
     $('meSave')?.addEventListener('click', () => this._save());
     $('meUpload')?.addEventListener('click', () => { if (this.mode === 'workshop') this._uploadWorkshop(); else this._setStatus('업로드는 공방 무기에서만 가능합니다.'); });
     $('meTutReplay')?.addEventListener('click', () => this._tutStart());
+    $('meFlipToggle')?.addEventListener('click', () => this._toggleFlipAt(this.scrubT));
     $('meCapture')?.addEventListener('click', () => this._capture());
     $('meAddHitbox')?.addEventListener('click', () => this._toggleHitbox());
     const dur = $('meDuration');
@@ -574,6 +575,8 @@ export class MotionEditor {
     const w = this._editingV2, key = this._activeKey, p = w && w.presets[key];
     if (!p) return;
     p.motion = this.motion;
+    p.weaponTimeline = { flipXKeys: sanitizeFlipKeys(this._flipKeys || []) };
+    p.previewOffset = this._previewOffset || { x: 0, y: 0 };
     if (COMBAT_PRESET_KINDS.has(key)) { p.hitboxes = Array.isArray(this.motion.hitboxes) ? this.motion.hitboxes : []; p.blocks = this.blocks; }
     else if (key === 'dash') { p.blocks = this.blocks; }
   }
@@ -585,6 +588,8 @@ export class MotionEditor {
     const isCombat = COMBAT_PRESET_KINDS.has(key), isDash = key === 'dash';
     this.motion = sanitizeMotion(isCombat ? { ...p.motion, hitboxes: p.hitboxes || [] } : p.motion, undefined, { allowGameplay: true });
     this.blocks = (isCombat || isDash) ? (p.blocks || null) : null;
+    this._flipKeys = (p.weaponTimeline && Array.isArray(p.weaponTimeline.flipXKeys)) ? p.weaponTimeline.flipXKeys.map(k => ({ ...k })) : [];
+    this._previewOffset = p.previewOffset ? { ...p.previewOffset } : { x: 0, y: 0 };
     this.selKf = 0; this.scrubT = this.motion.keyframes[0]?.t || 0; this.playing = false;
     this._syncBaseSliders();
     if (isCombat) this._syncCombatSliders(p.combat);
@@ -595,6 +600,19 @@ export class MotionEditor {
     $('meHitboxRow')?.classList.toggle('hidden', !isCombat);   // hitboxes = combat only
     const cn = $('meCombatPresetName'); if (cn) cn.textContent = PRESET_LABELS[key] || key;
     this._renderBudget(); this._updateBlockCount(); this._renderAll();
+  }
+  /** Current weapon-flip value shown in the preview (sampled at the scrub time). */
+  _currentFlip() { return sampleFlip(this._flipKeys || [], this.playing ? this.scrubT : (this.motion.keyframes[this.selKf]?.t ?? this.scrubT)); }
+  /** Toggle the weapon flip at time t: upsert a key with the opposite value. */
+  _toggleFlipAt(t) {
+    if (!this._editingV2) return;
+    const tt = Math.round(Math.max(0, Math.min(1, t)) * 1000) / 1000;
+    const cur = sampleFlip(this._flipKeys || [], tt);
+    const keys = (this._flipKeys || []).filter(k => Math.abs(k.time - tt) > 0.001);
+    keys.push({ time: tt, value: !cur });
+    this._flipKeys = sanitizeFlipKeys(keys);
+    this._setStatus(`무기 반전 ${!cur ? '켬' : '끔'} @ ${(tt * 100).toFixed(0)}% 지점.`);
+    this._renderPreview(); this._renderTimeline();
   }
   _syncBaseSliders() {
     const w = this._editingV2; if (!w) return;
@@ -986,11 +1004,14 @@ export class MotionEditor {
     ctx.beginPath(); ctx.moveTo(0, H - 30); ctx.lineTo(W, H - 30); ctx.stroke();
 
     const scale = Math.round(H * 0.114);                // stickman scales with the canvas (404→46)
-    const cx = W / 2, cyCenter = H - 30 - scale * 1.28; // body centre so feet sit on the ground line
+    // previewOffset is a VISUAL root shift (편집 편의) — it never touches the game.
+    const po = this._previewOffset || { x: 0, y: 0 };
+    const cx = W / 2 + po.x, cyCenter = H - 30 - scale * 1.28 + po.y; // body centre so feet sit on the ground line
     const wrec = this._customWeapon(this.weapon);             // custom weapon record (or null)
     const wimg = this._weaponImage();                         // its image (or null)
     const wsize = wrec?.size ?? 2.0;
     const wanch = wrec?.anchors || null;                      // grip/tip anchors
+    const wflip = this._currentFlip();                        // weapon flip at the current time
 
     // Onion skin: the PREVIOUS frame's pose, drawn faint + blue behind the current
     // one, so you can see what the stickman did last and build the next pose from it.
@@ -999,7 +1020,7 @@ export class MotionEditor {
       if (prev) {
         const pj = solveStickman({ ...STICK_NEUTRAL, ...prev.pose }, scale, cx, cyCenter, 1, { rawNearArm: true, weapon: this.weapon });
         ctx.save(); ctx.globalAlpha = 0.3;
-        drawStickFromJoints(ctx, pj.joints, pj.headR, { color: '#6f8cff', accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory, weaponImage: wimg, weaponImageSize: wsize, weaponImageAnchors: wanch });
+        drawStickFromJoints(ctx, pj.joints, pj.headR, { color: '#6f8cff', accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory, weaponImage: wimg, weaponImageSize: wsize, weaponImageAnchors: wanch, weaponFlip: wflip });
         ctx.restore();
       }
     }
@@ -1007,7 +1028,7 @@ export class MotionEditor {
     const pose = this._displayPose();
     const { joints, headR } = solveStickman(pose, scale, cx, cyCenter, 1, { rawNearArm: true, weapon: this.weapon });
     const color = this.look.color || WEAPON_STICK_COLOR[this.weapon] || '#cdd3da';
-    drawStickFromJoints(ctx, joints, headR, { color, accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory, weaponImage: wimg, weaponImageSize: wsize, weaponImageAnchors: wanch });
+    drawStickFromJoints(ctx, joints, headR, { color, accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory, weaponImage: wimg, weaponImageSize: wsize, weaponImageAnchors: wanch, weaponFlip: wflip });
 
     // Joint handles (only when a keyframe is selected & not playing).
     if (!this.playing && this.motion.keyframes[this.selKf]) {
@@ -1017,6 +1038,14 @@ export class MotionEditor {
         ctx.beginPath(); ctx.arc(p.x, p.y, isWeapon ? 7 : 6, 0, Math.PI * 2);
         ctx.fillStyle = this.dragHandle === h.name ? '#ffd24a' : (isWeapon ? 'rgba(255,160,80,0.9)' : 'rgba(125,240,154,0.85)');
         ctx.fill(); ctx.strokeStyle = '#0d0a06'; ctx.lineWidth = 1.5; ctx.stroke();
+      }
+      // Red PELVIS handle → drags previewOffset (visual-only root shift).
+      const pel = joints.pelvis;
+      if (pel) {
+        ctx.beginPath(); ctx.arc(pel.x, pel.y, 7, 0, Math.PI * 2);
+        ctx.fillStyle = this.dragPelvis ? '#ffd24a' : 'rgba(255,70,70,0.95)';
+        ctx.fill(); ctx.strokeStyle = '#0d0a06'; ctx.lineWidth = 1.5; ctx.stroke();
+        this._pelvisScreen = { x: pel.x, y: pel.y };
       }
     }
 
@@ -1058,11 +1087,18 @@ export class MotionEditor {
       if ((s.hcx - mx) ** 2 + (s.hcy - my) ** 2 < 12 * 12) { this.dragHitbox = 'move'; e.preventDefault(); return; }
     }
     if (!this.motion.keyframes[this.selKf]) return;
+    // Red pelvis handle → previewOffset drag (checked before joints, but only if
+    // the cursor is genuinely closest to it, so it never steals hand/weapon grabs).
+    const pel = this._pelvisScreen;
     let best = null, bestD = 14 * 14;
     for (const h of HANDLES) {
       const p = this._jointCache?.[h.name]; if (!p) continue;
       const d = (p.x - mx) ** 2 + (p.y - my) ** 2;
       if (d < bestD) { bestD = d; best = h; }
+    }
+    if (pel) {
+      const dp = (pel.x - mx) ** 2 + (pel.y - my) ** 2;
+      if (dp < 12 * 12 && dp <= bestD) { this.dragPelvis = { mx, my, ox: (this._previewOffset || { x: 0 }).x, oy: (this._previewOffset || { y: 0 }).y }; e.preventDefault(); return; }
     }
     if (best) { this.dragHandle = best.name; e.preventDefault(); }
   }
@@ -1112,6 +1148,17 @@ export class MotionEditor {
     ctx.strokeRect(tx(HIT_WINDOW.start), 6, tx(HIT_WINDOW.end) - tx(HIT_WINDOW.start), H - 24);
     ctx.fillStyle = '#7df09a'; ctx.font = '9px monospace'; ctx.textAlign = 'center';
     ctx.fillText('판정 창', (tx(HIT_WINDOW.start) + tx(HIT_WINDOW.end)) / 2, H - 4);
+    // Weapon-flip band (purple) — segments where the weapon is flipped.
+    const fks = this._flipKeys || [];
+    if (fks.length) {
+      ctx.fillStyle = 'rgba(197,108,255,0.30)';
+      for (let i = 0; i < fks.length; i++) {
+        if (!fks[i].value) continue;
+        const segEnd = (i + 1 < fks.length) ? fks[i + 1].time : 1;
+        ctx.fillRect(tx(fks[i].time), H - 10, tx(segEnd) - tx(fks[i].time), 6);
+      }
+      for (const k of fks) { const x = tx(k.time); ctx.fillStyle = '#c56cff'; ctx.fillRect(x - 1, H - 12, 2, 10); }
+    }
     // Track line.
     ctx.strokeStyle = '#3b3a44'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(x0, H / 2 - 4); ctx.lineTo(x1, H / 2 - 4); ctx.stroke();
@@ -1177,6 +1224,17 @@ export class MotionEditor {
   }
 
   _pointerMove(e) {
+    if (this.dragPelvis) {
+      const r = this.canvas.getBoundingClientRect();
+      const mx = (e.clientX - r.left) * (this.canvas.width / r.width);
+      const my = (e.clientY - r.top) * (this.canvas.height / r.height);
+      this._previewOffset = {
+        x: Math.round(Math.max(-160, Math.min(160, this.dragPelvis.ox + (mx - this.dragPelvis.mx)))),
+        y: Math.round(Math.max(-160, Math.min(160, this.dragPelvis.oy + (my - this.dragPelvis.my)))),
+      };
+      this._renderPreview();
+      return;
+    }
     if (this.dragHandle) { this._dragJointTo(e); return; }
     if (this.dragHitbox === 'move' || this.dragHitbox === 'resize') { this._dragHitboxTo(e); return; }
     if (this.dragHitbox === 'aStart' || this.dragHitbox === 'aEnd') {
@@ -1203,7 +1261,7 @@ export class MotionEditor {
   }
   _pointerUp() {
     if (this.dragKfIndex >= 0) this.motion.keyframes.sort((a, b) => a.t - b.t);
-    this.dragHandle = null; this.dragImpact = false; this.dragKfIndex = -1; this.dragHitbox = null;
+    this.dragHandle = null; this.dragImpact = false; this.dragKfIndex = -1; this.dragHitbox = null; this.dragPelvis = null;
   }
 
   // --- Frame flip (stick-fighter) --------------------------------------------

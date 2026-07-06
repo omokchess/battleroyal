@@ -172,6 +172,8 @@ export function clampWorkshopWeapon(raw) {
     // Only the attack slot may carry hitboxes; the rest are pure cosmetics.
     if (state === 'attack') { if (Array.isArray(m.hitboxes)) m.hitboxes = clampWorkshopHitboxes(m.hitboxes); }
     else delete m.hitboxes;
+    // Preserve the weapon flip timeline (sanitizeMotion drops it) — cosmetic.
+    if (Array.isArray(rawSet[state].flipXKeys)) m.flipXKeys = sanitizeFlipKeys(rawSet[state].flipXKeys);
     motionSet[state] = m;
   }
 
@@ -213,20 +215,22 @@ const FX_STATUS = VALID_STATUS;   // reuse
 
 const isCombatKind = (k) => COMBAT_PRESET_KINDS.has(k);
 
-/** flipXKeys: sorted, deduped-by-time (last wins), boolean values, time∈[0,dur]. */
-export function sanitizeFlipKeys(keys, duration = 6) {
+/** flipXKeys: sorted, deduped-by-time (last wins), boolean values. Time is
+ *  NORMALIZED (0..1) so flip / effect / motion keyframes share one axis and
+ *  scale with the motion duration automatically. */
+export function sanitizeFlipKeys(keys) {
   if (!Array.isArray(keys)) return [];
   const byTime = new Map();
   for (const k of keys.slice(0, 64)) {
     if (!k || typeof k !== 'object') continue;
-    const t = clampNum(k.time, [0, Math.max(0.001, duration)], 0);
+    const t = clampNum(k.time, [0, 1], 0);
     byTime.set(Math.round(t * 1000) / 1000, !!k.value);   // last write per time wins
   }
   return [...byTime.entries()].sort((a, b) => a[0] - b[0]).slice(0, V2_LIMITS.maxFlipKeys)
     .map(([time, value]) => ({ time, value }));
 }
 
-/** Sample the weapon flip at a given normalized/second time (step function). */
+/** Sample the weapon flip at a normalized phase (0..1) — a step function. */
 export function sampleFlip(flipKeys, time) {
   if (!Array.isArray(flipKeys) || !flipKeys.length) return false;
   let v = flipKeys[0].value;
@@ -239,14 +243,15 @@ function sanitizePreviewOffset(o) {
   return { x: clampNum(r.x, [-200, 200], 0), y: clampNum(r.y, [-200, 200], 0) };
 }
 
-/** Cosmetic frame effects. assetId is a registered FX id; no binary data. */
-export function sanitizeEffects(list, duration = 6) {
+/** Cosmetic frame effects. assetId is a registered FX id; no binary data.
+ *  Time is NORMALIZED (0..1) — shared axis with motion/flip keyframes. */
+export function sanitizeEffects(list) {
   if (!Array.isArray(list)) return [];
   const out = [];
   for (const e of list.slice(0, V2_LIMITS.maxEffects)) {
     if (!e || typeof e !== 'object') continue;
     out.push({
-      time: clampNum(e.time, [0, Math.max(0.001, duration)], 0),
+      time: clampNum(e.time, [0, 1], 0),
       assetId: sanitizeText(e.assetId, 32) || 'spark',
       x: clampNum(e.x, [-200, 200], 0), y: clampNum(e.y, [-200, 200], 0),
       scale: clampNum(e.scale, [0.1, 4], 1),
@@ -307,14 +312,13 @@ export function sanitizePreset(raw, key) {
   const kind = ALL_PRESET_KINDS.has(key) ? key : 'basic';
   // Pose only (hitboxes live separately on combat presets → strip from motion).
   const motion = sanitizeMotion(r.motion, undefined, { allowGameplay: false });
-  const dur = motion.duration || 0.42;
   const out = {
     label: PRESET_LABELS[kind] || kind,
     kind,
     motion,
     previewOffset: sanitizePreviewOffset(r.previewOffset),
-    weaponTimeline: { flipXKeys: sanitizeFlipKeys(r.weaponTimeline && r.weaponTimeline.flipXKeys, dur) },
-    effects: sanitizeEffects(r.effects, dur),
+    weaponTimeline: { flipXKeys: sanitizeFlipKeys(r.weaponTimeline && r.weaponTimeline.flipXKeys) },
+    effects: sanitizeEffects(r.effects),
     hitboxes: [],
     blocks: null,
   };

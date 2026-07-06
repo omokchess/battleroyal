@@ -1093,6 +1093,29 @@
                   <label class="block"><span class="flex justify-between"><span>상태이상 지속</span><b id="ms_statusDurationMs_v" class="text-[#e8d5a3]">0</b></span>
                     <input id="ms_statusDurationMs" type="range" min="0" max="3000" step="100" class="w-full"/></label>
                 </div>
+                <!-- 원거리 공격 On/Off + projectile -->
+                <label class="flex items-center gap-2 mt-2 text-[10px] text-gray-300 cursor-pointer">
+                  <input id="ms_ranged" type="checkbox" class="cursor-pointer"/> <b class="text-[#45f3ff]">🏹 원거리 공격</b> (투사체 발사)
+                </label>
+                <div id="meProjectilePanel" class="hidden mt-1 border border-[#45f3ff]/30 rounded p-1.5 flex flex-col gap-1 text-[10px] text-gray-300">
+                  <label class="flex items-center gap-1">이미지<select id="pj_imageId" class="bg-[#14100b] border border-gray-600 text-white px-1 py-0.5 flex-1 min-w-0"><option value="arrow">화살</option><option value="bolt">볼트</option><option value="magicbolt">마법탄</option><option value="flame">불꽃</option><option value="iceshard">얼음 파편</option><option value="bullet">탄환</option></select></label>
+                  <label class="flex items-center gap-1">방향<select id="pj_directionSource" class="bg-[#14100b] border border-gray-600 text-white px-1 py-0.5 flex-1 min-w-0"><option value="cursor">마우스 커서</option><option value="facing">바라보는 방향</option><option value="angle">고정 각도</option></select></label>
+                  <label class="block"><span class="flex justify-between"><span>속도</span><b id="pj_speed_v" class="text-[#e8d5a3]">600</b></span><input id="pj_speed" type="range" min="80" max="1200" step="10" class="w-full"/></label>
+                  <label class="block"><span class="flex justify-between"><span>수명</span><b id="pj_lifetimeMs_v" class="text-[#e8d5a3]">1200</b></span><input id="pj_lifetimeMs" type="range" min="100" max="4000" step="50" class="w-full"/></label>
+                  <label class="block"><span class="flex justify-between"><span>크기</span><b id="pj_scale_v" class="text-[#e8d5a3]">1.0</b></span><input id="pj_scale" type="range" min="0.3" max="3" step="0.05" class="w-full"/></label>
+                  <label class="flex items-center gap-1"><input id="pj_pierce" type="checkbox" class="cursor-pointer"/> 관통</label>
+                  <div class="flex items-center gap-1"><span>판정 모양</span>
+                    <button id="pj_shape_rect" class="med-btn text-[9px] px-1.5 py-0.5 on">사각</button>
+                    <button id="pj_shape_circle" class="med-btn text-[9px] px-1.5 py-0.5">원</button>
+                  </div>
+                  <div id="pj_rectFields" class="grid grid-cols-2 gap-1">
+                    <label class="flex items-center gap-1">폭<input id="pj_hb_width" type="range" min="4" max="120" step="2" class="flex-1 min-w-0"/></label>
+                    <label class="flex items-center gap-1">높이<input id="pj_hb_height" type="range" min="4" max="120" step="2" class="flex-1 min-w-0"/></label>
+                  </div>
+                  <label id="pj_circleField" class="hidden flex items-center gap-1">반지름<input id="pj_hb_radius" type="range" min="3" max="80" step="1" class="flex-1 min-w-0"/></label>
+                  <canvas id="pjPreview" width="180" height="70" class="w-full bg-[#14100b] border border-gray-700"></canvas>
+                  <div class="text-[9px] text-gray-500 leading-tight">반투명 상자 = 실제 타격 판정(이미지 크기와 별개).</div>
+                </div>
               </div>
               <!-- 대시 전용 -->
               <div id="meDashStats" class="hidden">

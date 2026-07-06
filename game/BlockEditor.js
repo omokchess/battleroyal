@@ -44,7 +44,7 @@ const DEFS = {
   onWallHit: { cat: 'ev', hat: 1, scope: 'entity', op: 'onWallHit', parts: ['벽 충돌 시'] },
   onExpire: { cat: 'ev', hat: 1, scope: 'entity', op: 'onExpire', parts: ['소멸 시'] },
   // ── actions ──
-  spawnProjectile: { cat: 'act', op: 'spawnProjectile', parts: ['투사체 발사 각도', s('angle', 'num', 0), '속도', s('speed', 'num', 520), '사거리', s('range', 'num', 280), '데미지', s('damagePct', 'num', 90), '% 태그', s('tag', 'text', ''), '관통', s('pierce', 'check', false)] },
+  spawnProjectile: { cat: 'act', op: 'spawnProjectile', parts: ['투사체 발사 방향', s('dir', 'sel', 'angle', ['angle|고정각도', 'cursor|커서', 'facing|바라보는쪽']), '각도', s('angle', 'num', 0), '속도', s('speed', 'num', 520), '사거리', s('range', 'num', 280), '데미지', s('damagePct', 'num', 90), '% 태그', s('tag', 'text', ''), '관통', s('pierce', 'check', false)] },
   spawnMelee: { cat: 'act', op: 'spawnMelee', parts: ['근접 판정 앞', s('frontOffset', 'num', 60), '폭', s('width', 'num', 50), '높이', s('height', 'num', 44), '데미지', s('damagePct', 'num', 100), '%'] },
   spawnArea: { cat: 'act', op: 'spawnArea', parts: ['범위 판정 반경', s('radius', 'num', 60), '데미지', s('damagePct', 'num', 70), '%'] },
   applyStatus: { cat: 'act', op: 'applyStatus', parts: ['상태이상', s('status', 'sel', 'burn', ['bleed', 'burn', 'slow', 'stun']), '지속', s('durationMs', 'num', 1000), 'ms'] },

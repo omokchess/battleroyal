@@ -596,6 +596,9 @@ export class Game {
           p.lastAttackTime = now; p.swingDirection *= -1;
           this._runBlockEvent(p, 'basicAttack', now);
           if (p.id === this.localPlayerId) Sound.play(Sound.attackSoundFor(weaponConfig));
+        } else if (p.workshopWeapon && p.workshopWeapon.ranged && p.workshopWeapon.projectile) {
+          // Ranged workshop preset: fire its configured projectile instead of a swing.
+          this._fireWorkshopProjectile(p, now);
         } else {
           const hbMotion = this._canonicalHitboxMotion(p);
           if (hbMotion) this._startHitboxSwing(p, hbMotion, now);
@@ -711,6 +714,15 @@ export class Game {
           // hitstop, matching the melee feel (the kill blow adds a bigger one).
           if (proj.ownerId === this.localPlayerId && !target.isInvincible?.()) {
             this._triggerHitstop(now, 34);
+          }
+          if (proj.kind === 'wsranged') {
+            // A workshop ranged basic attack: weapon-damage direct hit + status.
+            const owner = this.players[proj.ownerId];
+            const died = target.takeDamage(proj.damage || 0, owner ? owner.nickname : '');
+            if (owner) this._applyWorkshopStatus(owner, target, now);
+            if (died) this._creditKill(proj.ownerId, target);
+            if (!proj.piercing) proj.isDead = true;
+            return;
           }
           if (proj.kind === 'block') {
             // Block-gimmick projectile: deal its (clamped) damage via the block
@@ -958,6 +970,39 @@ export class Game {
     return (m && Array.isArray(m.hitboxes) && m.hitboxes.length) ? m : null;
   }
 
+  /** Fire a workshop ranged preset's projectile (direction from its config). */
+  _fireWorkshopProjectile(player, now) {
+    const pj = player.workshopWeapon.projectile; if (!pj) return;
+    player.lastAttackTime = now; player.swingDirection *= -1;
+    const D2R = Math.PI / 180;
+    let ang;
+    if (pj.directionSource === 'facing') ang = (player.facingRight === false || player.facing < 0) ? Math.PI : 0;
+    else if (pj.directionSource === 'angle') ang = (pj.angle || 0) * D2R;
+    else ang = player.angle || 0;   // cursor/default = aim angle
+    const speed = pj.speed || 600;
+    const lifeSec = Math.max(0.1, (pj.lifetimeMs || 1200) / 1000);
+    const range = speed * lifeSec;
+    const dmg = player.workshopWeapon?.stats?.damage || 12;
+    const sx = player.x + Math.cos(ang) * (player.radius + 3), sy = player.y + Math.sin(ang) * (player.radius + 3);
+    const proj = new Projectile(`wsr_${player.id}_${this._wsrSeq = (this._wsrSeq || 0) + 1}`, player.id, sx, sy, ang, speed, range, dmg, 'wsranged');
+    proj.weapon = player.weapon; proj.piercing = !!pj.pierce;
+    // Collision radius from the authored hitbox (circle radius, or rect ½-extent).
+    const hb = pj.hitbox || {};
+    proj.radius = (hb.shape === 'circle') ? Math.max(3, hb.radius || 8) : Math.max(4, Math.max(hb.width || 24, hb.height || 12) / 2);
+    proj.wsImageId = pj.imageId || 'arrow'; proj.wsScale = pj.scale || 1;
+    this.projectiles.push(proj);
+    if (player.id === this.localPlayerId) Sound.play('shoot');
+  }
+  /** Apply the workshop weapon's status effect to a target (shared by melee/ranged). */
+  _applyWorkshopStatus(owner, target, now) {
+    const s = owner.workshopWeapon?.stats; if (!s || !s.status || s.status === 'none') return;
+    const ms = s.statusDurationMs || 0;
+    if (s.status === 'slow') this._applySlow(target, ms);
+    else if (s.status === 'bleed') this._applyBleed(target, owner.id);
+    else if (s.status === 'burn') this._applyBurn(target, owner.id, 2, ms);
+    else if (s.status === 'stun') this._applyStun(target, ms, now);
+  }
+
   /** Begin a hitbox-driven swing: manage the cooldown + render animation via
    *  lastAttackTime, and record the active swing for _updateHitboxSwings. */
   _startHitboxSwing(player, motion, now) {
@@ -1098,13 +1143,18 @@ export class Game {
           this._blockDealDamage(player, t, damage, now);
         }
       },
-      spawnProjectile: ({ angle, speed, range, pierce, gravity, tag, damage }) => {
+      spawnProjectile: ({ angle, speed, range, pierce, gravity, tag, damage, dir }) => {
         // Entity budget: cap spawns/sec + concurrent block entities per owner.
         if (player.blockBudget) {
           const live = this.projectiles.reduce((n, p) => n + (p.ownerId === player.id && p.kind === 'block' ? 1 : 0), 0);
           if (!player.blockBudget.allowSpawn(now, live)) return;
         }
-        const rad = angle * D2R;
+        // Direction source (priority: block dir → block angle). cursor = aim angle,
+        // facing = look direction, angle/none = the block's angle value.
+        let rad;
+        if (dir === 'cursor') rad = player.angle || 0;
+        else if (dir === 'facing') rad = (player.facingRight === false || player.facing < 0) ? Math.PI : 0;
+        else rad = angle * D2R;
         const sx = player.x + Math.cos(rad) * 20, sy = player.y + Math.sin(rad) * 20;
         const proj = new Projectile(`blk_${player.id}_${this._blockProjSeq = (this._blockProjSeq || 0) + 1}`, player.id, sx, sy, rad, speed, range, damage, 'block');
         proj.weapon = player.weapon; proj.blockTag = tag || ''; proj.piercing = !!pierce; proj.blockGravity = !!gravity;

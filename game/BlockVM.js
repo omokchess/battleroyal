@@ -123,7 +123,7 @@ export function sanitizeProgram(raw, tier = 'workshop') {
         for (const k of ['frontOffset', 'width', 'height', 'durFrames', 'damagePct', 'angle', 'speed', 'range', 'radius', 'cx', 'cy', 'force', 'distance', 'power', 'amountPct', 'ofLastDamagePct', 'durationMs', 'activateDelayMs', 'triggerRadius', 'max', 'seconds', 'value', 'level', 'turnDeg', 'count', 'spreadDeg', 'ms']) {
           if (s[k] !== undefined) a[k] = sanExpr(s[k], 0);
         }
-        for (const k of ['status', 'tag', 'id', 'key', 'var', 'trigger', 'sig', 'list']) if (s[k] !== undefined) a[k] = String(s[k]).slice(0, 24);
+        for (const k of ['status', 'tag', 'id', 'key', 'var', 'trigger', 'sig', 'list', 'dir']) if (s[k] !== undefined) a[k] = String(s[k]).slice(0, 24);
         a.pierce = !!s.pierce; a.gravity = !!s.gravity;
         res.push(a);
       }
@@ -299,6 +299,7 @@ export class BlockVM {
         speed: clampNum(this._num(s.speed, ctx, S) || 500, 80, ENVELOPE.projectileSpeed[1]),
         range: clampNum(this._num(s.range, ctx, S) || 280, 20, ENVELOPE.range[1] * 1.2),
         pierce: !!s.pierce, gravity: !!s.gravity, tag: s.tag || '',
+        dir: ['cursor', 'facing', 'angle'].includes(s.dir) ? s.dir : undefined,
         damage: dmg(s.damagePct ?? 100),
       }); return;
       case 'spawnArea': spawnGuard(); api.spawnArea?.({

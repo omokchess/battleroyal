@@ -158,6 +158,8 @@ export class Player {
     if (def && def.weaponVisual && def.weaponVisual.imageId) {
       safe.weaponVisual = { imageId: String(def.weaponVisual.imageId).slice(0, 48), scale: Number(def.weaponVisual.scale) || 1 };
     }
+    // Ranged basic attack (projectile config) — kept for the fire path + renderer.
+    if (def && def.ranged && def.projectile) { safe.ranged = true; safe.projectile = def.projectile; }
     this.workshopWeapon = safe;
     // Block-gimmick VM (host runs it; the constructor sanitizes + caps the AST).
     this.blockVM = safe.blocks ? new BlockVM(safe.blocks, 'workshop') : null;

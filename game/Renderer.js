@@ -9,6 +9,7 @@ import { drawStickman, WEAPON_STICK_COLOR } from './Stickman.js';
 import { StickAnimator } from './Motion.js';
 import { sanitizeLook } from './StickLook.js';
 import { resolveWeaponImage } from './WeaponImages.js';
+import { drawProjectileShape } from './ProjectileArt.js';
 
 // Pixel-detected frame x-ranges of fx/slash2 (SpriteSheetSlash02.png, H=50).
 // The sheet is not a uniform grid; these are the real crescent frames
@@ -1909,7 +1910,10 @@ export class Renderer {
       const angle = Number.isFinite(p.angle) ? p.angle : Math.atan2(p.vy, p.vx);
       const owner = players && p.ownerId ? players[p.ownerId] : null;
 
-      if (p.kind === 'thrownspear') {
+      if (p.kind === 'wsranged') {
+        // Workshop ranged projectile: draw its chosen procedural shape.
+        drawProjectileShape(ctx, scr.x, scr.y, angle, p.wsImageId || 'arrow', (18 * (p.wsScale || 1)) * zoom);
+      } else if (p.kind === 'thrownspear') {
         this._drawWeaponProjectile(ctx, scr, angle, zoom, 'spear', owner, { tumble: true });
       } else if (p.kind === 'chakram') {
         this._drawWeaponProjectile(ctx, scr, angle, zoom, 'chakram', owner, { spin: true });

@@ -21,6 +21,7 @@
 import { solveStickman, drawStickFromJoints, samplePose, STICK_NEUTRAL, WEAPON_STICK_COLOR } from './Stickman.js';
 import { resolveMotion, weaponSetId, sanitizeMotion, registerMotionSet, MOTION_LIMITS, setCanonicalWeapon } from './Motion.js';
 import { captureMotionFromWebcam } from './PoseCapture.js';
+import { drawProjectileShape } from './ProjectileArt.js';
 import { equippedStickLook, saveStickLook } from './StickLook.js';
 import { clampWorkshopStats, statCost, enforceBudget, clampWorkshopWeapon, POINT_BUDGET, toWorkshopWeaponV2, clampWorkshopWeaponV2, COMBAT_PRESET_KINDS, NONCOMBAT_PRESET_KINDS, PRIMARY_PRESET_KEYS, PRESET_LABELS, ALL_PRESET_KINDS, makeEmptyWeaponV2, makeEmptyPreset, statCostV2, sanitizeCombat, VALID_STATUS, sanitizeFlipKeys, sampleFlip } from './Workshop.js';
 import { saveWorkshopWeaponLocal, equipWorkshopWeaponLocal, v2ToV1Runtime } from './WorkshopStore.js';
@@ -204,6 +205,17 @@ export class MotionEditor {
     $('meUpload')?.addEventListener('click', () => { if (this.mode === 'workshop') this._uploadWorkshop(); else this._setStatus('업로드는 공방 무기에서만 가능합니다.'); });
     $('meTutReplay')?.addEventListener('click', () => this._tutStart());
     $('meFlipToggle')?.addEventListener('click', () => this._toggleFlipAt(this.scrubT));
+    // Ranged / projectile controls (per combat preset).
+    $('ms_ranged')?.addEventListener('change', (e) => this._setRanged(e.target.checked));
+    const pjInput = (id, field, num) => $(id)?.addEventListener('input', (e) => this._setProjectile(field, num ? parseFloat(e.target.value) : e.target.value));
+    pjInput('pj_imageId', 'imageId', false); pjInput('pj_directionSource', 'directionSource', false);
+    pjInput('pj_speed', 'speed', true); pjInput('pj_lifetimeMs', 'lifetimeMs', true); pjInput('pj_scale', 'scale', true);
+    $('pj_pierce')?.addEventListener('change', (e) => this._setProjectile('pierce', e.target.checked));
+    $('pj_hb_width')?.addEventListener('input', (e) => this._setProjectileHb('width', parseFloat(e.target.value)));
+    $('pj_hb_height')?.addEventListener('input', (e) => this._setProjectileHb('height', parseFloat(e.target.value)));
+    $('pj_hb_radius')?.addEventListener('input', (e) => this._setProjectileHb('radius', parseFloat(e.target.value)));
+    $('pj_shape_rect')?.addEventListener('click', () => this._setProjectileHb('shape', 'rect'));
+    $('pj_shape_circle')?.addEventListener('click', () => this._setProjectileHb('shape', 'circle'));
     $('meCapture')?.addEventListener('click', () => this._capture());
     $('meAddHitbox')?.addEventListener('click', () => this._toggleHitbox());
     const dur = $('meDuration');
@@ -592,7 +604,8 @@ export class MotionEditor {
     this._previewOffset = p.previewOffset ? { ...p.previewOffset } : { x: 0, y: 0 };
     this.selKf = 0; this.scrubT = this.motion.keyframes[0]?.t || 0; this.playing = false;
     this._syncBaseSliders();
-    if (isCombat) this._syncCombatSliders(p.combat);
+    if (isCombat) { this._syncCombatSliders(p.combat); this._syncProjectilePanel(p); }
+    else { document.getElementById('meProjectilePanel')?.classList.add('hidden'); }
     if (isDash && $('ms_dashDistance')) { $('ms_dashDistance').value = String(p.dashDistance || 120); if ($('ms_dashDistance_v')) $('ms_dashDistance_v').textContent = p.dashDistance || 120; }
     $('meCombatStats')?.classList.toggle('hidden', !isCombat);
     $('meDashStats')?.classList.toggle('hidden', !isDash);
@@ -601,6 +614,77 @@ export class MotionEditor {
     const cn = $('meCombatPresetName'); if (cn) cn.textContent = PRESET_LABELS[key] || key;
     this._renderBudget(); this._updateBlockCount(); this._renderAll();
   }
+  // ── Ranged / projectile (per combat preset) ────────────────────────────────
+  _activeCombatPreset() { const p = this._editingV2 && this._editingV2.presets[this._activeKey]; return (p && COMBAT_PRESET_KINDS.has(p.kind)) ? p : null; }
+  _setRanged(on) {
+    const p = this._activeCombatPreset(); if (!p) return;
+    p.ranged = !!on;
+    document.getElementById('meProjectilePanel')?.classList.toggle('hidden', !on);
+    if (on) this._renderProjectilePreview();
+    this._setStatus(on ? '원거리 공격 켜짐 — 투사체 설정을 조절하세요.' : '근접 공격으로 전환.');
+  }
+  _setProjectile(field, value) {
+    const p = this._activeCombatPreset(); if (!p) return;
+    p.projectile = p.projectile || {};
+    p.projectile[field] = value;
+    const $ = (id) => document.getElementById(id);
+    if (field === 'speed' && $('pj_speed_v')) $('pj_speed_v').textContent = value;
+    if (field === 'lifetimeMs' && $('pj_lifetimeMs_v')) $('pj_lifetimeMs_v').textContent = value;
+    if (field === 'scale' && $('pj_scale_v')) $('pj_scale_v').textContent = Number(value).toFixed(2);
+    this._renderProjectilePreview();
+  }
+  _setProjectileHb(field, value) {
+    const p = this._activeCombatPreset(); if (!p) return;
+    p.projectile = p.projectile || {}; p.projectile.hitbox = p.projectile.hitbox || {};
+    p.projectile.hitbox[field] = value;
+    if (field === 'shape') {
+      document.getElementById('pj_shape_rect')?.classList.toggle('on', value === 'rect');
+      document.getElementById('pj_shape_circle')?.classList.toggle('on', value === 'circle');
+      document.getElementById('pj_rectFields')?.classList.toggle('hidden', value !== 'rect');
+      document.getElementById('pj_circleField')?.classList.toggle('hidden', value !== 'circle');
+    }
+    this._renderProjectilePreview();
+  }
+  _syncProjectilePanel(p) {
+    const $ = (id) => document.getElementById(id);
+    const ranged = !!(p && p.ranged);
+    if ($('ms_ranged')) $('ms_ranged').checked = ranged;
+    $('meProjectilePanel')?.classList.toggle('hidden', !ranged);
+    const pj = (p && p.projectile) || {};
+    const hb = pj.hitbox || {};
+    if ($('pj_imageId')) $('pj_imageId').value = pj.imageId || 'arrow';
+    if ($('pj_directionSource')) $('pj_directionSource').value = pj.directionSource || 'cursor';
+    const setR = (id, v) => { if ($(id)) { $(id).value = String(v); if ($(id + '_v')) $(id + '_v').textContent = (id === 'pj_scale') ? Number(v).toFixed(2) : v; } };
+    setR('pj_speed', pj.speed ?? 600); setR('pj_lifetimeMs', pj.lifetimeMs ?? 1200); setR('pj_scale', pj.scale ?? 1);
+    if ($('pj_pierce')) $('pj_pierce').checked = !!pj.pierce;
+    const shape = hb.shape || 'rect';
+    $('pj_shape_rect')?.classList.toggle('on', shape === 'rect');
+    $('pj_shape_circle')?.classList.toggle('on', shape === 'circle');
+    $('pj_rectFields')?.classList.toggle('hidden', shape !== 'rect');
+    $('pj_circleField')?.classList.toggle('hidden', shape !== 'circle');
+    if ($('pj_hb_width')) $('pj_hb_width').value = String(hb.width ?? 24);
+    if ($('pj_hb_height')) $('pj_hb_height').value = String(hb.height ?? 12);
+    if ($('pj_hb_radius')) $('pj_hb_radius').value = String(hb.radius ?? 8);
+    if (ranged) this._renderProjectilePreview();
+  }
+  _renderProjectilePreview() {
+    const cv = document.getElementById('pjPreview'); if (!cv) return;
+    const p = this._activeCombatPreset(); const pj = (p && p.projectile) || {};
+    const ctx = cv.getContext('2d'); const W = cv.width, H = cv.height;
+    ctx.clearRect(0, 0, W, H); ctx.fillStyle = '#14100b'; ctx.fillRect(0, 0, W, H);
+    const cx = W / 2, cy = H / 2;
+    drawProjectileShape(ctx, cx, cy, 0, pj.imageId || 'arrow', 34 * (pj.scale || 1));
+    // translucent hitbox
+    const hb = pj.hitbox || {};
+    ctx.fillStyle = 'rgba(255,90,60,0.30)'; ctx.strokeStyle = '#ff7a5a'; ctx.lineWidth = 1.5;
+    if ((hb.shape || 'rect') === 'circle') {
+      ctx.beginPath(); ctx.arc(cx + (hb.x || 0), cy + (hb.y || 0), hb.radius ?? 8, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    } else {
+      const w = hb.width ?? 24, h = hb.height ?? 12;
+      ctx.fillRect(cx + (hb.x || 0) - w / 2, cy + (hb.y || 0) - h / 2, w, h); ctx.strokeRect(cx + (hb.x || 0) - w / 2, cy + (hb.y || 0) - h / 2, w, h);
+    }
+  }
+
   /** Current weapon-flip value shown in the preview (sampled at the scrub time). */
   _currentFlip() { return sampleFlip(this._flipKeys || [], this.playing ? this.scrubT : (this.motion.keyframes[this.selKf]?.t ?? this.scrubT)); }
   /** Toggle the weapon flip at time t: upsert a key with the opposite value. */

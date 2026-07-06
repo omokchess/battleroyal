@@ -187,6 +187,97 @@ test('mobile action buttons act as release-fire aim joysticks', () => {
   }
 });
 
+test('mobile aim stick only aims and the attack button fires basic attack', () => {
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalLocalStorage = globalThis.localStorage;
+  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const elements = {};
+  const windowListeners = {};
+
+  const makeEl = (rect) => ({
+    style: {},
+    classList: { contains: () => false },
+    addEventListener: (type, handler) => { elements[rect.id].listeners[type] = handler; },
+    removeEventListener: () => {},
+    setPointerCapture: () => {},
+    getBoundingClientRect: () => rect
+  });
+
+  [
+    { id: 'leftJoystickContainer', left: 20, top: 400, width: 100, height: 100 },
+    { id: 'leftJoystickKnob', left: 50, top: 430, width: 40, height: 40 },
+    { id: 'rightJoystickContainer', left: 620, top: 400, width: 100, height: 100 },
+    { id: 'rightJoystickKnob', left: 650, top: 430, width: 40, height: 40 },
+    { id: 'attackBtn', left: 700, top: 500, width: 58, height: 58 }
+  ].forEach(rect => {
+    elements[rect.id] = { listeners: {} };
+    elements[rect.id].el = makeEl(rect);
+  });
+
+  globalThis.window = {
+    innerWidth: 800,
+    innerHeight: 600,
+    PointerEvent: function PointerEvent() {},
+    addEventListener: (type, handler) => { windowListeners[type] = handler; },
+    removeEventListener: () => {}
+  };
+  globalThis.document = {
+    addEventListener: () => {},
+    getElementById: id => elements[id]?.el || null
+  };
+  globalThis.localStorage = { getItem: () => 'true' };
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { maxTouchPoints: 1 }
+  });
+
+  const canvas = {
+    width: 800,
+    height: 600,
+    style: {},
+    addEventListener: () => {},
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 })
+  };
+  const event = {
+    pointerId: 5,
+    pointerType: 'touch',
+    clientX: 670,
+    clientY: 450,
+    cancelable: true,
+    preventDefault: () => {},
+    stopPropagation: () => {}
+  };
+
+  try {
+    const input = new Input();
+    input.setupListeners(canvas);
+
+    elements.rightJoystickContainer.listeners.pointerdown(event);
+    windowListeners.pointermove({ ...event, clientX: 720, clientY: 450 });
+    windowListeners.pointerup({ ...event, clientX: 720, clientY: 450 });
+    assert.equal(input.consumeBasicAttack(), false);
+    assert.equal(input.isRightJoystickActive, false);
+    assert.equal(input.aimAngle, 0);
+
+    elements.attackBtn.listeners.pointerdown({ ...event, pointerId: 6, clientX: 730, clientY: 530 });
+    assert.equal(input.consumeBasicAttack(), true);
+    assert.equal(input.consumeBasicAttack(), false);
+  } finally {
+    if (originalWindow === undefined) delete globalThis.window;
+    else globalThis.window = originalWindow;
+
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+
+    if (originalLocalStorage === undefined) delete globalThis.localStorage;
+    else globalThis.localStorage = originalLocalStorage;
+
+    if (originalNavigator) Object.defineProperty(globalThis, 'navigator', originalNavigator);
+    else delete globalThis.navigator;
+  }
+});
+
 test('mobile sniper R arms target mode without acting as an aim joystick', () => {
   const originalWindow = globalThis.window;
   const originalDocument = globalThis.document;

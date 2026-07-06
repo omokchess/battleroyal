@@ -22,8 +22,10 @@ import { BotBrain, BOT_DIFFICULTY, BOT_LOADOUT } from './Bot.js';
 import { resolveMotion, weaponSetId, sanitizeMotionSetId, canonicalWeaponMotion, canonicalWeaponsSnapshot, setCanonicalWeapon } from './Motion.js';
 import { STATUS } from './Status.js';
 
-// Time a dead player waits before respawning.
-const RESPAWN_MS = 500;
+// Time a dead player waits before respawning. Keep the combat tempo fast, but
+// avoid the "blink and die again" loop from a 0.5s death turn.
+const RESPAWN_MS = 1500;
+const RESPAWN_PROTECTION_MS = 2000;
 
 export class Game {
   constructor(canvas, networkManager, costume = null, options = {}) {
@@ -126,6 +128,7 @@ export class Game {
     this.renderer = new Renderer(canvas);
     this.camera = new Camera();
     this.input = new Input();
+    this.controlSettings = this._loadControlSettings();
 
     // Game state entities
     this.players = {};
@@ -213,6 +216,8 @@ export class Game {
       const spawnP = this._getRandomSpawnPoint();
       const hostPlayer = new Player(this.localPlayerId, localNick, localWeapon, spawnP.x, spawnP.y, this.localCostume);
       hostPlayer.isMobile = isMobileDevice(); // touch players fire instantly
+      hostPlayer.mobileAimAssist = !!this.controlSettings.mobileAimAssist;
+      hostPlayer.automaticAttack = !!this.controlSettings.automaticAttack;
       this._enforceWorkshopPolicy(hostPlayer);
       this.players[this.localPlayerId] = hostPlayer;
 
@@ -416,6 +421,10 @@ export class Game {
           if (this.input.consumeTeleportUp()) {
             this._handleAltSkillReleased(hp, now);
           }
+          if (this.input.consumeBasicAttack()) {
+            this._applyMobileAimAssistForAttack(hp, 'basic');
+            this._performBasicAttack(hp, getEffectiveWeapon(hp.weapon, hp.buffType), now);
+          }
           const targetCast = this._consumeTargetCastWorld(hp);
           if (targetCast) {
             this._handleTargetCast(hp, targetCast.x, targetCast.y, now);
@@ -467,6 +476,11 @@ export class Game {
         }
         if (this.input.consumeTeleportUp()) {
           this.networkManager.sendToHost(Protocol.clientAction('teleportUp'));
+        }
+        if (this.input.consumeBasicAttack()) {
+          this._applyMobileAimAssistForAttack(localPlayer, 'basic');
+          this.networkManager.sendToHost(Protocol.clientAim(localPlayer.angle));
+          this.networkManager.sendToHost(Protocol.clientAction('basicAttack'));
         }
         const targetCast = this._consumeTargetCastWorld(localPlayer);
         if (targetCast) {
@@ -590,20 +604,7 @@ export class Game {
       if (p.blockVM && p.blockVM.hasHandler('onTick')) this._runBlockEvent(p, 'onTick', now);
 
       if (p.canAttack(now)) {
-        // A block program's basicAttack IS the attack (spawns its own hits);
-        // else fall back to a canonical hitbox swing, else the coded attack.
-        if (p.blockVM && p.blockVM.hasHandler('basicAttack')) {
-          p.lastAttackTime = now; p.swingDirection *= -1;
-          this._runBlockEvent(p, 'basicAttack', now);
-          if (p.id === this.localPlayerId) Sound.play(Sound.attackSoundFor(weaponConfig));
-        } else if (p.workshopWeapon && p.workshopWeapon.ranged && p.workshopWeapon.projectile) {
-          // Ranged workshop preset: fire its configured projectile instead of a swing.
-          this._fireWorkshopProjectile(p, now);
-        } else {
-          const hbMotion = this._canonicalHitboxMotion(p);
-          if (hbMotion) this._startHitboxSwing(p, hbMotion, now);
-          else this._performAutomaticAttack(p, weaponConfig, now);
-        }
+        if (p.isBot || p.automaticAttack) this._performBasicAttack(p, weaponConfig, now);
       }
     });
 
@@ -859,8 +860,11 @@ export class Game {
           p.respawnTime = 0;
           p.respawnRemainingMs = 0;
           p.clearCombatTimers(); // also clears bleed/burn DoTs
-          // Respawn protection: brief status-immunity window (matches i-frames).
-          p.statusImmuneUntil = now + (p.iframeTimeLeft > 0 ? Math.round(p.iframeTimeLeft * 1000) : 600);
+          // Respawn protection: i-frames + status/zone grace are intentionally
+          // longer than the death delay so lava/landing chaos cannot spawn-kill.
+          p.iframeTimeLeft = Math.max(p.iframeTimeLeft || 0, RESPAWN_PROTECTION_MS / 1000);
+          p.statusImmuneUntil = now + RESPAWN_PROTECTION_MS;
+          p.zoneGraceUntil = now + RESPAWN_PROTECTION_MS;
           p.stunImmuneUntil = 0;
           // Cosmetic respawn effect (equipped), synced to all.
           if (p.respawnFxColor) {
@@ -1350,6 +1354,75 @@ export class Game {
     proj.y += (proj.vy / spd) * ((proj.radius || 5) + 8);
     proj.startX = proj.x; proj.startY = proj.y;   // reset range origin so it isn't cut short
     if (this._levelSolidBlocks(proj.x, proj.y, proj.radius || 4)) { proj.isDead = true; return false; }
+    return true;
+  }
+
+  _applyMobileAimAssistForAttack(player, presetKey = 'basic') {
+    if (!player || !player.isMobile || !player.mobileAimAssist) return false;
+    const assist = this._resolveAimAssistTarget(player, presetKey);
+    if (!assist) return false;
+    player.angle = assist.angle;
+    const fc = Math.cos(player.angle);
+    if (fc > 0.01) player.facing = 1;
+    else if (fc < -0.01) player.facing = -1;
+    return true;
+  }
+
+  _resolveAimAssistTarget(player, presetKey = 'basic') {
+    const ww = player.workshopWeapon || null;
+    const preset = ww?.presets?.[presetKey] || ww?.presets?.basic || null;
+    const category = ww?.category || (ww?.ranged || preset?.ranged ? 'ranged' : 'melee');
+    const ranged = !!(preset?.ranged || ww?.ranged || ww?.projectile || category === 'ranged');
+    const baseRange = Number(preset?.combat?.range ?? ww?.stats?.range);
+    const radius = Number.isFinite(baseRange) && baseRange > 0
+      ? Math.max(ranged ? 520 : 240, Math.min(ranged ? 950 : 520, baseRange * (ranged ? 2.2 : 2.8)))
+      : (ranged ? 820 : 420);
+    const current = Number.isFinite(player.angle) ? player.angle : 0;
+    const currentUx = Math.cos(current);
+    const currentUy = Math.sin(current);
+    const maxAngle = ranged ? Math.PI * 0.55 : Math.PI * 0.82;
+    let best = null;
+
+    for (const other of Object.values(this.players || {})) {
+      if (!other || other.id === player.id || other.isDead) continue;
+      const dx = other.x - player.x;
+      const dy = other.y - player.y;
+      const dist = Math.hypot(dx, dy);
+      if (!Number.isFinite(dist) || dist < 1 || dist > radius) continue;
+      const angle = Math.atan2(dy, dx);
+      const dot = (dx / dist) * currentUx + (dy / dist) * currentUy;
+      const diff = Math.acos(Math.max(-1, Math.min(1, dot)));
+      if (diff > maxAngle && category !== 'special') continue;
+      // Score balances distance with how close the target is to the current aim.
+      const score = dist + diff * (ranged ? 180 : 95) + (other.isDummy ? 20 : 0);
+      if (!best || score < best.score) best = { angle, targetId: other.id, score };
+    }
+
+    if (best) return best;
+    return null;
+  }
+
+  _performBasicAttack(player, weaponConfig = getEffectiveWeapon(player?.weapon, player?.buffType), now = Date.now()) {
+    if (!player || !weaponConfig || !player.canAttack(now)) return false;
+    // A block program's basicAttack IS the attack (spawns its own hits); else
+    // fall back to a workshop projectile, canonical hitbox swing, or coded kit.
+    if (player.blockVM && player.blockVM.hasHandler('basicAttack')) {
+      player.lastAttackTime = now;
+      player.swingDirection *= -1;
+      this._runBlockEvent(player, 'basicAttack', now);
+      if (player.id === this.localPlayerId) Sound.play(Sound.attackSoundFor(weaponConfig));
+      return true;
+    }
+    if (player.workshopWeapon && player.workshopWeapon.ranged && player.workshopWeapon.projectile) {
+      this._fireWorkshopProjectile(player, now);
+      return true;
+    }
+    const hbMotion = this._canonicalHitboxMotion(player);
+    if (hbMotion) {
+      this._startHitboxSwing(player, hbMotion, now);
+      return true;
+    }
+    this._performAutomaticAttack(player, weaponConfig, now);
     return true;
   }
 
@@ -2415,9 +2488,22 @@ export class Game {
     Object.values(this.players).forEach(p => {
       if (p.isDead || p.isDummy) return;
       if (p.isInvincible && p.isInvincible()) return; // respawn i-frames are safe
+      if (now < (p.zoneGraceUntil || 0)) return;      // explicit respawn lava grace
       if (!zoneIsOutside(this.zone, p.x, p.y)) { p._zoneDmgAcc = 0; return; }
       this._killByEnvironment(p, '위험지대에', now);
     });
+  }
+
+  _loadControlSettings() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem('battle_control_settings_v1') || '{}') || {};
+      return {
+        automaticAttack: parsed.automaticAttack === undefined ? false : Boolean(parsed.automaticAttack),
+        mobileAimAssist: parsed.mobileAimAssist === undefined ? true : Boolean(parsed.mobileAimAssist)
+      };
+    } catch {
+      return { automaticAttack: false, mobileAimAssist: true };
+    }
   }
 
   _updateRingOutDeaths(now) {
@@ -2714,6 +2800,9 @@ export class Game {
       this._handleAltSkillPressed(player, now);
     } else if (data.action === 'teleportUp') {
       this._handleAltSkillReleased(player, now);
+    } else if (data.action === 'basicAttack') {
+      this._applyMobileAimAssistForAttack(player, 'basic');
+      this._performBasicAttack(player, getEffectiveWeapon(player.weapon, player.buffType), now);
     } else if (data.action === 'targetCast') {
       this._handleTargetCast(player, data.x, data.y, now);
     }
@@ -5733,7 +5822,18 @@ export class Game {
       }
       if (nearest > bestDist) { bestDist = nearest; best = s; }
     }
-    return { x: best.x, y: best.y - halfH - 1 };
+    let x = best.x;
+    let y = best.y - halfH - 1;
+    if (hazard && z) {
+      const marginX = 42;
+      const left = Number.isFinite(z.leftX) ? z.leftX + marginX : marginX;
+      const right = Number.isFinite(z.rightX) ? z.rightX - marginX : (this.mapWidth || 0) - marginX;
+      if (right > left) x = Math.max(left, Math.min(right, x));
+      if (Number.isFinite(z.floorY)) {
+        y = Math.min(y, z.floorY - halfH - 36);
+      }
+    }
+    return { x, y };
   }
 
   /**
@@ -5815,6 +5915,8 @@ export class Game {
       const guestPlayer = new Player(remoteId, nickname, weapon, spawnP.x, spawnP.y, costume);
       guestPlayer.applyCosmetics(sanitizeCosmetics(joinPayload.costume?.cosmetics));
       guestPlayer.isMobile = !!joinPayload.isMobile; // touch players fire instantly
+      guestPlayer.mobileAimAssist = joinPayload.controls?.mobileAimAssist === undefined ? true : !!joinPayload.controls.mobileAimAssist;
+      guestPlayer.automaticAttack = !!joinPayload.controls?.automaticAttack;
       this._enforceWorkshopPolicy(guestPlayer);
       this.players[remoteId] = guestPlayer;
 

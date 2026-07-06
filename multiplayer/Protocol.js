@@ -28,8 +28,8 @@ export const Protocol = {
   // Client registration frame. `costume` (optional) carries the purchased
   // skin colors { color, accentColor } so the host paints this player for everyone.
   // `isMobile` lets the host give touch players the instant-fire sniper/matchlock.
-  joinRoom(nickname, weapon, costume = null, isMobile = false) {
-    return { type: MsgType.JOIN_ROOM, nickname, weapon, costume, isMobile: !!isMobile };
+  joinRoom(nickname, weapon, costume = null, isMobile = false, controls = null) {
+    return { type: MsgType.JOIN_ROOM, nickname, weapon, costume, isMobile: !!isMobile, controls };
   },
 
   // Handshake registration acceptance frame. roomConfig carries the arena-size /

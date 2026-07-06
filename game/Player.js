@@ -16,6 +16,8 @@ export class Player {
     this.id = id;
     this.nickname = nickname || 'Gladiator';
     this.isMobile = false;   // touch player → instant sniper/matchlock + visible aim tell
+    this.mobileAimAssist = true;
+    this.automaticAttack = false;
     this.weapon = weaponType in Weapons ? weaponType : 'sword';
     const weaponConfig = Weapons[this.weapon] || Weapons.sword;
     this.x = x;
@@ -147,7 +149,10 @@ export class Player {
     this.blockVM = null;       // sandboxed block-gimmick VM (host-only)
     this.blockVars = {};       // weapon-instance locals (reset on respawn)
     this._blockDepth = 0;      // event-nesting guard (host)
-    if (costume && costume.workshopWeapon) this._applyWorkshopWeapon(costume.workshopWeapon);
+    if (costume && costume.workshopWeapon) {
+      this._applyWorkshopWeapon(costume.workshopWeapon);
+      this.hp = this.maxHp;
+    }
   }
 
   /** Install (and ENVELOPE re-clamp) a workshop weapon def, applying its maxHp
@@ -177,6 +182,8 @@ export class Player {
   /** Adopt an equipped-cosmetics set ({weaponskins, killfx, dashtrail, respawnfx, title}). */
   applyCosmetics(cos) {
     this.weaponSkins = cos?.weaponskins || {};  // { weapon: skinId }
+    this.weaponSkin = cos?.weaponskin?.data?.skin || null;
+    this.weaponTint = cos?.weaponskin?.data?.tint || null;
     this.dashTrailColor = cos?.dashtrail?.data?.color || null;
     this.killFx = cos?.killfx?.data || null;          // { style, color }
     this.respawnFxColor = cos?.respawnfx?.data?.color || null;
@@ -186,6 +193,8 @@ export class Player {
   /** Restore the compact serialized cosmetics blob (see serialize). */
   applyCosmeticsSnapshot(c) {
     this.weaponSkins = (c?.ws && typeof c.ws === 'object') ? c.ws : {};
+    this.weaponSkin = c?.wskin || null;
+    this.weaponTint = c?.wt || null;
     this.dashTrailColor = c?.dt || null;
     this.killFx = c?.kf || null;
     this.respawnFxColor = c?.rf || null;
@@ -194,7 +203,15 @@ export class Player {
 
   /** Compact cosmetics blob for the wire. */
   cosmeticsSnapshot() {
-    return { ws: this.weaponSkins || {}, dt: this.dashTrailColor, kf: this.killFx, rf: this.respawnFxColor, ti: this.title };
+    return {
+      ws: this.weaponSkins || {},
+      wskin: this.weaponSkin || null,
+      wt: this.weaponTint || null,
+      dt: this.dashTrailColor,
+      kf: this.killFx,
+      rf: this.respawnFxColor,
+      ti: this.title
+    };
   }
 
   /**
@@ -526,6 +543,8 @@ export class Player {
       spearThrown: this.spearThrown,
       flameSpraying: this.flameSpraying,
       isMobile: this.isMobile,
+      mobileAimAssist: this.mobileAimAssist,
+      automaticAttack: this.automaticAttack,
       arrowStacks: this.arrowStacks || 0,
       greatswordChargeMs: this.greatswordChargeStart > 0 ? Math.max(0, Date.now() - this.greatswordChargeStart) : 0,
       katanaChargeMs: this.katanaChargeStart > 0 ? Math.max(0, Date.now() - this.katanaChargeStart) : 0,
@@ -579,6 +598,9 @@ export class Player {
     this.slowTimeLeft = (data.slowMs || 0) / 1000;
     this.bleedTimeLeft = (data.bleedMs || 0) / 1000;
     this.spearThrown = Boolean(data.spearThrown);
+    this.isMobile = Boolean(data.isMobile);
+    this.mobileAimAssist = data.mobileAimAssist === undefined ? true : Boolean(data.mobileAimAssist);
+    this.automaticAttack = Boolean(data.automaticAttack);
     this.arrowStacks = Math.max(0, Math.floor(data.arrowStacks || 0));
     this.greatswordChargeStart = data.greatswordChargeMs > 0 ? Date.now() - data.greatswordChargeMs : 0;
     this.katanaChargeStart = data.katanaChargeMs > 0 ? Date.now() - data.katanaChargeMs : 0;

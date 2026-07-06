@@ -39,9 +39,9 @@ test('unknown motion-set id is rejected; weapon fallback resolves', () => {
   assert.equal(sanitizeMotionSetId(123), null);
   assert.equal(sanitizeMotionSetId('default'), 'default');
   // Weapon mapping + resolution always yields a playable motion.
-  assert.equal(weaponSetId('spear'), 'thrust');
+  assert.equal(weaponSetId('greatsword'), 'greatsword');
   assert.equal(weaponSetId('unknownWeapon'), 'default');
-  const atk = resolveMotion(weaponSetId('hammer'), 'attack');
+  const atk = resolveMotion(weaponSetId('sword'), 'attack');
   assert.ok(atk.keyframes.length > 0);
 });
 

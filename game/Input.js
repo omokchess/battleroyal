@@ -40,6 +40,7 @@ export class Input {
     this.skillDownRequested = false;
     this.skillUpRequested = false;
     this.skillHeld = false;
+    this.basicAttackRequested = false;
     this.targetCastRequested = false;
     this.targetCastPointer = null;
     this.targetCastDirectionRequested = false;
@@ -47,6 +48,7 @@ export class Input {
     this.targetCursorVisibleUntil = 0;
     this.targetCursorVisibleMs = 350;
     this.lastTouchAt = 0;
+    this.lastAttackPointerAt = 0;
     this.lastSkillPointerAt = 0;
     this.skillAimPointerId = null;
     this.skillAimButton = null;
@@ -89,6 +91,11 @@ export class Input {
     this._lmbUpHandler = null;
     this._lmbCancelHandler = null;
     this._lmbClickHandler = null;
+    this._attackBtnDownHandler = null;
+    this._attackBtnMoveHandler = null;
+    this._attackBtnUpHandler = null;
+    this._attackBtnCancelHandler = null;
+    this._attackBtnClickHandler = null;
 
     // Mobile Virtual Joystick bound entries
     this._leftTouchStart = null;
@@ -115,6 +122,10 @@ export class Input {
   _requestDash(dx = null, dy = null) {
     this.dashRequested = true;
     this.dashVector = Number.isFinite(dx) && Number.isFinite(dy) ? { dx, dy } : null;
+  }
+
+  _requestBasicAttack() {
+    this.basicAttackRequested = true;
   }
 
   _beginPointerTarget(mode = 'targetCast') {
@@ -171,7 +182,7 @@ export class Input {
 
   _isMobileControlPoint(clientX, clientY) {
     if (!this.joystickEnabled || !Number.isFinite(clientX) || !Number.isFinite(clientY)) return false;
-    const ids = ['leftJoystickContainer', 'rightJoystickContainer', 'skillBtn', 'altSkillBtn', 'lmbBtn', 'dashBtn'];
+    const ids = ['leftJoystickContainer', 'rightJoystickContainer', 'attackBtn', 'skillBtn', 'altSkillBtn', 'lmbBtn', 'dashBtn', 'jumpBtn'];
     return ids.some(id => {
       const el = document.getElementById(id);
       if (!el || el.offsetParent === null) return false;
@@ -316,8 +327,12 @@ export class Input {
     this._mouseDownHandler = (e) => {
       if (e.button !== 0) return;
       if (this._isSyntheticTouchMouseEvent(e)) return;
-      this._queueTargetCastFromClientPoint(canvas, e.clientX, e.clientY);
       this.hasMouseInput = true;
+      if (this.pointerTargetMode) {
+        this._queueTargetCastFromClientPoint(canvas, e.clientX, e.clientY);
+      } else {
+        this._requestBasicAttack();
+      }
     };
 
     this._pointerDownHandler = (e) => {
@@ -442,7 +457,26 @@ export class Input {
       toggleBtn.addEventListener('click', this._toggleBtnHandler);
     }
 
-    // On-screen action buttons (mobile): dash + weapon skill.
+    // On-screen action buttons (mobile): direct attack, dash, and weapon skills.
+    const attackBtn = document.getElementById('attackBtn');
+    if (attackBtn) {
+      this._attackBtnDownHandler = (e) => {
+        this._markTouchLikeInput(e);
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
+        this.lastAttackPointerAt = Date.now();
+        this._requestBasicAttack();
+      };
+      this._attackBtnClickHandler = (e) => {
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
+        if (Date.now() - this.lastAttackPointerAt < 450) return;
+        this._requestBasicAttack();
+      };
+      attackBtn.addEventListener('pointerdown', this._attackBtnDownHandler);
+      attackBtn.addEventListener('click', this._attackBtnClickHandler);
+    }
+
     const dashBtn = document.getElementById('dashBtn');
     if (dashBtn) {
       this._dashBtnHandler = (e) => {
@@ -927,6 +961,12 @@ export class Input {
     return { x: this.mouse.x, y: this.mouse.y };
   }
 
+  consumeBasicAttack() {
+    if (!this.basicAttackRequested) return false;
+    this.basicAttackRequested = false;
+    return true;
+  }
+
   /**
    * Read-and-clear the queued skill request (edge-triggered).
    */
@@ -1068,6 +1108,11 @@ export class Input {
       if (this._lmbCancelHandler) lmbBtn.removeEventListener('pointercancel', this._lmbCancelHandler);
       if (this._lmbClickHandler) lmbBtn.removeEventListener('click', this._lmbClickHandler);
     }
+    const attackBtn = document.getElementById('attackBtn');
+    if (attackBtn) {
+      if (this._attackBtnDownHandler) attackBtn.removeEventListener('pointerdown', this._attackBtnDownHandler);
+      if (this._attackBtnClickHandler) attackBtn.removeEventListener('click', this._attackBtnClickHandler);
+    }
 
     this.dashRequested = false;
     this.dashVector = null;
@@ -1077,6 +1122,7 @@ export class Input {
     this.skillDownRequested = false;
     this.skillUpRequested = false;
     this.skillHeld = false;
+    this.basicAttackRequested = false;
     this._resetSkillAimJoystick();
     this.targetCastRequested = false;
     this.targetCastPointer = null;
@@ -1084,6 +1130,7 @@ export class Input {
     this.targetCastDirectionAngle = null;
     this.targetCursorVisibleUntil = 0;
     this.lastTouchAt = 0;
+    this.lastAttackPointerAt = 0;
     this.pointerTargetMode = null;
 
     const leftContainer = document.getElementById('leftJoystickContainer');

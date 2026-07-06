@@ -605,15 +605,24 @@ export class Renderer {
   _drawReticle(ctx, cursor) {
     const x = cursor.x, y = cursor.y, s = 9;
     ctx.save();
-    ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.82)'; ctx.lineWidth = 4;
     ctx.beginPath();
     ctx.moveTo(x - s, y); ctx.lineTo(x - 3, y);
     ctx.moveTo(x + 3, y); ctx.lineTo(x + s, y);
     ctx.moveTo(x, y - s); ctx.lineTo(x, y - 3);
     ctx.moveTo(x, y + 3); ctx.lineTo(x, y + s);
     ctx.stroke();
-    ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.fill();
+
+    ctx.strokeStyle = '#ffd84d'; ctx.lineWidth = 1.7;
+    ctx.beginPath();
+    ctx.moveTo(x - s, y); ctx.lineTo(x - 3, y);
+    ctx.moveTo(x + 3, y); ctx.lineTo(x + s, y);
+    ctx.moveTo(x, y - s); ctx.lineTo(x, y - 3);
+    ctx.moveTo(x, y + 3); ctx.lineTo(x, y + s);
+    ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y, 2.4, 0, Math.PI * 2);
+    ctx.fillStyle = '#7df09a'; ctx.fill();
+    ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(0,0,0,0.88)'; ctx.stroke();
     ctx.restore();
   }
 
@@ -5638,19 +5647,20 @@ export class Renderer {
 
   /**
    * Draw the cursor crosshair at the exact mouse position (screen space, no
-   * camera transform). Always white + black outline so it reads on any background.
+   * camera transform). High-contrast gold/mint + black outline so it reads on
+   * bright platformer skies and dark interiors.
    */
   _drawCursorCrosshair(ctx, x, y) {
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-    const sz = 11;
+    const sz = 13;
     const gap = 4;
     ctx.save();
     ctx.setLineDash([]);
     ctx.lineCap = 'butt';
 
     // Shadow / outline
-    ctx.strokeStyle = 'rgba(0,0,0,0.7)';
-    ctx.lineWidth = 3.5;
+    ctx.strokeStyle = 'rgba(0,0,0,0.86)';
+    ctx.lineWidth = 4.2;
     ctx.beginPath();
     ctx.moveTo(x - sz, y); ctx.lineTo(x - gap, y);
     ctx.moveTo(x + gap, y); ctx.lineTo(x + sz, y);
@@ -5658,9 +5668,9 @@ export class Renderer {
     ctx.moveTo(x, y + gap); ctx.lineTo(x, y + sz);
     ctx.stroke();
 
-    // White lines
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 1.8;
+    // Gold lines
+    ctx.strokeStyle = '#ffd84d';
+    ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(x - sz, y); ctx.lineTo(x - gap, y);
     ctx.moveTo(x + gap, y); ctx.lineTo(x + sz, y);
@@ -5669,10 +5679,13 @@ export class Renderer {
     ctx.stroke();
 
     // Center dot
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = '#7df09a';
     ctx.beginPath();
-    ctx.arc(x, y, 1.8, 0, Math.PI * 2);
+    ctx.arc(x, y, 2.2, 0, Math.PI * 2);
     ctx.fill();
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = 'rgba(0,0,0,0.88)';
+    ctx.stroke();
 
     ctx.restore();
   }

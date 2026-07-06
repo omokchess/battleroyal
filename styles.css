@@ -169,6 +169,7 @@
 .mobile-action-right { right: 0; top: 50%; transform: translateY(-50%); }
 .mobile-action-left { left: 0; top: 50%; transform: translateY(-50%); }
 .mobile-action-bottom { left: 50%; bottom: 0; transform: translateX(-50%); }
+.mobile-action-attack { right: 0.7rem; bottom: 0.7rem; }
 
 /* Platformer jump button — anchored above the left move stick. */
 .mobile-jump-btn {
@@ -920,6 +921,11 @@ canvas {
     transform: translateX(-50%);
   }
 
+  .mobile-action-attack {
+    right: 0.65rem;
+    bottom: 0.65rem;
+  }
+
   .mobile-action-btn .text-base,
   .mobile-action-btn .text-sm {
     font-size: 0.86rem;
@@ -992,6 +998,11 @@ canvas {
   .mobile-action-btn {
     width: clamp(2.65rem, 13dvh, 3.05rem);
     height: clamp(2.65rem, 13dvh, 3.05rem);
+  }
+
+  .mobile-action-attack {
+    right: 0.45rem;
+    bottom: 0.45rem;
   }
 }
 

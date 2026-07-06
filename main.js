@@ -1193,7 +1193,7 @@ function doBotMatch() {
   if (btn) { btn.disabled = true; btn.textContent = '전장 준비 중...'; }
 
   const demoConfig = normalizeRoomConfig({
-    arenaSize: 'medium', storm: true, platforms: 'some', platformShape: 'balanced',
+    arenaSize: 'medium', storm: false, platforms: 'some', platformShape: 'balanced',
     healing: true, healingRate: 'fast', biome: 'day',
     allowWorkshop: true   // practice/bot match → let players try their workshop weapons
   });
@@ -1440,10 +1440,20 @@ document.getElementById('matchLeaveBtn')?.addEventListener('click', () => {
 /**
  * 4. Match Joining workflow (shared by the Join button and room-list clicks)
  */
-function startJoin(rawCode) {
+function startJoin(rawCode, triggerBtn = joinBtn) {
   const nickname = nicknameInput.value.trim();
   const roomCode = String(rawCode || '').trim();
   const chosenWeapon = document.querySelector('.weapon-card.selected')?.dataset.weapon || 'sword';
+  const setJoinBusy = (busy) => {
+    if (joinBtn) {
+      joinBtn.disabled = busy;
+      joinBtn.textContent = busy ? '연결 중...' : '참가';
+    }
+    if (triggerBtn && triggerBtn !== joinBtn) {
+      triggerBtn.disabled = busy;
+      triggerBtn.textContent = busy ? '연결 중...' : (triggerBtn.dataset.idleLabel || '결투장 입장');
+    }
+  };
 
   if (!nickname) {
     showError('방에 참가하기 전에 닉네임을 입력해 주세요.');
@@ -1455,18 +1465,16 @@ function startJoin(rawCode) {
   }
 
   hideError();
-  joinBtn.disabled = true;
-  joinBtn.textContent = '연결 중...';
+  setJoinBusy(true);
 
   netManager = new NetworkManager();
 
   // Create registration payload frame (carry costume so the host paints us
   // correctly, and isMobile so the host gives touch players instant-fire).
-  const joinPayload = Protocol.joinRoom(nickname, chosenWeapon, localAppearance(), isMobileDevice());
+  const joinPayload = Protocol.joinRoom(nickname, chosenWeapon, localAppearance(), isMobileDevice(), readControls());
 
   netManager.on('onConnected', () => {
-    joinBtn.disabled = false;
-    joinBtn.textContent = '참가';
+    setJoinBusy(false);
 
     enterGameScreen(false);
 
@@ -1477,8 +1485,7 @@ function startJoin(rawCode) {
   });
 
   netManager.on('onError', (err) => {
-    joinBtn.disabled = false;
-    joinBtn.textContent = '참가';
+    setJoinBusy(false);
     showError(err);
     netManager.stop();
   });
@@ -2379,10 +2386,26 @@ function buildArmoryInto(body) {
 // Visual + control settings moved out of the in-game HUD (C-2). The lobby writes
 // localStorage; Game.js / Input.js read it on battle entry (read-only in-match).
 const VIS_KEY = 'battle_visual_settings_v1';
+const CTRL_KEY = 'battle_control_settings_v1';
 function readVisual() { try { return JSON.parse(localStorage.getItem(VIS_KEY) || '{}') || {}; } catch { return {}; } }
 function writeVisual(patch) {
   const s = readVisual(); Object.assign(s, patch);
   try { localStorage.setItem(VIS_KEY, JSON.stringify(s)); } catch { /* storage blocked */ }
+}
+function readControls() {
+  try {
+    const s = JSON.parse(localStorage.getItem(CTRL_KEY) || '{}') || {};
+    return {
+      automaticAttack: s.automaticAttack === undefined ? false : !!s.automaticAttack,
+      mobileAimAssist: s.mobileAimAssist === undefined ? true : !!s.mobileAimAssist
+    };
+  } catch {
+    return { automaticAttack: false, mobileAimAssist: true };
+  }
+}
+function writeControls(patch) {
+  const s = readControls(); Object.assign(s, patch);
+  try { localStorage.setItem(CTRL_KEY, JSON.stringify(s)); } catch { /* storage blocked */ }
 }
 // Joystick (Input.js key). Default ON for touch devices when never set.
 function readJoystick() { const v = localStorage.getItem('joystick_enabled'); return v === null ? isMobileDevice() : v === 'true'; }
@@ -2392,6 +2415,7 @@ function buildOptionsInto(body) {
   const nick = document.getElementById('nicknameInput');
   const perf = document.getElementById('lobbyPerfMode');
   const vis = readVisual();
+  const ctrl = readControls();
   // Sliding ON/OFF switch (label + knob). The knob slides + track recolors on toggle.
   const swit = (on) =>
     `<span class="flex items-center gap-2"><span class="med-switch-label font-mono text-[11px]" data-swlbl style="width:30px;text-align:right;color:${on ? 'var(--med-blood)' : 'var(--med-ink-mute)'}">${on ? '켜짐' : '꺼짐'}</span><button class="med-switch ${on ? 'on' : ''}" role="switch" aria-checked="${on}" aria-label="토글"><span class="med-switch-knob"></span></button></span>`;
@@ -2400,7 +2424,7 @@ function buildOptionsInto(body) {
     if (sw) { sw.classList.toggle('on', on); sw.setAttribute('aria-checked', String(on)); }
     if (lbl) { lbl.textContent = on ? '켜짐' : '꺼짐'; lbl.style.color = on ? 'var(--med-blood)' : 'var(--med-ink-mute)'; }
   };
-  const keyRows = [['이동', 'A/D'], ['점프', 'Space'], ['조준', '마우스'], ['평타', '자동/좌클릭'], ['스킬', 'F'], ['보조', 'R'], ['대시', 'Shift']];
+  const keyRows = [['이동', 'A/D'], ['점프', 'Space'], ['조준', '마우스'], ['평타', '좌클릭 / 모바일 평'], ['스킬', 'F'], ['보조', 'R'], ['대시', 'Shift']];
 
   body.innerHTML = `
     <div class="opts-grid">
@@ -2448,6 +2472,14 @@ function buildOptionsInto(body) {
         <div class="flex justify-between items-center mb-3">
           <span class="text-[13px]" style="color:var(--med-ink)">조이스틱 (모바일 가상 조작)</span>
           <span id="optJoystick">${swit(readJoystick())}</span>
+        </div>
+        <div class="flex justify-between items-center mb-3">
+          <span class="text-[13px]" style="color:var(--med-ink)">모바일 자동 조준 보조</span>
+          <span id="optMobileAimAssist">${swit(ctrl.mobileAimAssist)}</span>
+        </div>
+        <div class="flex justify-between items-center mb-3">
+          <span class="text-[13px]" style="color:var(--med-ink)">자동 공격 보조</span>
+          <span id="optAutoAttack">${swit(ctrl.automaticAttack)}</span>
         </div>
         <div class="opt-head" style="border-top:1px dashed var(--med-wood);padding-top:12px">조작 안내</div>
         <div class="opt-keys">
@@ -2498,6 +2530,14 @@ function buildOptionsInto(body) {
     writeJoystick(on);
     setSwitch(body.querySelector('#optJoystick'), on);
   });
+  const ctrlToggle = (wrapId, key) => body.querySelector(`#${wrapId}`)?.addEventListener('click', (e) => {
+    if (!e.target.closest('.med-switch')) return;
+    const on = !readControls()[key];
+    writeControls({ [key]: on });
+    setSwitch(body.querySelector(`#${wrapId}`), on);
+  });
+  ctrlToggle('optMobileAimAssist', 'mobileAimAssist');
+  ctrlToggle('optAutoAttack', 'automaticAttack');
   // Mute → Sound engine (stays in sync with the other mute toggles).
   const syncMute = (m) => setSwitch(body.querySelector('#optMute'), m);
   body.querySelector('#optMute')?.addEventListener('click', (e) => {
@@ -2736,6 +2776,7 @@ const PLATFORM_SHAPE_KO = { balanced: '균형형', stairs: '계단형', towers: 
 const RATE_KO = { fast: '빠름', normal: '보통', slow: '느림' };
 const BIOME_KO = { day: '낮', night: '밤', dawn: '새벽', desert: '사막', snow: '눈' };
 function buildArenaInto(body) {
+  if (window.__clearArenaTimer) window.__clearArenaTimer();
   body.innerHTML = `
     <div class="arena-grid">
       <div class="med-parch relative p-3">
@@ -2756,11 +2797,14 @@ function buildArenaInto(body) {
   let selectedCode = null;
   let rooms = [];
 
-  function refresh() {
-    rooms = roomRegistry.list() || [];
+  function applyRooms(nextRooms) {
+    rooms = nextRooms || [];
     if (selectedCode && !rooms.some(r => r.code === selectedCode)) selectedCode = null;
     if (!selectedCode && rooms.length) selectedCode = rooms[0].code;
     renderList(); renderDetail();
+  }
+  function refresh() {
+    applyRooms(roomRegistry.list() || []);
   }
   function renderList() {
     if (!rooms.length) {
@@ -2801,8 +2845,8 @@ function buildArenaInto(body) {
           ${rows.map(([k, v]) => `<div class="flex justify-between"><span class="med-muted">${k}</span><span style="color:var(--med-ink)">${v}</span></div>`).join('')}
         </div>
       </div>
-      <button id="arenaJoin" class="med-btn med-btn--blood w-full font-mono text-sm py-2.5">결투장 입장</button>`;
-    detailEl.querySelector('#arenaJoin')?.addEventListener('click', () => startJoin(r.code));
+      <button id="arenaJoin" class="med-btn med-btn--blood w-full font-mono text-sm py-2.5" data-idle-label="결투장 입장">결투장 입장</button>`;
+    detailEl.querySelector('#arenaJoin')?.addEventListener('click', (e) => startJoin(r.code, e.currentTarget));
   }
 
   listEl.addEventListener('click', (e) => {
@@ -2811,12 +2855,20 @@ function buildArenaInto(body) {
   });
   body.querySelector('#arenaRefresh')?.addEventListener('click', refresh);
   const codeInput = body.querySelector('#arenaCode');
-  body.querySelector('#arenaJoinCode')?.addEventListener('click', () => { const v = codeInput.value.trim(); if (v) startJoin(v); });
+  const codeBtn = body.querySelector('#arenaJoinCode');
+  if (codeBtn) codeBtn.dataset.idleLabel = '입장';
+  codeBtn?.addEventListener('click', (e) => { const v = codeInput.value.trim(); if (v) startJoin(v, e.currentTarget); });
 
-  // Let the skeleton paint one frame before the (synchronous) first fill.
+  roomRegistry.stopBrowsing();
+  roomRegistry.startBrowsing(applyRooms);
+  // Let the skeleton paint one frame before the first local fill. The registry's
+  // own browse loop handles cross-tab/broker updates after this.
   requestAnimationFrame(refresh);
-  const timer = setInterval(refresh, 2500);
-  window.__clearArenaTimer = () => { clearInterval(timer); window.__clearArenaTimer = null; };
+  window.__clearArenaTimer = () => {
+    roomRegistry.stopBrowsing();
+    window.__clearArenaTimer = null;
+    if (!gameScreen || gameScreen.classList.contains('hidden')) startLobbyBrowsing();
+  };
 }
 
 /**

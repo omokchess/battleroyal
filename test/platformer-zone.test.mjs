@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { Game } from '../game/Game.js';
 import { PlatformerZone } from '../game/PlatformerZone.js';
 
 test('platformer zone rises from the bottom and becomes lethal only after warning', () => {
@@ -35,4 +36,32 @@ test('platformer zone serializes the fields clients render from', () => {
     assert.ok(key in s, `missing ${key}`);
   }
   assert.equal(s.kind, 'platformer_rise');
+});
+
+test('respawn zone grace prevents immediate hazard death, then expires', () => {
+  const player = {
+    id: 'p1',
+    x: 120,
+    y: 900,
+    isDead: false,
+    isDummy: false,
+    zoneGraceUntil: 2000,
+    isInvincible: () => false
+  };
+  const ctx = {
+    players: { p1: player },
+    zone: {
+      update: () => {},
+      isDamaging: () => true,
+      isOutside: () => true
+    },
+    _updateRingOutDeaths: () => {},
+    _killByEnvironment: (p) => { p.isDead = true; }
+  };
+
+  Game.prototype._updateZone.call(ctx, 1500, 1 / 60);
+  assert.equal(player.isDead, false);
+
+  Game.prototype._updateZone.call(ctx, 2100, 1 / 60);
+  assert.equal(player.isDead, true);
 });

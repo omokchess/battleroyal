@@ -155,8 +155,8 @@ export class Player {
   _applyWorkshopWeapon(def) {
     const safe = clampWorkshopWeapon(def);
     // The V1 clamp drops weaponVisual; keep the small id-only visual for rendering.
-    if (def && def.weaponVisual && def.weaponVisual.imageId) {
-      safe.weaponVisual = { imageId: String(def.weaponVisual.imageId).slice(0, 48), scale: Number(def.weaponVisual.scale) || 1 };
+    if (def && def.weaponVisual && (def.weaponVisual.imageId || def.weaponVisual.dual)) {
+      safe.weaponVisual = { imageId: def.weaponVisual.imageId ? String(def.weaponVisual.imageId).slice(0, 48) : null, scale: Number(def.weaponVisual.scale) || 1, dual: !!def.weaponVisual.dual };
     }
     // Ranged basic attack (projectile config) — kept for the fire path + renderer.
     if (def && def.ranged && def.projectile) { safe.ranged = true; safe.projectile = def.projectile; }

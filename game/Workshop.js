@@ -416,6 +416,7 @@ export function clampWorkshopWeaponV2(raw) {
     rotationOffset: clampNum(vv.rotationOffset, [-360, 360], 0),
     offsetX: clampNum(vv.offsetX, [-120, 120], 0),
     offsetY: clampNum(vv.offsetY, [-120, 120], 0),
+    dual: !!vv.dual,   // 쌍수(양손) — draws a second off-hand weapon
   };
   const rawPresets = (r.presets && typeof r.presets === 'object') ? r.presets : {};
   const presets = {};

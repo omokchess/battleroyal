@@ -206,6 +206,11 @@ export class MotionEditor {
     $('meTutReplay')?.addEventListener('click', () => this._tutStart());
     $('meFlipToggle')?.addEventListener('click', () => this._toggleFlipAt(this.scrubT));
     $('meEffectAdd')?.addEventListener('click', () => this._addEffect());
+    $('meDualWield')?.addEventListener('change', (e) => {
+      if (!this._editingV2) return;
+      this._editingV2.weaponVisual = { ...(this._editingV2.weaponVisual || { imageId: null, scale: 1 }), dual: !!e.target.checked };
+      this._renderPreview();
+    });
     // Ranged / projectile controls (per combat preset).
     $('ms_ranged')?.addEventListener('change', (e) => this._setRanged(e.target.checked));
     const pjInput = (id, field, num) => $(id)?.addEventListener('input', (e) => this._setProjectile(field, num ? parseFloat(e.target.value) : e.target.value));
@@ -501,6 +506,7 @@ export class MotionEditor {
       if (this._editingV2.color) { this.look = { ...this.look, color: this._editingV2.color }; if ($('meColor')) $('meColor').value = this.look.color; }
       const vis = this._editingV2.weaponVisual;
       this.weapon = (vis && vis.imageId && this._customWeapon(vis.imageId)) ? vis.imageId : 'sword';
+      const dw = $('meDualWield'); if (dw) dw.checked = !!(vis && vis.dual);
     }
     this._populateWeaponSelect();
     this._syncWeaponUI();
@@ -1138,6 +1144,7 @@ export class MotionEditor {
     const wsize = wrec?.size ?? 2.0;
     const wanch = wrec?.anchors || null;                      // grip/tip anchors
     const wflip = this._currentFlip();                        // weapon flip at the current time
+    const wdual = !!(this._editingV2 && this._editingV2.weaponVisual && this._editingV2.weaponVisual.dual);
 
     // Onion skin: the PREVIOUS frame's pose, drawn faint + blue behind the current
     // one, so you can see what the stickman did last and build the next pose from it.
@@ -1146,7 +1153,7 @@ export class MotionEditor {
       if (prev) {
         const pj = solveStickman({ ...STICK_NEUTRAL, ...prev.pose }, scale, cx, cyCenter, 1, { rawNearArm: true, weapon: this.weapon });
         ctx.save(); ctx.globalAlpha = 0.3;
-        drawStickFromJoints(ctx, pj.joints, pj.headR, { color: '#6f8cff', accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory, weaponImage: wimg, weaponImageSize: wsize, weaponImageAnchors: wanch, weaponFlip: wflip });
+        drawStickFromJoints(ctx, pj.joints, pj.headR, { color: '#6f8cff', accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory, weaponImage: wimg, weaponImageSize: wsize, weaponImageAnchors: wanch, weaponFlip: wflip, weaponDual: wdual });
         ctx.restore();
       }
     }
@@ -1154,7 +1161,7 @@ export class MotionEditor {
     const pose = this._displayPose();
     const { joints, headR } = solveStickman(pose, scale, cx, cyCenter, 1, { rawNearArm: true, weapon: this.weapon });
     const color = this.look.color || WEAPON_STICK_COLOR[this.weapon] || '#cdd3da';
-    drawStickFromJoints(ctx, joints, headR, { color, accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory, weaponImage: wimg, weaponImageSize: wsize, weaponImageAnchors: wanch, weaponFlip: wflip });
+    drawStickFromJoints(ctx, joints, headR, { color, accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory, weaponImage: wimg, weaponImageSize: wsize, weaponImageAnchors: wanch, weaponFlip: wflip, weaponDual: wdual });
     if (this.mode === 'workshop') this._drawEffects(ctx, joints, scale);   // cosmetic frame FX
 
     // Joint handles (only when a keyframe is selected & not playing).
@@ -1511,10 +1518,10 @@ export class MotionEditor {
     this._commitActivePreset();
     w.name = (document.getElementById('meName')?.value || '').trim() || w.name || '새 무기';
     w.color = this.look.color || null;
-    // Capture the equipped custom weapon IMAGE so it shows in-game.
+    // Capture the equipped custom weapon IMAGE (keeping the dual flag).
     if (this.weapon && this.weapon.startsWith('custom:')) {
       const rec = this._customWeapon(this.weapon);
-      w.weaponVisual = { imageId: this.weapon, scale: (rec && rec.size) || 2 };
+      w.weaponVisual = { ...(w.weaponVisual || {}), imageId: this.weapon, scale: (rec && rec.size) || 2 };
     }
     const before = statCostV2(w);
     const clamped = clampWorkshopWeaponV2(w);   // double-clamp (budget bleed if needed)

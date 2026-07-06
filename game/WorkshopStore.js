@@ -120,7 +120,7 @@ export function v2ToV1Runtime(w) {
   };
   const rt = clampWorkshopWeapon({ name: w.name, color: w.color, stats, motionSet, blocks: basic ? basic.blocks : null });
   // Carry the (small, id-only) custom weapon image for the in-game renderer.
-  if (w.weaponVisual && w.weaponVisual.imageId) rt.weaponVisual = { imageId: w.weaponVisual.imageId, scale: w.weaponVisual.scale || 1 };
+  if (w.weaponVisual && (w.weaponVisual.imageId || w.weaponVisual.dual)) rt.weaponVisual = { imageId: w.weaponVisual.imageId || null, scale: w.weaponVisual.scale || 1, dual: !!w.weaponVisual.dual };
   // The primary (basic) preset's ranged/projectile config drives the basic attack.
   if (basic && basic.ranged && basic.projectile) { rt.ranged = true; rt.projectile = basic.projectile; }
   return rt;

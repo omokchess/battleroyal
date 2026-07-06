@@ -576,6 +576,7 @@ export class Renderer {
       weaponImageSize: wimg ? wimg.size : 2.0,
       weaponImageAnchors: wimg ? wimg.anchors : null,
       weaponFlip: !!weaponFlip,
+      weaponDual: !!(wv && wv.dual),
     });
 
     if (p.burnTimeLeft > 0) this._drawBurnFlames(ctx, bodyScr, radius, z);

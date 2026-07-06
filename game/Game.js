@@ -17,7 +17,6 @@ import { Sound } from './Sound.js';
 import { generateCover, resolveCover, coverBlocksSegment, coverRayDistance, coverClearOfPoint, coverBlocksCircle } from './Cover.js';
 import { generateWater, emptyWater } from './Water.js';
 import { buildLevel, PHYS } from './Level.js';
-import { PlatformerZone } from './PlatformerZone.js';
 import { BotBrain, BOT_DIFFICULTY, BOT_LOADOUT } from './Bot.js';
 import { resolveMotion, weaponSetId, sanitizeMotionSetId, canonicalWeaponMotion, canonicalWeaponsSnapshot, setCanonicalWeapon } from './Motion.js';
 import { STATUS } from './Status.js';
@@ -110,20 +109,10 @@ export class Game {
     this.level = null;
     this._buildLevel();
 
-    // Platformer battle-royale pressure. Reuses the room "storm" switch, but the
-    // shape is now a rising bottom hazard plus late-cycle side compression.
-    this.zone = (this.roomConfig.storm)
-      ? new PlatformerZone(this.mapWidth, this.mapHeight, this.roomConfig.arenaSize)
-      : null;
-    if (this.zone && this.level?.oneWays?.length) {
-      // The lava must never swallow the highest platform — otherwise late
-      // cycles have NO safe ground and every fighter (bots included) is stuck
-      // in a forced drowning loop. Clamping here turns the endgame into a
-      // fight for the top perch instead. (minFloorY is a y-coordinate: larger
-      // = lower, so take the max of the default and "just under the top perch".)
-      const highestTop = Math.min(...this.level.oneWays.map(s => s.y));
-      this.zone.minFloorY = Math.max(this.zone.minFloorY, highestTop + 46);
-    }
+    // The rising-lava / hazard zone was removed: it caused too many unfair
+    // respawn-into-death loops and pushed matches toward survival over combat.
+    // The sim keeps a null zone so every zone-aware guard simply no-ops.
+    this.zone = null;
 
     this.renderer = new Renderer(canvas);
     this.camera = new Camera();

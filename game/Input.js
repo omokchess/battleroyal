@@ -417,8 +417,8 @@ export class Input {
     };
     this._blurHandler = () => this._releaseAllKeys();
     this._visHandler = () => { if (document.hidden) this._releaseAllKeys(); };
-    window.addEventListener('blur', this._blurHandler);
-    document.addEventListener('visibilitychange', this._visHandler);
+    if (typeof window.addEventListener === 'function') window.addEventListener('blur', this._blurHandler);
+    if (typeof document.addEventListener === 'function') document.addEventListener('visibilitychange', this._visHandler);
 
     document.addEventListener('keydown', this._keyDownHandler);
     document.addEventListener('keyup', this._keyUpHandler);
@@ -1064,8 +1064,8 @@ export class Input {
   cleanUp(canvas) {
     if (this._keyDownHandler) document.removeEventListener('keydown', this._keyDownHandler);
     if (this._keyUpHandler) document.removeEventListener('keyup', this._keyUpHandler);
-    if (this._blurHandler) window.removeEventListener('blur', this._blurHandler);
-    if (this._visHandler) document.removeEventListener('visibilitychange', this._visHandler);
+    if (this._blurHandler && typeof window.removeEventListener === 'function') window.removeEventListener('blur', this._blurHandler);
+    if (this._visHandler && typeof document.removeEventListener === 'function') document.removeEventListener('visibilitychange', this._visHandler);
     if (canvas && this._mouseMoveHandler) canvas.removeEventListener('mousemove', this._mouseMoveHandler);
     if (canvas && this._mouseDownHandler) canvas.removeEventListener('mousedown', this._mouseDownHandler);
     if (canvas && this._pointerDownHandler) canvas.removeEventListener('pointerdown', this._pointerDownHandler);

@@ -166,6 +166,9 @@ export class Player {
     }
     // Ranged basic attack (projectile config) — kept for the fire path + renderer.
     if (def && def.ranged && def.projectile) { safe.ranged = true; safe.projectile = def.projectile; }
+    // Heavy (평타 3연타 finisher) damage/knockback — survives the re-clamp.
+    if (def && Number.isFinite(def.heavyDamage)) safe.heavyDamage = def.heavyDamage;
+    if (def && Number.isFinite(def.heavyKnockback)) safe.heavyKnockback = def.heavyKnockback;
     this.workshopWeapon = safe;
     // Block-gimmick VM (host runs it; the constructor sanitizes + caps the AST).
     this.blockVM = safe.blocks ? new BlockVM(safe.blocks, 'workshop') : null;

@@ -169,8 +169,8 @@ export function clampWorkshopWeapon(raw) {
   for (const state of MOTION_STATES) {
     if (!rawSet[state]) continue;
     const m = sanitizeMotion(rawSet[state], undefined, { allowGameplay: true });
-    // Only the attack slot may carry hitboxes; the rest are pure cosmetics.
-    if (state === 'attack') { if (Array.isArray(m.hitboxes)) m.hitboxes = clampWorkshopHitboxes(m.hitboxes); }
+    // Only attack + heavy (the 3-combo finisher) carry hitboxes; rest cosmetic.
+    if (state === 'attack' || state === 'heavy') { if (Array.isArray(m.hitboxes)) m.hitboxes = clampWorkshopHitboxes(m.hitboxes); }
     else delete m.hitboxes;
     // Preserve the weapon flip timeline (sanitizeMotion drops it) — cosmetic.
     if (Array.isArray(rawSet[state].flipXKeys)) m.flipXKeys = sanitizeFlipKeys(rawSet[state].flipXKeys);
@@ -203,7 +203,8 @@ export const PRESET_LABELS = {
   idle: '대기', run: '걷기', jump: '점프', hurt: '피격', kill: '처치',
 };
 // Which in-game input fires each combat/dash preset (cooldown = preset.combat).
-export const PRESET_INPUT = { basic: 'lmb', heavy: 'rmb', skill1: 'skillF', skill2: 'skillR', skill3: 'skillQ', dash: 'dash' };
+// heavy = the 3rd hit of a basic-attack combo (평타 3연타), not a dedicated key.
+export const PRESET_INPUT = { basic: 'lmb', heavy: 'combo3', skill1: 'skillF', skill2: 'skillE', skill3: 'skillR', dash: 'dash' };
 export const PROJECTILE_IMAGES = ['arrow', 'bolt', 'magicbolt', 'flame', 'iceshard', 'bullet'];
 export const PROJECTILE_ENV = {
   speed: [80, 1200], lifetimeMs: [100, 4000], scale: [0.3, 3],

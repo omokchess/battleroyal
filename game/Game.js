@@ -998,14 +998,15 @@ export class Game {
 
   /** Begin a hitbox-driven swing: manage the cooldown + render animation via
    *  lastAttackTime, and record the active swing for _updateHitboxSwings. */
-  _startHitboxSwing(player, motion, now) {
+  _startHitboxSwing(player, motion, now, opts = {}) {
     player.lastAttackTime = now;
     player.swingDirection *= -1;
     player._hbSwing = {
       start: now,
       durMs: Math.max(80, (motion.duration || 0.4) * 1000),
       hitboxes: motion.hitboxes,
-      knockback: motion.knockback || 0,
+      knockback: Number.isFinite(opts.knockback) ? opts.knockback : (motion.knockback || 0),
+      damage: Number.isFinite(opts.damage) ? opts.damage : null,   // override (e.g. heavy finisher)
       hit: new Set(),
     };
     if (player.id === this.localPlayerId) Sound.play(Sound.attackSoundFor(getEffectiveWeapon(player.weapon, player.buffType)));
@@ -1027,8 +1028,8 @@ export class Game {
 
       const facing = Math.cos(p.angle || 0) >= 0 ? 1 : -1;
       const wcfg = getEffectiveWeapon(p.weapon, p.buffType);
-      // Workshop weapon → its ENVELOPE-clamped damage; else the base weapon's.
-      const dmg = (p.workshopWeapon?.stats?.damage) || wcfg.damage || 10;
+      // Swing-specific override (heavy finisher) → workshop damage → base weapon.
+      const dmg = (Number.isFinite(sw.damage) ? sw.damage : (p.workshopWeapon?.stats?.damage)) || wcfg.damage || 10;
 
       for (const hb of sw.hitboxes) {
         if (phase < hb.activeStart || phase > hb.activeEnd) continue;
@@ -1408,6 +1409,25 @@ export class Game {
     }
     const hbMotion = this._canonicalHitboxMotion(player);
     if (hbMotion) {
+      // 강공격 = 평타 3연타. Every 3rd consecutive basic (within the combo window)
+      // swings the workshop weapon's heavy preset instead — bigger reach/damage.
+      const ws = player.workshopWeapon;
+      const heavy = ws && ws.motionSet && ws.motionSet.heavy;
+      const heavyReady = heavy && Array.isArray(heavy.hitboxes) && heavy.hitboxes.length;
+      if (heavyReady) {
+        if (!player._basicComboAt || (now - player._basicComboAt) > 1400) player._basicCombo = 0;
+        player._basicComboAt = now;
+        player._basicCombo = (player._basicCombo || 0) + 1;
+        if (player._basicCombo >= 3) {
+          player._basicCombo = 0;
+          this._triggerStickMotion(player, 'heavy', now);
+          const heavyDmg = Number.isFinite(ws.heavyDamage)
+            ? ws.heavyDamage
+            : Math.round((ws.stats?.damage || 12) * 1.6);
+          this._startHitboxSwing(player, heavy, now, { damage: heavyDmg, knockback: ws.heavyKnockback || heavy.knockback || 0 });
+          return true;
+        }
+      }
       this._startHitboxSwing(player, hbMotion, now);
       return true;
     }
@@ -2900,6 +2920,7 @@ export class Game {
 
   _handleTargetCast(player, x, y, now) {
     if (!player || player.isDead || player.stunTimeLeft > 0) return;
+    this._triggerStickMotion(player, 'skill3', now);   // 스킬3 (R) motion
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     const targetX = Math.max(0, Math.min(this.mapWidth, x));
     const targetY = Math.max(0, Math.min(this.mapHeight, y));
@@ -5688,13 +5709,13 @@ export class Game {
         teleportRow.classList.remove('hidden');
         const label = teleportRow.querySelector('span');
         if (label) {
-          if (local.weapon === 'magicstaff') label.innerHTML = '<strong class="text-[#a855f7]">R</strong> HEAL';
-          else if (local.weapon === 'katana') label.innerHTML = '<strong class="text-[#f43f5e]">R</strong> IAI';
+          if (local.weapon === 'magicstaff') label.innerHTML = '<strong class="text-[#a855f7]">E</strong> HEAL';
+          else if (local.weapon === 'katana') label.innerHTML = '<strong class="text-[#f43f5e]">E</strong> IAI';
           else {
             const altLabel = local.weapon === 'sniper'
               ? 'BLINK'
               : AuxSkillConfig[local.weapon]?.alt?.label || '보조 스킬';
-            label.innerHTML = `<strong class="text-[#22c55e]">R</strong> ${altLabel}`;
+            label.innerHTML = `<strong class="text-[#22c55e]">E</strong> ${altLabel}`;
           }
         }
 
@@ -5749,8 +5770,8 @@ export class Game {
         if (label) {
           const tLabel = AuxSkillConfig[local.weapon]?.target?.label || '스킬';
           label.innerHTML = local.weapon === 'magicstaff'
-            ? '<strong class="text-[#93c5fd]">E</strong> ICE'
-            : `<strong class="text-[#93c5fd]">E</strong> ${tLabel}`;
+            ? '<strong class="text-[#93c5fd]">R</strong> ICE'
+            : `<strong class="text-[#93c5fd]">R</strong> ${tLabel}`;
         }
         const iceCd = local.weapon === 'magicstaff'
           ? local.magicCooldowns?.iceShard || 0

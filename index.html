@@ -473,7 +473,8 @@
             <li>조준: <span class="text-white">마우스 커서 위치</span></li>
             <li>평타: <span class="text-white">좌클릭</span></li>
             <li>대시: <span class="text-white">Shift</span> — 짧게 돌진하며 잠깐 무적!</li>
-            <li>스킬: <span class="text-white">F</span> — 무기마다 다른 고유 스킬 발동</li>
+            <li>강공격: <span class="text-white">평타 3연타</span> — 세 번째 타격이 강공격</li>
+            <li>스킬: <span class="text-white">F</span>(스킬1) · <span class="text-white">E</span>(스킬2) · <span class="text-white">R</span>(스킬3)</li>
             <li>목표: 끝없이 부활해 복수하며 처치 수를 획득하세요!</li>
           </ul>
         </div>
@@ -515,10 +516,11 @@
             <div class="flex items-center gap-2"><span class="inline-block min-w-[58px] text-center bg-[#14100b] border border-gray-500 text-[#e8d5a3] px-1.5 py-0.5">A · D</span> 이동</div>
             <div class="flex items-center gap-2"><span class="inline-block min-w-[58px] text-center bg-[#14100b] border border-gray-500 text-[#e8d5a3] px-1.5 py-0.5">W · Space</span> 점프 (꾹=높이)</div>
             <div class="flex items-center gap-2"><span class="inline-block min-w-[58px] text-center bg-[#14100b] border border-gray-500 text-[#e8d5a3] px-1.5 py-0.5">S · ↓</span> 아래로 내려가기</div>
-            <div class="flex items-center gap-2"><span class="inline-block min-w-[58px] text-center bg-[#14100b] border border-gray-500 text-[#e8d5a3] px-1.5 py-0.5">좌클릭</span> 평타</div>
+            <div class="flex items-center gap-2"><span class="inline-block min-w-[58px] text-center bg-[#14100b] border border-gray-500 text-[#e8d5a3] px-1.5 py-0.5">좌클릭</span> 평타 (3연타=강공격)</div>
             <div class="flex items-center gap-2"><span class="inline-block min-w-[58px] text-center bg-[#14100b] border border-gray-500 text-[#22d3ee] px-1.5 py-0.5">Shift</span> 대시 (회피)</div>
-            <div class="flex items-center gap-2"><span class="inline-block min-w-[58px] text-center bg-[#14100b] border border-gray-500 text-[#c9a227] px-1.5 py-0.5">F</span> 무기 스킬</div>
-            <div class="flex items-center gap-2"><span class="inline-block min-w-[58px] text-center bg-[#14100b] border border-gray-500 text-[#93c5fd] px-1.5 py-0.5">R</span> 보조 스킬</div>
+            <div class="flex items-center gap-2"><span class="inline-block min-w-[58px] text-center bg-[#14100b] border border-gray-500 text-[#c9a227] px-1.5 py-0.5">F</span> 스킬 1</div>
+            <div class="flex items-center gap-2"><span class="inline-block min-w-[58px] text-center bg-[#14100b] border border-gray-500 text-[#c9a227] px-1.5 py-0.5">E</span> 스킬 2</div>
+            <div class="flex items-center gap-2"><span class="inline-block min-w-[58px] text-center bg-[#14100b] border border-gray-500 text-[#93c5fd] px-1.5 py-0.5">R</span> 스킬 3</div>
             <div class="flex items-center gap-2"><span class="inline-block min-w-[58px] text-center bg-[#14100b] border border-gray-500 text-[#e8d5a3] px-1.5 py-0.5">무기</span> 우상단 버튼으로 교체</div>
           </div>
           <div id="onboardTip" class="mt-4 text-[11px] text-gray-400 text-center leading-snug">💡 공중에서 아래로 공격하면 <b class="text-[#7df09a]">포고 점프</b>로 튕겨오르고, 작살(F)로 <b class="text-[#7df09a]">그래플</b> 이동도 가능해요.</div>
@@ -658,7 +660,7 @@
         </div>
         <div id="hudTeleportRow" class="hidden">
           <div class="flex justify-between items-center text-[10px] text-gray-300 mb-1 mt-2">
-            <span><strong class="text-[#22c55e]">R</strong> 순간이동</span>
+            <span><strong class="text-[#22c55e]">E</strong> 순간이동</span>
             <span id="hudTeleportState" class="text-white">준비!</span>
           </div>
           <div class="w-full bg-[#14100b] h-2 border border-gray-600 overflow-hidden">
@@ -709,13 +711,13 @@
             <span class="text-base">평</span><span class="text-[8px]">ATK</span>
           </button>
           <button id="lmbBtn" class="mobile-action-btn mobile-action-top bg-[#2c2016] bg-opacity-80 border-2 border-[#c9a227] text-[#e6c75a] rounded-full font-mono font-bold uppercase leading-tight active:scale-90 transition-transform shadow-[0_0_12px_rgba(201,162,39,0.35)] flex flex-col items-center justify-center">
-            <span class="text-sm">E</span><span class="text-[8px]">TARGET</span>
+            <span class="text-sm">R</span><span class="text-[8px]">스킬3</span>
           </button>
           <button id="altSkillBtn" class="mobile-action-btn mobile-action-right bg-[#2c2016] bg-opacity-80 border-2 border-[#c9a227] text-[#e6c75a] rounded-full font-mono font-bold uppercase leading-tight active:scale-90 transition-transform shadow-[0_0_12px_rgba(201,162,39,0.35)] flex flex-col items-center justify-center">
-            <span class="text-base">R</span><span class="text-[8px]">ALT</span>
+            <span class="text-base">E</span><span class="text-[8px]">스킬2</span>
           </button>
           <button id="skillBtn" class="mobile-action-btn mobile-action-left bg-[#2c2016] bg-opacity-80 border-2 border-[#c9a227] text-[#c9a227] rounded-full font-mono font-bold uppercase leading-tight active:scale-90 transition-transform shadow-[0_0_12px_rgba(201,162,39,0.35)] flex flex-col items-center justify-center">
-            <span class="text-base">F</span><span class="text-[8px]">SKILL</span>
+            <span class="text-base">F</span><span class="text-[8px]">스킬1</span>
           </button>
           <button id="dashBtn" class="mobile-action-btn mobile-action-bottom bg-[#2c2016] bg-opacity-80 border-2 border-[#22d3ee] text-[#22d3ee] rounded-full font-mono font-bold uppercase leading-tight active:scale-90 transition-transform shadow-[0_0_12px_rgba(34,211,238,0.35)] flex flex-col items-center justify-center">
             <svg class="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">

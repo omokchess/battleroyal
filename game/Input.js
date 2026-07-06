@@ -288,11 +288,10 @@ export class Input {
 
       // Space = jump, Shift = dash, F = weapon skill (edge-triggered, ignore auto-repeat)
       if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat) this._requestDash();
+      // Skill scheme: F = 스킬1, E = 스킬2 (alt/held), R = 스킬3 (target cast).
       if (key === 'f' && !e.repeat) this._requestSkillDown();
-      if (key === 'r' && !e.repeat) this.teleportRequested = true;
-      // E = the click/target skill (was on LMB, which is now the basic attack).
-      // Casts in the current aim direction; no-op for weapons without one.
-      if (key === 'e' && !e.repeat) this._requestTargetCastDirection();
+      if (key === 'e' && !e.repeat) this.teleportRequested = true;
+      if (key === 'r' && !e.repeat) this._requestTargetCastDirection();
 
       // Prevent scrolling behaviors on gaming buttons
       if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(e.key.toLowerCase()) ||
@@ -308,7 +307,7 @@ export class Input {
       if (key === 'a' || e.key === 'ArrowLeft') this.keys.a = false;
       if (key === 'd' || e.key === 'ArrowRight') this.keys.d = false;
       if (key === 'f') this._requestSkillUp();
-      if (key === 'r') this.teleportUpRequested = true;
+      if (key === 'e') this.teleportUpRequested = true;   // 스킬2 release (held alt skills)
     };
 
     this._mouseMoveHandler = (e) => {

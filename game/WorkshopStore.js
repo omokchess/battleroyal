@@ -120,10 +120,12 @@ export function v2ToV1Runtime(w) {
   if (basic) motionSet.attack = { ...basic.motion, hitboxes: basic.hitboxes || [], flipXKeys: (basic.weaponTimeline && basic.weaponTimeline.flipXKeys) || [] };
   if (w.presets.dash) motionSet.dash = withFlip(w.presets.dash);
   for (const k of NONCOMBAT_PRESET_KINDS) if (w.presets[k]) motionSet[k] = withFlip(w.presets[k]);
-  // Combat skill/heavy preset motions → the runtime slots the animator plays via
-  // synced stick_motion triggers (skill1=F→'skill', skill2=R→'skill2', …).
-  const SKILL_MOTION_SLOT = { skill1: 'skill', skill2: 'skill2', skill3: 'skill3', heavy: 'heavy' };
+  // Combat skill preset motions → the runtime slots the animator plays via synced
+  // stick_motion triggers (skill1=F->'skill', skill2=E->'skill2', skill3=R->'skill3').
+  const SKILL_MOTION_SLOT = { skill1: 'skill', skill2: 'skill2', skill3: 'skill3' };
   for (const k of Object.keys(SKILL_MOTION_SLOT)) if (w.presets[k]) motionSet[SKILL_MOTION_SLOT[k]] = withFlip(w.presets[k]);
+  // Heavy (평타 3연타 finisher) keeps its OWN hitboxes for the 3rd-hit swing.
+  if (w.presets.heavy) motionSet.heavy = { ...w.presets.heavy.motion, hitboxes: w.presets.heavy.hitboxes || [], flipXKeys: (w.presets.heavy.weaponTimeline && w.presets.heavy.weaponTimeline.flipXKeys) || [] };
   const c = basic ? basic.combat : {};
   const stats = {
     maxHp: w.baseStats.maxHp, moveSpeed: w.baseStats.moveSpeed,
@@ -135,6 +137,13 @@ export function v2ToV1Runtime(w) {
   if (w.weaponVisual && (w.weaponVisual.imageId || w.weaponVisual.dual)) rt.weaponVisual = { imageId: w.weaponVisual.imageId || null, scale: w.weaponVisual.scale || 1, dual: !!w.weaponVisual.dual };
   // The primary (basic) preset's ranged/projectile config drives the basic attack.
   if (basic && basic.ranged && basic.projectile) { rt.ranged = true; rt.projectile = basic.projectile; }
+  // Heavy combat (3rd-hit finisher damage/knockback) — clampWorkshopWeapon drops
+  // unknown keys, so attach after it (mirrors ranged/weaponVisual).
+  if (w.presets.heavy && w.presets.heavy.combat) {
+    const hc = w.presets.heavy.combat;
+    rt.heavyDamage = Number.isFinite(hc.damage) ? hc.damage : null;
+    rt.heavyKnockback = Number(hc.knockback) || 0;
+  }
   return rt;
 }
 

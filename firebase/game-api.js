@@ -356,6 +356,13 @@ export async function publishWorkshopWeapon(def, authorName = 'Player') {
       stats: def?.stats || {},
       data: def?.motionSet || {},
       blocks: def?.blocks || null,        // block-gimmick AST (sanitized on load by the VM)
+      // V2 fields (re-clamped on load by clampWorkshopWeaponV2). imageId only —
+      // never raw image binary. Presets already bounded (effects/keyframes/blocks).
+      schemaVersion: def?.schemaVersion === 2 ? 2 : 1,
+      category: def?.category || null,
+      baseStats: def?.baseStats || null,
+      presets: def?.presets || null,
+      weaponVisual: def?.weaponVisual || null,
       likes: snap.exists() ? Number(snap.data().likes || 0) : 0,
       plays: snap.exists() ? Number(snap.data().plays || 0) : 0,
       reports: snap.exists() ? Number(snap.data().reports || 0) : 0,
@@ -369,10 +376,19 @@ export async function publishWorkshopWeapon(def, authorName = 'Player') {
 }
 
 function wsRow(id, d) {
-  return { id, author_id: d.author_id, author_name: d.author_name || 'Player',
+  const row = { id, author_id: d.author_id, author_name: d.author_name || 'Player',
     name: d.name || '무기', desc: d.desc || '', color: d.color || null,
     stats: d.stats || {}, motionSet: d.data || {}, blocks: d.blocks || null,
     likes: Number(d.likes || 0), plays: Number(d.plays || 0), status: d.status || 'published' };
+  // Carry V2 fields when present; toWorkshopWeaponV2 migrates V1 rows on the client.
+  if (Number(d.schemaVersion) === 2) {
+    row.schemaVersion = 2;
+    row.category = d.category || 'melee';
+    row.baseStats = d.baseStats || {};
+    row.presets = d.presets || {};
+    if (d.weaponVisual) row.weaponVisual = d.weaponVisual;
+  }
+  return row;
 }
 
 /** Browse published workshop weapons (sort: 'likes' | 'created_at'). */

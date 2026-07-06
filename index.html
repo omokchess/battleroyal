@@ -1123,6 +1123,15 @@
                 <label class="block text-[10px] text-gray-300"><span class="flex justify-between"><span>대시 거리</span><b id="ms_dashDistance_v" class="text-[#e8d5a3]">120</b></span>
                   <input id="ms_dashDistance" type="range" min="0" max="320" step="5" class="w-full"/></label>
               </div>
+              <!-- 프레임 이펙트 (코스메틱) -->
+              <div id="meEffectsBlock" class="mt-1 border-t border-gray-800 pt-1">
+                <div class="flex items-center justify-between">
+                  <span class="text-[9px] text-[#ffd24a] uppercase font-bold">✨ 이펙트 (현재 시점)</span>
+                  <button id="meEffectAdd" class="bg-[#14100b] hover:bg-gray-800 border border-[#ffd24a] text-[#ffd24a] text-[9px] px-1.5 py-0.5 cursor-pointer active:scale-95">＋ 추가</button>
+                </div>
+                <select id="meEffectAsset" class="bg-[#14100b] border border-gray-600 text-white text-[9px] px-1 py-0.5 w-full mt-1"><option value="spark">반짝임</option><option value="slash">베기</option><option value="burst">폭발</option><option value="ring">링</option><option value="smoke">연기</option></select>
+                <div id="meEffectList" class="mt-1 flex flex-col gap-0.5 max-h-16 overflow-y-auto"></div>
+              </div>
               <button id="meBlockBtn" class="w-full bg-[#14100b] hover:bg-gray-800 border border-[#45f3ff] text-[#45f3ff] text-[10px] py-2 cursor-pointer active:scale-95 mt-1">⚙ 이 프리셋 기믹 코딩 <span id="meBlockCount" class="text-gray-400 normal-case"></span></button>
             </div>
 

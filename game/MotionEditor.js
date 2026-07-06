@@ -21,7 +21,7 @@
 import { solveStickman, drawStickFromJoints, samplePose, STICK_NEUTRAL, WEAPON_STICK_COLOR } from './Stickman.js';
 import { resolveMotion, weaponSetId, sanitizeMotion, registerMotionSet, MOTION_LIMITS, setCanonicalWeapon } from './Motion.js';
 import { captureMotionFromWebcam } from './PoseCapture.js';
-import { drawProjectileShape } from './ProjectileArt.js';
+import { drawProjectileShape, drawFxShape } from './ProjectileArt.js';
 import { equippedStickLook, saveStickLook } from './StickLook.js';
 import { clampWorkshopStats, statCost, enforceBudget, clampWorkshopWeapon, POINT_BUDGET, toWorkshopWeaponV2, clampWorkshopWeaponV2, COMBAT_PRESET_KINDS, NONCOMBAT_PRESET_KINDS, PRIMARY_PRESET_KEYS, PRESET_LABELS, ALL_PRESET_KINDS, makeEmptyWeaponV2, makeEmptyPreset, statCostV2, sanitizeCombat, VALID_STATUS, sanitizeFlipKeys, sampleFlip } from './Workshop.js';
 import { saveWorkshopWeaponLocal, equipWorkshopWeaponLocal, v2ToV1Runtime } from './WorkshopStore.js';
@@ -205,6 +205,7 @@ export class MotionEditor {
     $('meUpload')?.addEventListener('click', () => { if (this.mode === 'workshop') this._uploadWorkshop(); else this._setStatus('업로드는 공방 무기에서만 가능합니다.'); });
     $('meTutReplay')?.addEventListener('click', () => this._tutStart());
     $('meFlipToggle')?.addEventListener('click', () => this._toggleFlipAt(this.scrubT));
+    $('meEffectAdd')?.addEventListener('click', () => this._addEffect());
     // Ranged / projectile controls (per combat preset).
     $('ms_ranged')?.addEventListener('change', (e) => this._setRanged(e.target.checked));
     const pjInput = (id, field, num) => $(id)?.addEventListener('input', (e) => this._setProjectile(field, num ? parseFloat(e.target.value) : e.target.value));
@@ -264,7 +265,9 @@ export class MotionEditor {
     $('ms_status')?.addEventListener('change', (e) => this._updateStat('status', e.target.value));
     $('meBlockBtn')?.addEventListener('click', () => {
       if (!this.blockEditor) this.blockEditor = new BlockEditor();
-      this.blockEditor.open(this.blocks, 'workshop', (ast) => { this.blocks = ast; this._updateBlockCount(); }, this.stats);
+      const stats = this._editingV2 ? { ...this._editingV2.baseStats, ...(this._activeCombatPreset()?.combat || {}) } : this.stats;
+      // Scope the block palette to THIS preset's events (평타 기믹 vs 스킬1 기믹 …).
+      this.blockEditor.open(this.blocks, 'workshop', (ast) => { this.blocks = ast; this._updateBlockCount(); }, stats, this._activeKey);
     });
 
     $('meColor')?.addEventListener('input', (e) => applyLook({ color: e.target.value }));
@@ -606,6 +609,7 @@ export class MotionEditor {
     this._syncBaseSliders();
     if (isCombat) { this._syncCombatSliders(p.combat); this._syncProjectilePanel(p); }
     else { document.getElementById('meProjectilePanel')?.classList.add('hidden'); }
+    this._renderEffectList();
     if (isDash && $('ms_dashDistance')) { $('ms_dashDistance').value = String(p.dashDistance || 120); if ($('ms_dashDistance_v')) $('ms_dashDistance_v').textContent = p.dashDistance || 120; }
     $('meCombatStats')?.classList.toggle('hidden', !isCombat);
     $('meDashStats')?.classList.toggle('hidden', !isDash);
@@ -682,6 +686,44 @@ export class MotionEditor {
     } else {
       const w = hb.width ?? 24, h = hb.height ?? 12;
       ctx.fillRect(cx + (hb.x || 0) - w / 2, cy + (hb.y || 0) - h / 2, w, h); ctx.strokeRect(cx + (hb.x || 0) - w / 2, cy + (hb.y || 0) - h / 2, w, h);
+    }
+  }
+
+  // ── Frame effects (cosmetic, per preset) ───────────────────────────────────
+  _activePreset() { return this._editingV2 && this._editingV2.presets[this._activeKey]; }
+  _addEffect() {
+    const p = this._activePreset(); if (!p) return;
+    p.effects = p.effects || [];
+    if (p.effects.length >= 24) { this._setStatus('이펙트는 최대 24개입니다.'); return; }
+    const assetId = document.getElementById('meEffectAsset')?.value || 'spark';
+    p.effects.push({ time: Math.round(this.scrubT * 1000) / 1000, assetId, x: 0, y: 0, scale: 1, rotation: 0, alpha: 1, followBone: 'weaponTip' });
+    p.effects.sort((a, b) => a.time - b.time);
+    this._renderEffectList(); this._renderPreview();
+    this._setStatus(`이펙트 "${assetId}" 추가 @ ${(this.scrubT * 100).toFixed(0)}%.`);
+  }
+  _renderEffectList() {
+    const host = document.getElementById('meEffectList'); const p = this._activePreset();
+    if (!host) return;
+    const list = (p && p.effects) || [];
+    host.innerHTML = list.map((e, i) => `<div class="flex items-center gap-1 text-[9px] text-gray-300" data-fx="${i}">
+      <span class="text-[#ffd24a]">${(e.time * 100).toFixed(0)}%</span><span class="flex-1 truncate">${escOpt(e.assetId)}</span>
+      <button class="text-gray-600 hover:text-red-400 px-1" data-fxdel="${i}">✕</button></div>`).join('') ||
+      '<span class="text-[9px] text-gray-600">없음</span>';
+    host.querySelectorAll('[data-fxdel]').forEach(b => b.addEventListener('click', () => {
+      const i = Number(b.dataset.fxdel); if (p && p.effects) { p.effects.splice(i, 1); this._renderEffectList(); this._renderPreview(); }
+    }));
+  }
+  /** Draw a preset's effects near their followBone at the current scrub time. */
+  _drawEffects(ctx, joints, scale) {
+    const p = this._activePreset(); if (!p || !Array.isArray(p.effects)) return;
+    const t = this.playing ? this.scrubT : (this.motion.keyframes[this.selKf]?.t ?? this.scrubT);
+    for (const e of p.effects) {
+      if (Math.abs(e.time - t) > 0.08) continue;   // show near its frame
+      const bone = joints[e.followBone] || joints.handN || joints.pelvis; if (!bone) continue;
+      const x = bone.x + (e.x || 0) * (scale / 46), y = bone.y + (e.y || 0) * (scale / 46);
+      ctx.save(); ctx.globalAlpha = e.alpha ?? 1; ctx.translate(x, y); ctx.rotate((e.rotation || 0) * Math.PI / 180);
+      drawFxShape(ctx, e.assetId, 18 * (e.scale || 1));
+      ctx.restore();
     }
   }
 
@@ -1113,6 +1155,7 @@ export class MotionEditor {
     const { joints, headR } = solveStickman(pose, scale, cx, cyCenter, 1, { rawNearArm: true, weapon: this.weapon });
     const color = this.look.color || WEAPON_STICK_COLOR[this.weapon] || '#cdd3da';
     drawStickFromJoints(ctx, joints, headR, { color, accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory, weaponImage: wimg, weaponImageSize: wsize, weaponImageAnchors: wanch, weaponFlip: wflip });
+    if (this.mode === 'workshop') this._drawEffects(ctx, joints, scale);   // cosmetic frame FX
 
     // Joint handles (only when a keyframe is selected & not playing).
     if (!this.playing && this.motion.keyframes[this.selKf]) {

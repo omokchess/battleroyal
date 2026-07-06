@@ -109,6 +109,15 @@ const DEFS = {
 // op → def id (for import).
 const OP2ID = {}; for (const id in DEFS) OP2ID[DEFS[id].op] = id;
 
+// Which weapon EVENT hats each preset may use (평타 프리셋엔 F스킬 이벤트 숨김 등).
+// Reaction events (onHit/onKill/onTick/projectileHit/onSignal) are shared.
+const SHARED_EVENTS = ['onHit', 'onKill', 'onTick', 'projectileHit', 'onSignal'];
+const PRESET_EVENTS = {
+  basic: ['basicAttack', ...SHARED_EVENTS], heavy: ['basicAttack', ...SHARED_EVENTS],
+  skill1: ['skillF', ...SHARED_EVENTS], skill2: ['skillR', ...SHARED_EVENTS], skill3: ['skillF', 'skillR', ...SHARED_EVENTS],
+  dash: ['onTick', 'onSignal'],
+};
+
 function ensureStyles() {
   if (document.getElementById('beStyles')) return;
   const st = document.createElement('style'); st.id = 'beStyles';
@@ -175,11 +184,12 @@ export class BlockEditor {
     if (tabs) { tabs.innerHTML = ''; for (const k in CATN) { const t = document.createElement('button'); t.className = 'med-btn text-[10px] px-2 py-1'; t.dataset.cat = k; t.innerHTML = `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${C[k]};margin-right:3px"></span>${CATN[k]}`; t.addEventListener('click', () => { this.cat = k; this._renderPalette(); this._syncTabs(); }); tabs.appendChild(t); } }
   }
 
-  open(ast, tier = 'workshop', onSave = null, stats = null) {
+  open(ast, tier = 'workshop', onSave = null, stats = null, presetKey = null) {
     if (!this.root) return;
     this.tier = VM_LIMITS[tier] ? tier : 'workshop';
     this.onSave = onSave;
     this.stats = stats || { damage: 18, cooldownMs: 600 };
+    this.presetKey = presetKey;   // scope the event palette to this preset (or null = all)
     document.getElementById('beBlockMax').textContent = VM_LIMITS[this.tier].maxBlocks;
     this.stack = this.ws.querySelector('.stack');
     if (!this.stack) { this.stack = document.createElement('div'); this.stack.className = 'stack'; this.ws.innerHTML = ''; this.ws.appendChild(this.stack); this._dz(this.stack); }
@@ -547,6 +557,8 @@ export class BlockEditor {
       // weapon's own event hats only in the weapon context.
       if (this.ctxKind === 'entity') { if (d.scope === 'main') continue; }
       else if (d.scope === 'entity') continue;
+      // Preset-scoped events: hide event hats that don't belong to this preset.
+      if (this.ctxKind === 'main' && d.hat && this.presetKey && PRESET_EVENTS[this.presetKey] && !PRESET_EVENTS[this.presetKey].includes(d.op)) continue;
       const p = document.createElement('div');
       p.className = 'be-blk' + (d.hat ? ' be-hat' : '') + (d.rep ? ' be-rep' : '') + (d.bool ? ' be-bool' : '');
       p.style.background = C[d.cat];

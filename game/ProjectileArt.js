@@ -49,3 +49,17 @@ export function drawProjectileShape(ctx, x, y, angle, imageId, size = 20) {
   }
   ctx.restore();
 }
+
+const FX_COL = { spark: '#ffe08a', slash: '#e5e7eb', burst: '#ff7a3d', ring: '#7fd3ff', smoke: '#9ca3af' };
+/** Draw a cosmetic frame-effect shape centred at the current ctx origin. */
+export function drawFxShape(ctx, assetId, size = 18) {
+  const col = FX_COL[assetId] || FX_COL.spark; const r = Math.max(4, size);
+  ctx.fillStyle = col; ctx.strokeStyle = col;
+  switch (assetId) {
+    case 'slash': ctx.lineWidth = Math.max(2, r * 0.18); ctx.beginPath(); ctx.arc(0, 0, r, -0.8, 0.8); ctx.stroke(); break;
+    case 'burst': for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r); ctx.lineWidth = 2; ctx.stroke(); } break;
+    case 'ring': ctx.lineWidth = Math.max(2, r * 0.16); ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke(); break;
+    case 'smoke': ctx.globalAlpha *= 0.5; for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc((i - 1) * r * 0.5, 0, r * 0.5, 0, Math.PI * 2); ctx.fill(); } break;
+    default: for (let i = 0; i < 4; i++) { const a = i / 4 * Math.PI * 2 + Math.PI / 4; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r); ctx.lineWidth = 2; ctx.stroke(); } // spark
+  }
+}

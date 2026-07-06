@@ -156,7 +156,10 @@ export function isAdminUser() {
 //    balance envelope so a tampered Firestore doc can never enter the game unsafe.
 function clampFetched(w) {
   const safe = clampWorkshopWeapon({ name: w.name, desc: w.desc, color: w.color, stats: w.stats, motionSet: w.motionSet, blocks: w.blocks });
-  return { id: w.id, author_id: w.author_id, author_name: w.author_name, likes: w.likes, plays: w.plays, status: w.status, ...safe };
+  const out = { id: w.id, author_id: w.author_id, author_name: w.author_name, likes: w.likes, plays: w.plays, status: w.status, ...safe };
+  // Preserve V2 fields so 무기고에 추가 (importWorkshopWeapon) migrates them faithfully.
+  if (Number(w.schemaVersion) === 2) { out.schemaVersion = 2; out.category = w.category; out.baseStats = w.baseStats; out.presets = w.presets; if (w.weaponVisual) out.weaponVisual = w.weaponVisual; }
+  return out;
 }
 export function publishMyWorkshopWeapon(def) { return publishWorkshopWeapon(def, getUsername()); }
 export async function browseWorkshopWeapons(sort = 'likes', max = 40) { return (await fetchPublishedWorkshopWeapons(sort, max)).map(clampFetched); }

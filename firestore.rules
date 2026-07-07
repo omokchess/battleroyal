@@ -20,7 +20,7 @@ service cloud.firestore {
     function weaponImageWithinLimit(data) {
       return !('weaponImage' in data)
           || data.weaponImage == null
-          || data.weaponImage.get('src', '').size() < 500000;
+          || data.weaponImage.get('src', '').size() < 900000;
     }
 
     match /items/{itemId} {

@@ -34,7 +34,7 @@ export function invalidateWeaponImage(imageId) { cache.delete(imageId); }
 // Shared byte budget for a custom weapon image dataURL — kept the same on the
 // upload side (this file) and the Firestore rule, so nothing gets silently
 // rejected downstream after clearing this check.
-export const WEAPON_IMAGE_BUDGET = 350000;
+export const WEAPON_IMAGE_BUDGET = 850000;
 
 /**
  * Re-encode a dataURL to fit under `maxBytes` by progressively downscaling —

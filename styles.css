@@ -1199,6 +1199,10 @@ html.touch-ui #weaponPanelBackdrop.open { display: block !important; } /* re-ena
 .armory-head { display: flex; gap: 12px; align-items: flex-start; }
 .armory-sprite { width: 84px; height: 84px; flex: none; display: flex; align-items: center; justify-content: center; }
 .armory-sprite img { width: 80%; height: 80%; object-fit: contain; image-rendering: pixelated; }
+.armory-workshop-img { width: 86%; height: 86%; object-fit: contain; image-rendering: pixelated; }
+.workshop-card-img { width: min(76%, 96px); height: min(76%, 96px); object-fit: contain; image-rendering: pixelated; }
+.workshop-list-thumb { width: 42px; height: 42px; display: flex; align-items: center; justify-content: center; }
+.workshop-list-img { width: 86%; height: 86%; object-fit: contain; image-rendering: pixelated; }
 .armory-tag { display: inline-block; font-size: 10px; font-family: var(--font-mono); padding: 2px 7px; border: 1px solid currentColor; }
 
 /* Stat bars */

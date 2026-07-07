@@ -19,7 +19,7 @@
  */
 
 import { solveStickman, drawStickFromJoints, samplePose, STICK_NEUTRAL, WEAPON_STICK_COLOR } from './Stickman.js';
-import { resolveMotion, weaponSetId, sanitizeMotion, registerMotionSet, MOTION_LIMITS, setCanonicalWeapon } from './Motion.js';
+import { resolveMotion, weaponSetId, sanitizeMotion, registerMotionSet, MOTION_LIMITS, setCanonicalWeapon, sampleRootOffset } from './Motion.js';
 import { captureMotionFromWebcam } from './PoseCapture.js';
 import { drawProjectileShape, drawFxShape } from './ProjectileArt.js';
 import { equippedStickLook, saveStickLook } from './StickLook.js';
@@ -30,7 +30,7 @@ import { shrinkDataUrlToBudget, WEAPON_IMAGE_BUDGET } from './WeaponImages.js';
 // legacy-named helpers so existing import sites (main.js) keep working.
 export { equippedWorkshopWeapon, equipWorkshopWeapon, clearWorkshopWeapon, equippedWorkshopWeaponName } from './WorkshopStore.js';
 
-const MAX_KF = 16;                                 // editor keyframe budget (admin authoring)
+const MAX_KF = 64;                                 // editor keyframe budget (admin authoring)
 const HIT_WINDOW = { start: 0.3, end: 0.7 };       // fixed cosmetic impact band (normalized)
 const STORE_SETS = 'pixelroyale_motionsets_v1';    // { id: { attack: motion } }
 const STORE_EQUIP = 'pixelroyale_equipped_motion_v1';
@@ -175,6 +175,7 @@ export class MotionEditor {
     this.dragKfIndex = -1;
     this.dragImpact = false;
     this.dragHitbox = null;     // 'move' | 'resize' | 'aStart' | 'aEnd'
+    this._selectedHitboxIndex = -1;
     this._selectedEffectIndex = -1;
     this._raf = null;
     this._lastT = 0;
@@ -498,6 +499,7 @@ export class MotionEditor {
     const ws = this.mode === 'workshop';
     $('meStatsPanel')?.classList.toggle('hidden', !ws);
     $('mePresetBar')?.classList.toggle('hidden', !ws);
+    $('meEffectsBlock')?.classList.toggle('hidden', !ws);
     $('meLegacyPresetBlock')?.classList.toggle('hidden', ws);   // V2 preset bar replaces it in workshop
     const title = this.root.querySelector('h2'); if (title) title.textContent = ws ? '🔧 무기 공방' : '🎬 모션 에디터';
     if (ws) {
@@ -622,9 +624,14 @@ export class MotionEditor {
     this._flipKeys = (p.weaponTimeline && Array.isArray(p.weaponTimeline.flipXKeys)) ? p.weaponTimeline.flipXKeys.map(k => ({ ...k })) : [];
     this._previewOffset = p.previewOffset ? { ...p.previewOffset } : { x: 0, y: 0 };
     this.selKf = 0; this.scrubT = this.motion.keyframes[0]?.t || 0; this.playing = false;
+    this._selectedHitboxIndex = -1;
+    this._selectHitboxForTime(this.scrubT);
     this._syncBaseSliders();
     if (isCombat) { this._syncCombatSliders(p.combat); this._syncProjectilePanel(p); }
-    else { document.getElementById('meProjectilePanel')?.classList.add('hidden'); }
+    else {
+      document.getElementById('meProjectilePanel')?.classList.add('hidden');
+      document.getElementById('meTeleportPanel')?.classList.add('hidden');
+    }
     this._renderEffectList();
     if (isDash && $('ms_dashDistance')) { $('ms_dashDistance').value = String(p.dashDistance || 120); if ($('ms_dashDistance_v')) $('ms_dashDistance_v').textContent = p.dashDistance || 120; }
     $('meCombatStats')?.classList.toggle('hidden', !isCombat);
@@ -639,8 +646,9 @@ export class MotionEditor {
   _setRanged(on) {
     const p = this._activeCombatPreset(); if (!p) return;
     p.ranged = !!on;
-    document.getElementById('meProjectilePanel')?.classList.toggle('hidden', !on);
-    if (on) this._renderProjectilePreview();
+    document.getElementById('meProjectilePanel')?.classList.remove('hidden');
+    document.getElementById('meTeleportPanel')?.classList.remove('hidden');
+    this._renderProjectilePreview();
     this._setStatus(on ? '원거리 공격 켜짐 — 투사체 설정을 조절하세요.' : '근접 공격으로 전환.');
   }
   _setProjectile(field, value) {
@@ -669,7 +677,8 @@ export class MotionEditor {
     const $ = (id) => document.getElementById(id);
     const ranged = !!(p && p.ranged);
     if ($('ms_ranged')) $('ms_ranged').checked = ranged;
-    $('meProjectilePanel')?.classList.toggle('hidden', !ranged);
+    $('meProjectilePanel')?.classList.remove('hidden');
+    $('meTeleportPanel')?.classList.remove('hidden');
     const pj = (p && p.projectile) || {};
     const hb = pj.hitbox || {};
     this._populateProjectileSelect(pj.imageId || 'arrow');
@@ -688,7 +697,7 @@ export class MotionEditor {
     if ($('tp_distance')) $('tp_distance').value = String(80);
     if ($('tp_directionSource')) $('tp_directionSource').value = 'cursor';
     this._syncFrameEventLists();
-    if (ranged) this._renderProjectilePreview();
+    this._renderProjectilePreview();
   }
 
   _populateProjectileSelect(value = 'arrow') {
@@ -727,7 +736,7 @@ export class MotionEditor {
     });
     p.teleportEvents = sanitizeTeleportEvents(events);
     this._syncFrameEventLists();
-    this._setStatus(`현재 프레임에 텔레포트 이벤트를 추가했습니다 (${p.teleportEvents.length}/5).`);
+    this._setStatus(`현재 프레임에 텔레포트 이벤트를 추가했습니다 (${this._frameLabelForTime(this.scrubT || 0)}, ${p.teleportEvents.length}/5).`);
   }
 
   _syncFrameEventLists() {
@@ -736,7 +745,7 @@ export class MotionEditor {
     const tpList = document.getElementById('tp_event_list');
     const render = (events, type) => events.length ? events.map((ev, i) =>
       `<button type="button" data-event-type="${type}" data-event-index="${i}" class="mr-1 mb-1 px-1 py-0.5 border border-gray-700 hover:border-red-400 text-left">`
-      + `${Math.round((ev.time || 0) * 100)}% ${type === 'projectile' ? '발사' : `이동 ${Math.round(ev.distance || 0)}px`} ✕</button>`).join('') : '<span class="text-gray-600">등록된 이벤트 없음</span>';
+      + `${type === 'teleport' ? this._frameLabelForTime(ev.time || 0) : `${Math.round((ev.time || 0) * 100)}%`} ${type === 'projectile' ? '발사' : `이동 ${Math.round(ev.distance || 0)}px`} ✕</button>`).join('') : '<span class="text-gray-600">등록된 이벤트 없음</span>';
     if (pjList) pjList.innerHTML = render(sanitizeProjectileEvents(p?.projectileEvents || []), 'projectile');
     if (tpList) tpList.innerHTML = render(sanitizeTeleportEvents(p?.teleportEvents || []), 'teleport');
     const remove = (e) => this._removeFrameEvent(e);
@@ -1105,6 +1114,7 @@ export class MotionEditor {
     this.selKf = 0;
     this.scrubT = this.motion.keyframes[0]?.t || 0;
     this.playing = false;
+    this._selectedHitboxIndex = -1;
     const dur = document.getElementById('meDuration');
     if (dur) { dur.value = String(this.motion.duration); }
     const dv = document.getElementById('meDurationVal'); if (dv) dv.textContent = this.motion.duration.toFixed(2) + 's';
@@ -1180,6 +1190,8 @@ export class MotionEditor {
     this.motion = sanitizeMotion(p.motion, undefined, { allowGameplay: true });
     if (!this.motion.events.some(e => e.type === 'impact')) this.motion.events.push({ t: (HIT_WINDOW.start + HIT_WINDOW.end) / 2, type: 'impact' });
     this.selKf = 0; this.scrubT = this.motion.keyframes[0]?.t || 0; this.playing = false;
+    this._selectedHitboxIndex = -1;
+    this._selectHitboxForTime(this.scrubT);
     const dur = document.getElementById('meDuration'); if (dur) dur.value = String(this.motion.duration);
     const dv = document.getElementById('meDurationVal'); if (dv) dv.textContent = this.motion.duration.toFixed(2) + 's';
     const nm = document.getElementById('meName'); if (nm) nm.value = p.name;
@@ -1228,22 +1240,105 @@ export class MotionEditor {
     }
   }
 
-  // --- Hitbox (admin canonical gameplay) -------------------------------------
-  _hb() { return (this.motion.hitboxes && this.motion.hitboxes[0]) || null; }
-
-  /** Add a default hitbox to the attack motion, or remove the existing one
-   *  (MVP = a single hitbox). World px relative to the player centre. */
-  _toggleHitbox() {
+  // --- Hitbox (gameplay, per-frame editable) ---------------------------------
+  _currentMotionTime() {
+    if (this.playing) return this.scrubT || 0;
+    return this.motion?.keyframes?.[this.selKf]?.t ?? this.scrubT ?? 0;
+  }
+  _hitboxes() {
+    if (!this.motion) return [];
     if (!Array.isArray(this.motion.hitboxes)) this.motion.hitboxes = [];
-    if (this.motion.hitboxes.length) {
-      this.motion.hitboxes = [];
-      this._setStatus('히트박스 제거됨. 이 무기는 기본 판정으로 돌아갑니다.');
+    return this.motion.hitboxes;
+  }
+  _activeHitboxIndexAt(t = this._currentMotionTime()) {
+    const hbs = this._hitboxes();
+    return hbs.findIndex(hb => hb && t >= hb.activeStart && t <= hb.activeEnd);
+  }
+  _selectHitboxForTime(t = this._currentMotionTime()) {
+    const active = this._activeHitboxIndexAt(t);
+    if (active >= 0) this._selectedHitboxIndex = active;
+    else if (this._selectedHitboxIndex >= this._hitboxes().length) this._selectedHitboxIndex = -1;
+  }
+  _hb() {
+    const hbs = this._hitboxes();
+    if (!hbs.length) return null;
+    if (this._selectedHitboxIndex >= 0 && this._selectedHitboxIndex < hbs.length) return hbs[this._selectedHitboxIndex];
+    this._selectHitboxForTime();
+    return hbs[this._selectedHitboxIndex] || null;
+  }
+
+  _frameLabelForTime(t = this._currentMotionTime()) {
+    const kfs = this.motion?.keyframes || [];
+    if (!kfs.length) return '0프레임';
+    let best = 0, bestD = Infinity;
+    for (let i = 0; i < kfs.length; i++) {
+      const d = Math.abs((kfs[i].t || 0) - t);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return `${best + 1}프레임`;
+  }
+
+  _rootForKeyframe(kf) {
+    if (!kf) return { x: 0, y: 0 };
+    if (!kf.root || typeof kf.root !== 'object') kf.root = { x: 0, y: 0 };
+    kf.root.x = clamp(Number(kf.root.x) || 0, -MOTION_LIMITS.rootOffsetMax, MOTION_LIMITS.rootOffsetMax);
+    kf.root.y = clamp(Number(kf.root.y) || 0, -MOTION_LIMITS.rootOffsetMax, MOTION_LIMITS.rootOffsetMax);
+    return kf.root;
+  }
+
+  _currentRootOffset(t = this._currentMotionTime()) {
+    if (!this.playing) {
+      const kf = this.motion?.keyframes?.[this.selKf];
+      if (kf) return this._rootForKeyframe(kf);
+    }
+    return sampleRootOffset(this.motion, t);
+  }
+
+  _teleportPreviewOffset(t = this._currentMotionTime()) {
+    const p = this._activeCombatPreset();
+    const events = sanitizeTeleportEvents(p?.teleportEvents || []);
+    let x = 0, y = 0;
+    for (const ev of events) {
+      if ((ev.time || 0) > t + 1e-5) continue;
+      const dist = Number(ev.distance) || 0;
+      let angle = 0;
+      if (ev.directionSource === 'back') angle = Math.PI;
+      else if (ev.directionSource === 'up') angle = -Math.PI / 2;
+      else if (ev.directionSource === 'down') angle = Math.PI / 2;
+      else if (ev.directionSource === 'angle' && Number.isFinite(ev.angle)) angle = ev.angle * DEG;
+      x += Math.cos(angle) * dist;
+      y += Math.sin(angle) * dist;
+    }
+    return { x, y };
+  }
+
+  /** Add/remove a hitbox at the current frame. Multiple hitboxes let one motion
+   *  use different geometry on different frames, while the runtime still applies
+   *  damage only once per target per swing. */
+  _toggleHitbox() {
+    const hbs = this._hitboxes();
+    const t = clamp(this._currentMotionTime(), 0, 1);
+    const active = this._activeHitboxIndexAt(t);
+    if (active >= 0) {
+      hbs.splice(active, 1);
+      this._selectedHitboxIndex = -1;
+      this._setStatus(`현재 프레임의 히트박스를 제거했습니다. (${hbs.length}/${MOTION_LIMITS.maxHitboxes})`);
     } else {
-      this.motion.hitboxes = [{ ox: 30, oy: -6, w: 52, h: 44, activeStart: 0.35, activeEnd: 0.6 }];
-      this._setStatus('히트박스 추가됨. 빨간 상자를 끌어 위치·크기를, 타임라인 주황 띠로 활성 구간을 잡으세요.');
+      if (hbs.length >= MOTION_LIMITS.maxHitboxes) {
+        this._setStatus(`히트박스는 최대 ${MOTION_LIMITS.maxHitboxes}개입니다. 필요 없는 프레임 판정을 먼저 지워 주세요.`);
+        return;
+      }
+      const src = hbs[this._selectedHitboxIndex] || hbs[hbs.length - 1] || { ox: 30, oy: -6, w: 52, h: 44 };
+      const span = 0.07;
+      const activeStart = clamp(t - span / 2, 0, 1);
+      const activeEnd = clamp(Math.max(activeStart + 0.02, t + span / 2), 0, 1);
+      hbs.push({ ox: src.ox, oy: src.oy, w: src.w, h: src.h, activeStart, activeEnd });
+      hbs.sort((a, b) => a.activeStart - b.activeStart);
+      this._selectedHitboxIndex = hbs.findIndex(hb => hb.activeStart === activeStart && hb.activeEnd === activeEnd);
+      this._setStatus(`현재 프레임에 히트박스를 추가했습니다. 빨간 상자를 끌어 위치·크기를 조절하세요. (${hbs.length}/${MOTION_LIMITS.maxHitboxes})`);
     }
     const btn = document.getElementById('meAddHitbox');
-    if (btn) btn.textContent = this.motion.hitboxes.length ? '－ 제거' : '＋ 추가';
+    if (btn) btn.textContent = this._activeHitboxIndexAt(this._currentMotionTime()) >= 0 ? '－ 현재 판정 제거' : '＋ 현재 프레임 판정';
     this._renderAll();
   }
 
@@ -1266,9 +1361,13 @@ export class MotionEditor {
     ctx.beginPath(); ctx.moveTo(0, H - 30); ctx.lineTo(W, H - 30); ctx.stroke();
 
     const scale = Math.round(H * 0.114);                // stickman scales with the canvas (404→46)
-    // previewOffset is a VISUAL root shift (편집 편의) — it never touches the game.
-    const po = this._previewOffset || { x: 0, y: 0 };
-    const cx = W / 2 + po.x, cyCenter = H - 30 - scale * 1.28 + po.y; // body centre so feet sit on the ground line
+    const W2E = scale / 14;
+    this._lastW2E = W2E;
+    const tNow = this._currentMotionTime();
+    const root = this._currentRootOffset(tNow);
+    const tp = this._teleportPreviewOffset(tNow);
+    const cx = W / 2 + (root.x + tp.x) * W2E;
+    const cyCenter = H - 30 - scale * 1.28 + (root.y + tp.y) * W2E; // body centre so feet sit on the ground line
     const wrec = this._customWeapon(this.weapon);             // custom weapon record (or null)
     const wimg = this._weaponImage();                         // its image (or null)
     const wsize = wrec?.size ?? 2.0;
@@ -1281,7 +1380,11 @@ export class MotionEditor {
     if (this.onion && !this.playing && this.motion.keyframes[this.selKf] && this.selKf > 0) {
       const prev = this.motion.keyframes[this.selKf - 1];
       if (prev) {
-        const pj = solveStickman({ ...STICK_NEUTRAL, ...prev.pose }, scale, cx, cyCenter, 1, { rawNearArm: true, weapon: this.weapon });
+        const prevRoot = sampleRootOffset(this.motion, prev.t);
+        const prevTp = this._teleportPreviewOffset(prev.t);
+        const pcx = W / 2 + (prevRoot.x + prevTp.x) * W2E;
+        const pcy = H - 30 - scale * 1.28 + (prevRoot.y + prevTp.y) * W2E;
+        const pj = solveStickman({ ...STICK_NEUTRAL, ...prev.pose }, scale, pcx, pcy, 1, { rawNearArm: true, weapon: this.weapon });
         ctx.save(); ctx.globalAlpha = 0.3;
         drawStickFromJoints(ctx, pj.joints, pj.headR, { color: '#6f8cff', accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory, weaponImage: wimg, weaponImageSize: wsize, weaponImageAnchors: wanch, weaponFlip: wflip, weaponDual: wdual });
         ctx.restore();
@@ -1303,7 +1406,7 @@ export class MotionEditor {
         ctx.fillStyle = this.dragHandle === h.name ? '#ffd24a' : (isWeapon ? 'rgba(255,160,80,0.9)' : 'rgba(125,240,154,0.85)');
         ctx.fill(); ctx.strokeStyle = '#0d0a06'; ctx.lineWidth = 1.5; ctx.stroke();
       }
-      // Red PELVIS handle → drags previewOffset (visual-only root shift).
+      // Red PELVIS handle → drags this keyframe's root offset.
       const pel = joints.pelvis;
       if (pel) {
         ctx.beginPath(); ctx.arc(pel.x, pel.y, 7, 0, Math.PI * 2);
@@ -1351,7 +1454,7 @@ export class MotionEditor {
       if ((s.hcx - mx) ** 2 + (s.hcy - my) ** 2 < 12 * 12) { this.dragHitbox = 'move'; e.preventDefault(); return; }
     }
     if (!this.motion.keyframes[this.selKf]) return;
-    // Red pelvis handle → previewOffset drag (checked before joints, but only if
+    // Red pelvis handle → keyframe root drag (checked before joints, but only if
     // the cursor is genuinely closest to it, so it never steals hand/weapon grabs).
     const pel = this._pelvisScreen;
     let best = null, bestD = 14 * 14;
@@ -1362,7 +1465,12 @@ export class MotionEditor {
     }
     if (pel) {
       const dp = (pel.x - mx) ** 2 + (pel.y - my) ** 2;
-      if (dp < 12 * 12 && dp <= bestD) { this.dragPelvis = { mx, my, ox: (this._previewOffset || { x: 0 }).x, oy: (this._previewOffset || { y: 0 }).y }; e.preventDefault(); return; }
+      if (dp < 12 * 12 && dp <= bestD) {
+        const root = this._rootForKeyframe(this.motion.keyframes[this.selKf]);
+        this.dragPelvis = { mx, my, ox: root.x, oy: root.y, W2E: this._lastW2E || 1 };
+        e.preventDefault();
+        return;
+      }
     }
     if (best) { this.dragHandle = best.name; e.preventDefault(); }
   }
@@ -1432,19 +1540,20 @@ export class MotionEditor {
       ctx.fillStyle = i === this.selKf ? '#ffd24a' : '#e8d5a3';
       ctx.beginPath(); ctx.moveTo(x, H / 2 - 12); ctx.lineTo(x + 5, H / 2 - 4); ctx.lineTo(x - 5, H / 2 - 4); ctx.closePath(); ctx.fill();
     });
-    // Hitbox active-window band (admin) — orange band + start/end handles. No
-    // HIT_WINDOW clamp for the canonical authoring path.
-    const hb = this._hb();
-    if (hb) {
+    // Hitbox active-window bands. Each band is a separate frame-adjustable
+    // hitbox; selected/current bands are brighter and expose start/end handles.
+    const hbs = this._hitboxes();
+    hbs.forEach((hb, i) => {
       const xs = tx(hb.activeStart), xe = tx(hb.activeEnd);
-      ctx.fillStyle = 'rgba(255,122,90,0.22)';
-      ctx.fillRect(xs, 18, xe - xs, H - 40);
-      ctx.fillStyle = '#ff7a5a';
-      ctx.fillRect(xs - 2, 14, 4, H - 30);   // start handle
-      ctx.fillRect(xe - 2, 14, 4, H - 30);   // end handle
+      const selected = i === this._selectedHitboxIndex || (this.scrubT >= hb.activeStart && this.scrubT <= hb.activeEnd);
+      ctx.fillStyle = selected ? 'rgba(255,122,90,0.30)' : 'rgba(255,122,90,0.14)';
+      ctx.fillRect(xs, 18, Math.max(2, xe - xs), H - 40);
+      ctx.fillStyle = selected ? '#ff7a5a' : 'rgba(255,122,90,0.65)';
+      ctx.fillRect(xs - 2, 14, 4, H - 30);
+      ctx.fillRect(xe - 2, 14, 4, H - 30);
       ctx.font = '8px monospace'; ctx.textAlign = 'center';
-      ctx.fillText('활성', (xs + xe) / 2, 22);
-    }
+      ctx.fillText(String(i + 1), (xs + xe) / 2, 22);
+    });
     // Impact marker.
     const imp = this.motion.events.find(e => e.type === 'impact');
     if (imp) {
@@ -1470,11 +1579,12 @@ export class MotionEditor {
 
   _timelineDown(e) {
     const t = this._timelineT(e);
-    // Grab a hitbox active-window handle first (admin).
-    const hb = this._hb();
-    if (hb) {
-      if (Math.abs(hb.activeStart - t) < 0.04) { this.dragHitbox = 'aStart'; return; }
-      if (Math.abs(hb.activeEnd - t) < 0.04) { this.dragHitbox = 'aEnd'; return; }
+    // Grab a hitbox active-window handle first.
+    const hbs = this._hitboxes();
+    for (let i = 0; i < hbs.length; i++) {
+      const hb = hbs[i];
+      if (Math.abs(hb.activeStart - t) < 0.04) { this._selectedHitboxIndex = i; this.dragHitbox = 'aStart'; return; }
+      if (Math.abs(hb.activeEnd - t) < 0.04) { this._selectedHitboxIndex = i; this.dragHitbox = 'aEnd'; return; }
     }
     const imp = this.motion.events.find(ev => ev.type === 'impact');
     // Grab the impact marker if close.
@@ -1484,6 +1594,7 @@ export class MotionEditor {
     this.motion.keyframes.forEach((kf, i) => { const d = Math.abs(kf.t - t); if (d < nd) { nd = d; nearest = i; } });
     if (nearest >= 0) { this.selKf = nearest; this.dragKfIndex = nearest; this.scrubT = this.motion.keyframes[nearest].t; }
     else { this.playing = false; this.scrubT = t; }
+    this._selectHitboxForTime(this.scrubT);
     this._renderAll();
   }
 
@@ -1492,10 +1603,10 @@ export class MotionEditor {
       const r = this.canvas.getBoundingClientRect();
       const mx = (e.clientX - r.left) * (this.canvas.width / r.width);
       const my = (e.clientY - r.top) * (this.canvas.height / r.height);
-      this._previewOffset = {
-        x: Math.round(Math.max(-160, Math.min(160, this.dragPelvis.ox + (mx - this.dragPelvis.mx)))),
-        y: Math.round(Math.max(-160, Math.min(160, this.dragPelvis.oy + (my - this.dragPelvis.my)))),
-      };
+      const root = this._rootForKeyframe(this.motion.keyframes[this.selKf]);
+      const W2E = this.dragPelvis.W2E || this._lastW2E || 1;
+      root.x = Math.round(clamp(this.dragPelvis.ox + (mx - this.dragPelvis.mx) / W2E, -MOTION_LIMITS.rootOffsetMax, MOTION_LIMITS.rootOffsetMax));
+      root.y = Math.round(clamp(this.dragPelvis.oy + (my - this.dragPelvis.my) / W2E, -MOTION_LIMITS.rootOffsetMax, MOTION_LIMITS.rootOffsetMax));
       this._renderPreview();
       return;
     }
@@ -1536,6 +1647,7 @@ export class MotionEditor {
     if (document.getElementById('mePlay')) document.getElementById('mePlay').textContent = '▶ 재생';
     this.selKf = clamp(this.selKf + delta, 0, n - 1);
     this.scrubT = this.motion.keyframes[this.selKf].t;
+    this._selectHitboxForTime(this.scrubT);
     this._renderAll();
   }
   /** Add a new frame AFTER the current one that inherits the current pose exactly,
@@ -1547,9 +1659,15 @@ export class MotionEditor {
     const next = kfs[this.selKf + 1];
     let t = next ? (cur.t + next.t) / 2 : Math.min(1, cur.t + 0.12);
     while (kfs.some(k => Math.abs(k.t - t) < 0.02) && t < 0.999) t += 0.03;
-    const kf = { t: clamp(t, 0, 1), pose: { ...STICK_NEUTRAL, ...cur.pose } };   // carry the current pose forward
+    const curRoot = cur.root || sampleRootOffset(this.motion, cur.t);
+    const kf = {
+      t: clamp(t, 0, 1),
+      pose: { ...STICK_NEUTRAL, ...cur.pose },
+      root: { x: Math.round(curRoot.x || 0), y: Math.round(curRoot.y || 0) }
+    };   // carry the current pose/root forward
     kfs.push(kf); kfs.sort((a, b) => a.t - b.t);
     this.selKf = kfs.indexOf(kf); this.scrubT = kf.t; this.playing = false;
+    this._selectHitboxForTime(this.scrubT);
     this._setStatus('새 프레임 — 이전 포즈를 그대로 이어받았습니다. 관절을 조금씩 바꿔 다음 동작을 만드세요.');
     this._tutEvent('newframe');
     this._renderAll();
@@ -1576,12 +1694,14 @@ export class MotionEditor {
       }
     }
     const pose = { ...samplePose(this.motion, t) };            // snapshot the current look
-    const kf = { t, pose };
+    const root = sampleRootOffset(this.motion, t);
+    const kf = { t, pose, root: { x: Math.round(root.x || 0), y: Math.round(root.y || 0) } };
     kfs.push(kf);
     kfs.sort((a, b) => a.t - b.t);
     this.selKf = kfs.indexOf(kf);
     this.scrubT = t;                                           // move the playhead onto the new frame
     this.playing = false;
+    this._selectHitboxForTime(this.scrubT);
     this._setStatus('키프레임 추가됨. 관절을 끌어 이 프레임의 포즈를 편집하세요.');
     this._renderAll();
   }
@@ -1589,6 +1709,8 @@ export class MotionEditor {
     if (this.motion.keyframes.length <= 2) { this._setStatus('키프레임은 최소 2개 필요합니다.'); return; }
     this.motion.keyframes.splice(this.selKf, 1);
     this.selKf = Math.max(0, this.selKf - 1);
+    this.scrubT = this.motion.keyframes[this.selKf]?.t || 0;
+    this._selectHitboxForTime(this.scrubT);
     this._renderAll();
   }
 
@@ -1714,7 +1836,7 @@ export class MotionEditor {
   _setStatus(t) { const el = document.getElementById('meStatus'); if (el) el.textContent = t; }
   _renderAll() {
     const btn = document.getElementById('meAddHitbox');
-    if (btn) btn.textContent = this._hb() ? '－ 제거' : '＋ 추가';
+    if (btn) btn.textContent = this._activeHitboxIndexAt(this._currentMotionTime()) >= 0 ? '－ 현재 판정 제거' : '＋ 현재 프레임 판정';
     this._updateFrameLabel();
     this._renderPreview(); this._renderTimeline();
   }

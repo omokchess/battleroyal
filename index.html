@@ -4,12 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#14100b" />
-    <meta name="application-name" content="PIXELROYALE" />
+    <meta name="application-name" content="CRAFTROYALE" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-title" content="PIXELROYALE" />
+    <meta name="apple-mobile-web-app-title" content="CRAFTROYALE" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <title>픽셀로얄 (PIXELROYALE)</title>
+    <title>CRAFTROYALE</title>
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/pwa-icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -32,13 +32,13 @@
          goes straight to the lobby with no login-screen flash. Hidden by main.js
          in BOTH onEnterLobby and onRequireLogin. -->
     <div id="bootScreen" class="absolute inset-0 z-[70] flex flex-col items-center justify-center gap-4 bg-[#14100b] p-4">
-      <h1 class="font-display text-3xl font-extrabold tracking-tight text-[#c9a227] uppercase drop-shadow-[0_2px_5px_rgba(0,0,0,0.8)]">PIXELROYALE</h1>
+      <h1 class="font-display text-3xl font-extrabold tracking-tight text-[#c9a227] uppercase drop-shadow-[0_2px_5px_rgba(0,0,0,0.8)]">CRAFTROYALE</h1>
       <div class="font-mono text-xs text-[#e8d5a3] uppercase tracking-wider animate-pulse">불러오는 중...</div>
     </div>
 
     <div id="authScreen" class="hidden absolute inset-0 z-[60] flex items-center justify-center bg-[#14100b] p-4">
       <div class="w-full max-w-sm p-8 bg-[#2c2016] border-4 border-[#c9a227] text-center shadow-[0_0_20px_rgba(201,162,39,0.3)]">
-        <h1 class="font-display text-3xl font-extrabold text-[#c9a227] uppercase mb-2 drop-shadow-[0_2px_5px_rgba(0,0,0,0.8)]">픽셀로얄</h1>
+        <h1 class="font-display text-3xl font-extrabold text-[#c9a227] uppercase mb-2 drop-shadow-[0_2px_5px_rgba(0,0,0,0.8)]">CRAFTROYALE</h1>
         <p class="font-mono text-xs text-[#e8d5a3] mb-6 tracking-wider">로그인하고 게임을 즐기세요</p>
 
         <!-- ID + password login -->
@@ -91,7 +91,7 @@
           <div class="flex items-center gap-3 min-w-0">
             <span class="inline-block w-7 h-7 shrink-0" style="background:var(--med-blood);box-shadow:inset 0 0 0 2px var(--med-gold)"></span>
             <div class="min-w-0">
-              <div class="font-display text-lg sm:text-xl font-extrabold tracking-tight" style="color:var(--med-gold)">PIXELROYALE</div>
+              <div class="font-display text-lg sm:text-xl font-extrabold tracking-tight" style="color:var(--med-gold)">CRAFTROYALE</div>
               <div class="font-mono text-[10px] truncate" style="color:var(--med-parch)">기록부 · <span id="hubPlayerId">P-0451</span> · 시즌 02</div>
             </div>
           </div>
@@ -255,7 +255,7 @@
         <!-- Retro Header Decoration -->
         <div class="text-center mb-6">
           <h1 class="font-display text-4xl font-extrabold tracking-tight text-[#c9a227] uppercase mb-1 drop-shadow-[0_2px_5px_rgba(0,0,0,0.8)]">
-            PIXELROYALE
+            CRAFTROYALE
           </h1>
           <p class="font-mono text-xs text-[#e8d5a3] tracking-wider uppercase">P2P 멀티플레이어 실시간 투기장</p>
           <div class="h-1 bg-gradient-to-r from-transparent via-[#facc15] to-transparent mt-3"></div>
@@ -382,8 +382,8 @@
               <div class="mb-3" data-config-group="water">
                 <div class="font-mono text-[10px] text-gray-300 uppercase mb-1">물 (특수 장애물)</div>
                 <div class="grid grid-cols-2 gap-1">
-                  <button type="button" class="cfg-opt selected" data-value="off">OFF</button>
-                  <button type="button" class="cfg-opt" data-value="on">ON</button>
+                  <button type="button" class="cfg-opt" data-value="off">OFF</button>
+                  <button type="button" class="cfg-opt selected" data-value="on">ON</button>
                 </div>
               </div>
 
@@ -810,10 +810,41 @@
                 <span class="text-[9px] text-gray-500 flex-1 leading-tight">◀▶/재생 중 현 시점 반전값이 즉시 미리보기·게임에 적용</span>
               </div>
               <div id="meHitboxRow" class="flex items-center justify-between mt-1 border-t border-gray-800 pt-1">
-                <span class="text-[10px] text-[#ff7a5a] uppercase font-bold">⚔ 히트박스</span>
-                <span class="text-[9px] text-gray-500 flex-1 px-2 leading-tight">빨간 상자=타격 판정 · 타임라인 <b style="color:#ff7a5a">주황 띠</b>=활성 구간</span>
-                <button id="meAddHitbox" class="bg-[#14100b] hover:bg-gray-800 border border-[#ff7a5a] text-[#ff7a5a] text-[10px] px-2 py-1 cursor-pointer active:scale-95">＋ 추가</button>
+                <span class="text-[10px] text-[#ff7a5a] uppercase font-bold">⚔ 프레임 히트박스</span>
+                <span class="text-[9px] text-gray-500 flex-1 px-2 leading-tight">현재 프레임에 판정 추가 · 빨간 상자=타격 판정 · 주황 띠=활성 구간</span>
+                <button id="meAddHitbox" class="bg-[#14100b] hover:bg-gray-800 border border-[#ff7a5a] text-[#ff7a5a] text-[10px] px-2 py-1 cursor-pointer active:scale-95">＋ 현재 프레임 판정</button>
               </div>
+            </div>
+
+            <!-- ③ 순간이동 / 공격 이펙트: frame-authored action controls -->
+            <div id="meTeleportPanel" class="hidden bg-[#0d0a06] border border-[#c56cff]/40 rounded p-2 flex flex-col gap-1 text-[10px] text-gray-300">
+              <div class="flex items-center justify-between">
+                <span class="text-[10px] text-[#c56cff] uppercase font-bold">순간이동 프레임 이벤트</span>
+                <span class="text-[9px] text-gray-500">현재 시점 기준 · 최대 5개</span>
+              </div>
+              <div class="grid grid-cols-2 gap-1">
+                <label class="flex items-center gap-1">방향<select id="tp_directionSource" class="bg-[#14100b] border border-gray-600 text-white px-1 py-0.5 flex-1 min-w-0"><option value="cursor">마우스 커서</option><option value="facing">바라보는 방향</option><option value="back">뒤쪽</option><option value="up">위</option><option value="down">아래</option><option value="angle">고정 각도</option></select></label>
+                <label class="flex items-center gap-1">거리<input id="tp_distance" type="range" min="0" max="260" step="5" value="80" class="flex-1 min-w-0"/></label>
+              </div>
+              <button id="tp_event_add" class="med-btn text-[9px] px-1.5 py-0.5">현재 프레임 텔레포트 추가</button>
+              <div id="tp_event_list" class="text-[9px] text-gray-400 leading-tight"></div>
+            </div>
+
+            <div id="meEffectsBlock" class="hidden bg-[#0d0a06] border border-[#ffd24a]/40 rounded p-2">
+              <div class="flex items-center justify-between">
+                <span class="text-[10px] text-[#ffd24a] uppercase font-bold">✨ 공격 이펙트 (현재 시점)</span>
+                <button id="meEffectAdd" class="bg-[#14100b] hover:bg-gray-800 border border-[#ffd24a] text-[#ffd24a] text-[9px] px-1.5 py-0.5 cursor-pointer active:scale-95">＋ 추가</button>
+              </div>
+              <select id="meEffectAsset" class="bg-[#14100b] border border-gray-600 text-white text-[9px] px-1 py-0.5 w-full mt-1"><option value="spark">반짝임</option><option value="slash">베기</option><option value="burst">폭발</option><option value="ring">링</option><option value="smoke">연기</option></select>
+              <div id="meEffectEdit" class="mt-1 grid grid-cols-2 gap-1 text-[9px] text-gray-300">
+                <label class="flex items-center gap-1">X<input id="meEffectX" type="range" min="-200" max="200" step="2" class="flex-1 min-w-0"/></label>
+                <label class="flex items-center gap-1">Y<input id="meEffectY" type="range" min="-200" max="200" step="2" class="flex-1 min-w-0"/></label>
+                <label class="flex items-center gap-1">크기<input id="meEffectScale" type="range" min="0.1" max="4" step="0.05" class="flex-1 min-w-0"/></label>
+                <label class="flex items-center gap-1">회전<input id="meEffectRot" type="range" min="-360" max="360" step="5" class="flex-1 min-w-0"/></label>
+                <label class="flex items-center gap-1">투명<input id="meEffectAlpha" type="range" min="0" max="1" step="0.05" class="flex-1 min-w-0"/></label>
+                <label class="flex items-center gap-1">부착<select id="meEffectBone" class="bg-[#14100b] border border-gray-600 text-white px-1 py-0.5 flex-1 min-w-0"><option value="weaponTip">무기 끝</option><option value="handN">손</option><option value="handR">보조손</option><option value="root">골반</option><option value="head">머리</option></select></label>
+              </div>
+              <div id="meEffectList" class="mt-1 flex flex-col gap-0.5 max-h-16 overflow-y-auto"></div>
             </div>
 
             <!-- ③ 프리셋 블록 (레거시 모션 태그 라이브러리 — 공방 V2 프리셋 바가 대체) -->
@@ -944,14 +975,6 @@
                     </div>
                     <div id="pj_event_list" class="text-[9px] text-gray-400 leading-tight"></div>
                   </div>
-                  <div class="border-t border-gray-700 pt-1 mt-1 flex flex-col gap-1">
-                    <div class="grid grid-cols-2 gap-1">
-                      <label class="flex items-center gap-1">텔레포트 방향<select id="tp_directionSource" class="bg-[#14100b] border border-gray-600 text-white px-1 py-0.5 flex-1 min-w-0"><option value="cursor">마우스 커서</option><option value="facing">바라보는 방향</option><option value="back">뒤쪽</option><option value="up">위</option><option value="down">아래</option><option value="angle">고정 각도</option></select></label>
-                      <label class="flex items-center gap-1">거리<input id="tp_distance" type="range" min="0" max="260" step="5" class="flex-1 min-w-0"/></label>
-                    </div>
-                    <button id="tp_event_add" class="med-btn text-[9px] px-1.5 py-0.5">현재 프레임 텔레포트 추가</button>
-                    <div id="tp_event_list" class="text-[9px] text-gray-400 leading-tight"></div>
-                  </div>
                   <div class="text-[9px] text-gray-500 leading-tight">반투명 상자 = 실제 타격 판정(이미지 크기와 별개).</div>
                 </div>
               </div>
@@ -960,23 +983,6 @@
                 <div class="text-[9px] text-[#45f3ff] uppercase font-bold mt-2">➤ 대시</div>
                 <label class="block text-[10px] text-gray-300"><span class="flex justify-between"><span>대시 거리</span><b id="ms_dashDistance_v" class="text-[#e8d5a3]">120</b></span>
                   <input id="ms_dashDistance" type="range" min="0" max="320" step="5" class="w-full"/></label>
-              </div>
-              <!-- 프레임 이펙트 (코스메틱) -->
-              <div id="meEffectsBlock" class="mt-1 border-t border-gray-800 pt-1">
-                <div class="flex items-center justify-between">
-                  <span class="text-[9px] text-[#ffd24a] uppercase font-bold">✨ 이펙트 (현재 시점)</span>
-                  <button id="meEffectAdd" class="bg-[#14100b] hover:bg-gray-800 border border-[#ffd24a] text-[#ffd24a] text-[9px] px-1.5 py-0.5 cursor-pointer active:scale-95">＋ 추가</button>
-                </div>
-                <select id="meEffectAsset" class="bg-[#14100b] border border-gray-600 text-white text-[9px] px-1 py-0.5 w-full mt-1"><option value="spark">반짝임</option><option value="slash">베기</option><option value="burst">폭발</option><option value="ring">링</option><option value="smoke">연기</option></select>
-                <div id="meEffectEdit" class="mt-1 grid grid-cols-2 gap-1 text-[9px] text-gray-300">
-                  <label class="flex items-center gap-1">X<input id="meEffectX" type="range" min="-200" max="200" step="2" class="flex-1 min-w-0"/></label>
-                  <label class="flex items-center gap-1">Y<input id="meEffectY" type="range" min="-200" max="200" step="2" class="flex-1 min-w-0"/></label>
-                  <label class="flex items-center gap-1">크기<input id="meEffectScale" type="range" min="0.1" max="4" step="0.05" class="flex-1 min-w-0"/></label>
-                  <label class="flex items-center gap-1">회전<input id="meEffectRot" type="range" min="-360" max="360" step="5" class="flex-1 min-w-0"/></label>
-                  <label class="flex items-center gap-1">투명<input id="meEffectAlpha" type="range" min="0" max="1" step="0.05" class="flex-1 min-w-0"/></label>
-                  <label class="flex items-center gap-1">부착<select id="meEffectBone" class="bg-[#14100b] border border-gray-600 text-white px-1 py-0.5 flex-1 min-w-0"><option value="weaponTip">무기 끝</option><option value="handN">손</option><option value="handR">보조손</option><option value="root">골반</option><option value="head">머리</option></select></label>
-                </div>
-                <div id="meEffectList" class="mt-1 flex flex-col gap-0.5 max-h-16 overflow-y-auto"></div>
               </div>
             </div>
 

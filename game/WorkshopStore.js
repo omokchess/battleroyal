@@ -119,6 +119,7 @@ export function v2ToV1Runtime(w) {
   // renderer can flip the weapon exactly like the editor preview does.
   const withTimelineEvents = (p) => ({
     ...p.motion,
+    previewOffset: p.previewOffset || null,
     flipXKeys: (p.weaponTimeline && p.weaponTimeline.flipXKeys) || [],
     projectileEvents: p.projectileEvents || [],
     teleportEvents: p.teleportEvents || [],

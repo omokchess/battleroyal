@@ -80,6 +80,8 @@ test('v2ToV1Runtime preserves frame projectile/teleport events and visual id', (
   const w = makeEmptyWeaponV2({ name: '이벤트검' });
   w.weaponVisual = { imageId: id, scale: 2 };
   w.presets.basic.ranged = true;
+  w.presets.basic.previewOffset = { x: 24, y: -12 };
+  w.presets.basic.motion.keyframes[0].root = { x: 12, y: 8 };
   w.presets.basic.projectile = { imageId: 'bolt', directionSource: 'cursor', speed: 500, lifetimeMs: 500, hitbox: { shape: 'rect', width: 20, height: 10 } };
   w.presets.basic.projectileEvents = [{ time: 0.25, projectile: { imageId: 'bolt', speed: 500 } }];
   w.presets.basic.teleportEvents = [{ time: 0.5, directionSource: 'facing', distance: 120 }];
@@ -87,5 +89,7 @@ test('v2ToV1Runtime preserves frame projectile/teleport events and visual id', (
   assert.equal(rt.weaponVisual.imageId, id);
   assert.equal(rt.motionSet.attack.projectileEvents.length, 1);
   assert.equal(rt.motionSet.attack.teleportEvents.length, 1);
+  assert.deepEqual(rt.motionSet.attack.previewOffset, { x: 24, y: -12 });
+  assert.deepEqual(rt.motionSet.attack.keyframes[0].root, { x: 12, y: 8 });
   assert.equal(rt.ranged, true);
 });

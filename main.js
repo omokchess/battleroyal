@@ -20,6 +20,7 @@ import { MotionEditor, loadStoredMotionSets, equippedMotionSetId, equippedWorksh
 import { loadWorkshopWeaponsV2, saveWorkshopWeaponLocal, equipWorkshopWeaponLocal, equippedWorkshopWeaponId, unequipWorkshopWeapon, deleteWorkshopWeaponLocal, importWorkshopWeapon, v2ToV1Runtime } from './game/WorkshopStore.js';
 import { PRESET_LABELS, PRIMARY_PRESET_KEYS, COMBAT_PRESET_KINDS, makeEmptyWeaponV2 } from './game/Workshop.js';
 import { equippedStickLook } from './game/StickLook.js';
+import { resolveWeaponImage } from './game/WeaponImages.js';
 
 // Dom Elements
 const authScreen = document.getElementById('authScreen');
@@ -146,6 +147,19 @@ function weaponIconMarkup(weaponType, { preview = false, skin = null } = {}) {
     return `<img src="${src}" alt="${safeWeapon}" draggable="false" class="${className}" style="image-rendering:pixelated;${padding}"${fallback} />`;
   }
   return `<img src="/assets/weapons/${safeWeapon}.png?v=${WEAPON_ICON_VERSION}" alt="${safeWeapon}" draggable="false" class="${className}" style="image-rendering:pixelated;${weaponIconRotation(weaponType)}" />`;
+}
+
+function workshopWeaponImageMarkup(w, { className = 'workshop-weapon-img', fallbackClass = '' } = {}) {
+  const visual = w && w.weaponVisual;
+  let src = w && w.weaponImage && typeof w.weaponImage.src === 'string' ? w.weaponImage.src : '';
+  if (!src && visual && visual.imageId) {
+    const rec = resolveWeaponImage(visual.imageId);
+    if (rec && rec.img && rec.img.src) src = rec.img.src;
+  }
+  if (src) {
+    return `<img src="${escapeHtml(src)}" alt="${escapeHtml(w?.name || '공방 무기')}" draggable="false" class="${className}" style="image-rendering:pixelated" />`;
+  }
+  return `<span class="${fallbackClass}" style="color:${w?.color || '#ffb070'}">🗡</span>`;
 }
 
 function refreshWeaponCards() {
@@ -1059,6 +1073,10 @@ function hideError() {
 let roomCustomMode = 'host';
 function openRoomCustom(mode = 'host') {
   if (!roomCustomModal) return;
+  // The modal is declared inside the legacy lobby panel, which can be hidden
+  // while the current hub is active. Move it to the app root before showing so
+  // Quick Play/Create always exposes real clickable controls.
+  if (roomCustomModal.parentElement !== document.body) document.body.appendChild(roomCustomModal);
   roomCustomMode = mode === 'quickplay' ? 'quickplay' : 'host';
   hideError();
   if (roomCustomTitle) roomCustomTitle.textContent = roomCustomMode === 'quickplay' ? '바로 플레이 커스텀' : '방 커스텀';
@@ -1323,7 +1341,7 @@ function renderWorkshopGrid() {
     const eq = w.id === equippedId;
     const presets = PRIMARY_PRESET_KEYS.filter(k => w.presets[k]).length;
     return `<div class="aspect-square flex flex-col bg-[#0d0a06] border ${eq ? 'border-[#ffd24a]' : 'border-gray-700'} rounded p-2 cursor-pointer hover:border-[#7df09a] active:scale-95" data-edit="${w.id}">
-      <div class="flex-1 flex items-center justify-center text-3xl" style="color:${w.color || '#ffb070'}">🗡</div>
+      <div class="flex-1 flex items-center justify-center min-h-0">${workshopWeaponImageMarkup(w, { className: 'workshop-card-img', fallbackClass: 'text-3xl' })}</div>
       <div class="text-[11px] text-white truncate">${escapeHtml(w.name)}${eq ? ' <span style="color:#ffd24a">★</span>' : ''}</div>
       <div class="text-[9px] text-gray-500">${WS_CAT_KO[w.category] || '근접'} · 프리셋 ${presets}</div>
     </div>`;
@@ -2178,7 +2196,8 @@ async function renderWorkshopList(el) {
       const equipped = w.name === eqName;
       const isLiked = liked.has(w.id);
       return `<div class="med-parch p-2.5 flex items-center justify-between gap-2" data-i="${i}">
-        <div class="min-w-0">
+        <div class="workshop-list-thumb med-cell shrink-0">${workshopWeaponImageMarkup(w, { className: 'workshop-list-img', fallbackClass: 'text-lg' })}</div>
+        <div class="min-w-0 flex-1">
           <div class="font-mono text-[12px] text-white truncate"><span style="color:${w.color || '#ffb070'}">●</span> ${escapeHtml(w.name)} <span class="med-muted text-[9px]">by ${escapeHtml(w.author_name || '익명')}</span></div>
           <div class="font-mono text-[9px] med-muted">⚔${s.damage} · ⏱${s.cooldownMs}ms · ❤${s.maxHp} · 🏃${s.moveSpeed} · ♥${w.likes||0}</div>
         </div>
@@ -2327,7 +2346,7 @@ function buildArmoryInto(body) {
     }).join(' ');
     detailEl.innerHTML = `
       <div class="armory-head">
-        <div class="armory-sprite med-cell" style="font-size:26px">🔧</div>
+        <div class="armory-sprite med-cell">${workshopWeaponImageMarkup(w, { className: 'armory-workshop-img', fallbackClass: 'text-[26px]' })}</div>
         <div class="min-w-0">
           <div class="font-bold text-lg leading-tight">${escapeHtml(w.name)}<span class="ml-2 text-[9px] px-1 rounded" style="background:#5a3a1a;color:#ffd7a8">공방</span></div>
           <div class="font-mono text-[10px] med-muted">${WS_CAT_KO[w.category] || '근접'} · 체력 ${w.baseStats.maxHp} · 이속 ${w.baseStats.moveSpeed}</div>

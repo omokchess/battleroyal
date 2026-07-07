@@ -32,17 +32,18 @@ const JOINT_SET = new Set(JOINTS);
 const VALID_EVENTS = new Set(['impact', 'projectile', 'sfx']);
 
 // Hard limits enforced on every motion (built-in, user or AI). The editor budget
-// (Phase C) is stricter still (≤ 8 keyframes); these are the absolute ceilings.
+// (Phase C) is stricter still; these are the absolute ceilings.
 export const MOTION_LIMITS = {
   minDuration: 0.05,
   maxDuration: 6,
-  maxKeyframes: 16,
+  maxKeyframes: 64,
   maxEvents: 12,
   angleMin: -360,
   angleMax: 360,
+  rootOffsetMax: 220,
   // Admin-canonical gameplay fields (T1-C). Geometry is in world px relative to
   // the player centre (ox is forward, flipped by facing at sim time).
-  maxHitboxes: 4,
+  maxHitboxes: 8,
   hitboxOffsetMax: 220,   // |ox|, |oy|
   hitboxSizeMin: 4,
   hitboxSizeMax: 320,     // w, h
@@ -85,7 +86,14 @@ export function sanitizeMotion(raw, fallback = DEFAULT_MOTION, opts = {}) {
       if (!Number.isFinite(a)) continue;
       pose[j] = clamp(a, MOTION_LIMITS.angleMin, MOTION_LIMITS.angleMax);
     }
-    keyframes.push({ t, pose });
+    const rootIn = (kf.root && typeof kf.root === 'object') ? kf.root : {};
+    const root = {
+      x: Number.isFinite(rootIn.x) ? clamp(rootIn.x, -MOTION_LIMITS.rootOffsetMax, MOTION_LIMITS.rootOffsetMax) : 0,
+      y: Number.isFinite(rootIn.y) ? clamp(rootIn.y, -MOTION_LIMITS.rootOffsetMax, MOTION_LIMITS.rootOffsetMax) : 0,
+    };
+    const outKf = { t, pose };
+    if (kf.root && typeof kf.root === 'object') outKf.root = root;
+    keyframes.push(outKf);
   }
   if (!keyframes.length) return cloneMotion(fallback);
   keyframes.sort((a, b) => a.t - b.t);
@@ -98,6 +106,12 @@ export function sanitizeMotion(raw, fallback = DEFAULT_MOTION, opts = {}) {
     }
   }
   const out = { duration, loop: !!raw.loop, keyframes, events };
+  if (raw.previewOffset && typeof raw.previewOffset === 'object') {
+    out.previewOffset = {
+      x: Number.isFinite(raw.previewOffset.x) ? clamp(raw.previewOffset.x, -MOTION_LIMITS.rootOffsetMax, MOTION_LIMITS.rootOffsetMax) : 0,
+      y: Number.isFinite(raw.previewOffset.y) ? clamp(raw.previewOffset.y, -MOTION_LIMITS.rootOffsetMax, MOTION_LIMITS.rootOffsetMax) : 0,
+    };
+  }
   // Admin-canonical gameplay fields — only when explicitly trusted (see rule above).
   if (opts.allowGameplay) {
     out.hitboxes = sanitizeHitboxes(raw.hitboxes);
@@ -135,6 +149,28 @@ export function sanitizeMotionSet(raw, opts = {}) {
     for (const state in raw) out[state] = sanitizeMotion(raw[state], DEFAULT_MOTION, opts);
   }
   return out;
+}
+
+/** Sample root/pelvis offset in world px at the same normalized phase as pose. */
+export function sampleRootOffset(motion, phase) {
+  if (!motion || !Array.isArray(motion.keyframes) || !motion.keyframes.length) {
+    return { x: 0, y: 0 };
+  }
+  const kfs = motion.keyframes;
+  const p = Math.max(0, Math.min(0.99999, phase));
+  let a = kfs[0], b = kfs[kfs.length - 1];
+  for (let i = 0; i < kfs.length - 1; i++) {
+    if (p >= kfs[i].t && p <= kfs[i + 1].t) { a = kfs[i]; b = kfs[i + 1]; break; }
+  }
+  const span = Math.max(1e-4, b.t - a.t);
+  const lt = Math.max(0, Math.min(1, (p - a.t) / span));
+  const fallback = motion.previewOffset || { x: 0, y: 0 };
+  const ar = a.root || fallback;
+  const br = b.root || fallback;
+  return {
+    x: (Number(ar.x) || 0) + ((Number(br.x) || 0) - (Number(ar.x) || 0)) * lt,
+    y: (Number(ar.y) || 0) + ((Number(br.y) || 0) - (Number(ar.y) || 0)) * lt,
+  };
 }
 
 // --- Weapon-flavoured attack motions ---------------------------------------
@@ -330,7 +366,7 @@ export class StickAnimator {
     }
   }
 
-  /** Advance + sample a player's pose this frame. Returns { pose, motionName }. */
+  /** Advance + sample a player's pose this frame. Returns { pose, rootOffset, motionName }. */
   sample(player, now) {
     const s = this._for(player.id);
     const dt = s.last ? Math.min(0.05, (now - s.last) / 1000) : 0;
@@ -341,7 +377,7 @@ export class StickAnimator {
     if (s.ovUntil && now < s.ovUntil && s.ovMotion) {
       const ph = Math.min(0.999, (now - s.ovStart) / 1000 / (s.ovMotion.duration || 0.5));
       s.motion = 'overlay';
-      return { pose: samplePose(s.ovMotion, ph), motionName: 'overlay' };
+      return { pose: samplePose(s.ovMotion, ph), rootOffset: sampleRootOffset(s.ovMotion, ph), motionName: 'overlay' };
     }
 
     const setId = sanitizeMotionSetId(player.motionSetId) || weaponSetId(player.weapon);
@@ -387,7 +423,12 @@ export class StickAnimator {
       if (motion.loop) s.phase %= 1; else s.phase = Math.min(0.999, s.phase);
     }
 
-    return { pose: samplePose(motion, s.phase), motionName, weaponFlip: sampleFlipAt(motion.flipXKeys, s.phase) };
+    return {
+      pose: samplePose(motion, s.phase),
+      rootOffset: sampleRootOffset(motion, s.phase),
+      motionName,
+      weaponFlip: sampleFlipAt(motion.flipXKeys, s.phase)
+    };
   }
 }
 
@@ -404,16 +445,17 @@ function sampleFlipAt(keys, phase) {
 function cloneMotion(m) {
   const c = {
     duration: m.duration, loop: !!m.loop,
-    keyframes: m.keyframes.map(k => ({ t: k.t, pose: { ...k.pose } })),
+    keyframes: m.keyframes.map(k => ({ t: k.t, pose: { ...k.pose }, ...(k.root ? { root: { ...k.root } } : {}) })),
     events: (m.events || []).map(e => ({ t: e.t, type: e.type })),
   };
+  if (m.previewOffset) c.previewOffset = { ...m.previewOffset };
   // Preserve admin-canonical gameplay fields when present (already sanitized).
   if (Array.isArray(m.hitboxes)) c.hitboxes = m.hitboxes.map(h => ({ ...h }));
   if (Number.isFinite(m.knockback)) c.knockback = m.knockback;
   return c;
 }
 function deepFreeze(m) {
-  m.keyframes.forEach(k => { Object.freeze(k.pose); Object.freeze(k); });
+  m.keyframes.forEach(k => { Object.freeze(k.pose); if (k.root) Object.freeze(k.root); Object.freeze(k); });
   Object.freeze(m.keyframes);
   (m.events || []).forEach(e => Object.freeze(e));
   Object.freeze(m.events);

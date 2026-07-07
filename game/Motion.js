@@ -400,13 +400,15 @@ export class StickAnimator {
     if (player.lastAttackTime && player.lastAttackTime !== s.prevAttack) {
       s.prevAttack = player.lastAttackTime;
       s.attackStart = now;
-      s.attackDur = (tagMotion('attack') || resolveMotion(setId, 'attack')).duration || 0.42;
+      s.attackTag = player.attackMotionTag || 'attack';
+      s.attackDur = (tagMotion(s.attackTag) || tagMotion('attack') || resolveMotion(setId, 'attack')).duration || 0.42;
       s.attackUntil = now + s.attackDur * 1000;
+      player.attackMotionTag = null;
     }
     const attacking = now < s.attackUntil;
 
     let motionName;
-    if (attacking) motionName = 'attack';
+    if (attacking) motionName = s.attackTag || 'attack';
     else if (airborne) motionName = vy < -40 ? 'jump' : 'fall';
     else if (moving) motionName = 'run';
     else motionName = 'idle';
@@ -416,7 +418,7 @@ export class StickAnimator {
 
     let speedMul = 1;
     if (motionName === 'run') speedMul = Math.min(2.2, Math.max(0.7, Math.abs(player.vx || 0) / 300));
-    if (motionName === 'attack') {
+    if (attacking) {
       s.phase = Math.min(0.999, (now - s.attackStart) / 1000 / (s.attackDur || 0.42));
     } else {
       s.phase += (dt / (motion.duration || 0.5)) * speedMul;
@@ -427,7 +429,8 @@ export class StickAnimator {
       pose: samplePose(motion, s.phase),
       rootOffset: sampleRootOffset(motion, s.phase),
       motionName,
-      weaponFlip: sampleFlipAt(motion.flipXKeys, s.phase)
+      weaponFlip: sampleFlipAt(motion.flipXKeys, s.phase),
+      weaponFlipY: sampleFlipAt(motion.flipYKeys, s.phase)
     };
   }
 }

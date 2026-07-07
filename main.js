@@ -20,7 +20,7 @@ import { MotionEditor, loadStoredMotionSets, equippedMotionSetId, equippedWorksh
 import { loadWorkshopWeaponsV2, saveWorkshopWeaponLocal, equipWorkshopWeaponLocal, equippedWorkshopWeaponId, unequipWorkshopWeapon, deleteWorkshopWeaponLocal, importWorkshopWeapon, v2ToV1Runtime } from './game/WorkshopStore.js';
 import { PRESET_LABELS, PRIMARY_PRESET_KEYS, COMBAT_PRESET_KINDS, makeEmptyWeaponV2 } from './game/Workshop.js';
 import { equippedStickLook } from './game/StickLook.js';
-import { resolveWeaponImage } from './game/WeaponImages.js';
+import { resolveWeaponImage, getCustomWeaponRecord } from './game/WeaponImages.js';
 
 // Dom Elements
 const authScreen = document.getElementById('authScreen');
@@ -1131,7 +1131,7 @@ function readRoomConfig() {
     healingRate: pick('healingRate', 'normal'),
     biome: pick('biome', 'day'),
     water: pick('water', 'off') === 'on',
-    allowWorkshop: pick('allowWorkshop', 'off') === 'on',
+    allowWorkshop: true,
   });
 }
 
@@ -1145,11 +1145,18 @@ function readBotCount() {
 // loadout (weapon skin / kill fx / dash trail / respawn fx / title). Passed to
 // Game and into JOIN_ROOM so everyone renders it.
 function localAppearance() {
+  const workshopWeapon = equippedWorkshopWeapon();
+  const imageId = workshopWeapon?.weaponVisual?.imageId;
+  const weaponImage = getCustomWeaponRecord(imageId);
+  if (workshopWeapon && weaponImage) workshopWeapon.weaponImage = weaponImage;
+  const hatId = workshopWeapon?.weaponVisual?.hat?.imageId;
+  const hatImage = getCustomWeaponRecord(hatId);
+  if (workshopWeapon && hatImage) workshopWeapon.hatImage = hatImage;
   return Object.assign({}, accountUI.getEquippedCostume() || {}, {
     cosmetics: accountUI.getEquippedCosmetics(),
     motionSetId: equippedMotionSetId(),   // equipped custom stickman motion (cosmetic, id only)
     stick: equippedStickLook(),           // stick appearance (color/lineW/head/accessory)
-    workshopWeapon: equippedWorkshopWeapon(), // equipped Tier-2 workshop weapon (envelope-clamped)
+    workshopWeapon,                       // equipped Tier-2 workshop weapon (envelope-clamped + image pixels)
   });
 }
 
@@ -1316,17 +1323,23 @@ function ensureWorkshopGrid() {
   el.innerHTML = `
     <div class="flex items-center justify-between px-4 pt-3 pb-2 border-b border-[#7df09a]/30">
       <h2 class="font-display text-xl text-[#7df09a] font-bold uppercase tracking-widest">🔧 무기 공방</h2>
-      <button id="wsGridClose" class="text-gray-400 hover:text-white text-lg leading-none px-2 cursor-pointer">✕</button>
+      <div class="flex items-center gap-2">
+        <button id="wsGridTutorialBtn" class="bg-[#14100b] hover:bg-gray-800 border border-[#ffd24a] text-[#ffd24a] text-[10px] px-2 py-1 cursor-pointer active:scale-95">튜토리얼 보기</button>
+        <button id="wsGridClose" class="text-gray-400 hover:text-white text-lg leading-none px-2 cursor-pointer">✕</button>
+      </div>
     </div>
     <p class="text-[10px] text-gray-400 px-4 py-2">내가 만든 무기를 편집하거나, <b class="text-[#7df09a]">＋ 새 무기 만들기</b>로 처음부터 만들어 보세요. 저장하면 무기고에, 업로드하면 워크샵에 올라갑니다.</p>
+    <div id="wsMobileWarn" class="hidden mx-4 mb-2 border border-[#ffd24a]/70 bg-[#2c2016] text-[#ffd24a] text-[10px] px-3 py-2 leading-relaxed">휴대폰에서는 무기 공방 제작이 어렵습니다. 세부 프레임 편집은 PC 또는 태블릿을 권장합니다.</div>
     <div id="wsGridBody" class="flex-1 overflow-y-auto p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 content-start"></div>`;
   document.getElementById('motionEditor')?.parentElement?.appendChild(el);
   el.querySelector('#wsGridClose').addEventListener('click', () => el.classList.add('hidden'));
+  el.querySelector('#wsGridTutorialBtn').addEventListener('click', () => openWorkshopTutorial());
   _wsGridEl = el;
   return el;
 }
 function openWorkshopGrid() {
   const el = ensureWorkshopGrid();
+  el.querySelector('#wsMobileWarn')?.classList.toggle('hidden', !isPhoneDevice());
   renderWorkshopGrid();
   el.classList.remove('hidden');
 }
@@ -1356,6 +1369,23 @@ function editWorkshopWeapon(id) {
   if (!w) { showToast('무기를 찾을 수 없습니다'); return; }
   _wsGridEl?.classList.add('hidden');
   ensureMotionEditor().openWorkshopV2(w);
+}
+
+function openWorkshopTutorial() {
+  if (isPhoneDevice()) {
+    const ok = window.confirm('휴대폰에서는 무기 공방 제작이 매우 불편할 수 있습니다. 튜토리얼은 계속 볼까요?');
+    if (!ok) return;
+  }
+  const w = makeEmptyWeaponV2({
+    name: '튜토리얼 무기',
+    desc: '무기 공방 기능을 익히기 위한 임시 무기입니다.',
+    category: 'melee',
+    firstPresetKind: 'basic',
+  });
+  _wsGridEl?.classList.add('hidden');
+  const editor = ensureMotionEditor();
+  editor.openWorkshopV2(w);
+  setTimeout(() => editor.replayTutorial?.(), 80);
 }
 
 // New-weapon modal: name / desc / category / first preset → empty V2 weapon.
@@ -1767,13 +1797,7 @@ function setWeaponPanelOpen(open) {
 function buildWeaponSwitchPanel() {
   const list = document.getElementById('weaponSwitchList');
   if (!list) return;
-  const baseHtml = Object.keys(Weapons).map(key => {
-    const cfg = Weapons[key];
-    return `<button type="button" data-weapon="${key}" class="weapon-switch" style="color:${cfg.color}">`
-      + `<span class="ws-accent" aria-hidden="true"></span>`
-      + `<span class="ws-name">${cfg.name}</span>`
-      + `</button>`;
-  }).join('');
+  const baseHtml = '';
   const workshopHtml = loadWorkshopWeaponsV2().map(w => (
     `<button type="button" data-ws="${escapeHtml(w.id)}" class="weapon-switch" style="color:${w.color || '#ffb070'}">`
       + `<span class="ws-accent" aria-hidden="true"></span>`
@@ -2115,6 +2139,7 @@ function setupLobbyHub() {
     if (mod === 'create') { openShellModule('방 제작', 'CREATE', buildCreateInto, fromLeft); return; }
     if (mod === 'arena') { openShellModule('결투장', 'ARENA', buildArenaInto, fromLeft); return; }
   }
+  window.openLobbyModule = openModule;
 
   modules?.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-module]');
@@ -2141,6 +2166,9 @@ const WS_CAT_KO = { melee: '근접', ranged: '원거리', special: '특수' };
 // Liking is idempotent against it, so re-rendering the list — or returning to
 // the tab from another one — can never re-bump a weapon's count a second time.
 const LIKED_WS_KEY = 'pixelroyale_liked_ws';
+const WS_FREE_CLAIM_KEY = 'craftroyale_first_workshop_weapon_claimed_v1';
+const WORKSHOP_WEAPON_PRICE = 100;
+const LOBBY_WEAPON_TUTORIAL_KEY = 'craftroyale_weapon_tutorial_seen_v1';
 function likedWsSet() {
   try { const a = JSON.parse(localStorage.getItem(LIKED_WS_KEY) || '[]'); return new Set(Array.isArray(a) ? a : []); }
   catch { return new Set(); }
@@ -2150,6 +2178,150 @@ function markWsLiked(id) {
   s.add(id);
   try { localStorage.setItem(LIKED_WS_KEY, JSON.stringify([...s])); } catch {}
   return true;
+}
+
+const LOBBY_TUTORIAL_STEPS = [
+  {
+    title: '워크샵에서 첫 무기 얻기',
+    text: '공개 창작 무기를 둘러보고 추가 버튼을 누르세요. 첫 무기는 무료이고, 그 이후 워크샵 무기는 100화폐가 필요합니다.',
+    target: '[data-module="shop"]',
+    actionLabel: '워크샵 열기',
+    action: () => window.openLobbyModule?.('shop'),
+  },
+  {
+    title: '랭킹 확인',
+    text: '누적 처치 순위와 내 전적을 확인하는 메뉴입니다.',
+    target: '[data-module="rank"]',
+    actionLabel: '랭킹 열기',
+    action: () => window.openLobbyModule?.('rank'),
+  },
+  {
+    title: '설정 확인',
+    text: '음향, 성능, 조작 옵션을 조정합니다. 모바일 조작이 불편하면 여기에서 조작 옵션을 먼저 확인하세요.',
+    target: '[data-module="options"]',
+    actionLabel: '설정 열기',
+    action: () => window.openLobbyModule?.('options'),
+  },
+  {
+    title: '무기고 확인',
+    text: '워크샵에서 추가한 무기와 직접 만든 무기를 장착하는 곳입니다.',
+    target: '[data-module="armory"]',
+    actionLabel: '무기고 열기',
+    action: () => window.openLobbyModule?.('armory'),
+  },
+  {
+    title: '결투장 입장',
+    text: '열려 있는 방을 탐색하고 참가하는 화면입니다.',
+    target: '[data-module="arena"]',
+    actionLabel: '결투장 열기',
+    action: () => window.openLobbyModule?.('arena'),
+  },
+  {
+    title: '방 제작',
+    text: 'AI 수, 플랫폼, 엄폐물 같은 경기 조건을 직접 정해 방을 만들 수 있습니다.',
+    target: '[data-module="create"]',
+    actionLabel: '방 제작 열기',
+    action: () => window.openLobbyModule?.('create'),
+  },
+  {
+    title: '로비로 돌아가기',
+    text: '방 제작을 확인했다면 게시판 버튼으로 다시 로비 메뉴로 돌아옵니다.',
+    target: '#moduleBackBtn',
+    actionLabel: '로비로',
+    action: () => window.showLobbyHub?.(),
+  },
+  {
+    title: '무기 공방으로 이동',
+    text: '직접 무기를 제작하고 프레임별 모션, 히트박스, 이펙트를 편집하는 메뉴입니다.',
+    target: '[data-module="workshop"]',
+    actionLabel: '공방 열기',
+    action: () => window.openLobbyModule?.('workshop'),
+  },
+  {
+    title: '공방 튜토리얼 보기',
+    text: '무기 공방 화면의 튜토리얼 보기 버튼을 눌러 제작 과정을 따라가세요. 휴대폰에서는 세밀한 제작이 어려우니 PC 또는 태블릿을 권장합니다.',
+    target: '#wsGridTutorialBtn',
+    actionLabel: '공방 튜토리얼 시작',
+    action: () => openWorkshopTutorial(),
+  },
+];
+let lobbyTutorialState = null;
+
+function ensureLobbyTutorialStyles() {
+  if (document.getElementById('lobbyTutorialStyles')) return;
+  const st = document.createElement('style');
+  st.id = 'lobbyTutorialStyles';
+  st.textContent = `
+    #lobbyTutorialCard{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:95;width:min(520px,calc(100vw - 24px));background:#1a1410;border:2px solid #ffd24a;border-radius:8px;padding:12px 14px;box-shadow:0 10px 30px rgba(0,0,0,.7);font-family:monospace}
+    .lobby-tut-hi{outline:3px solid #ffd24a !important;outline-offset:3px;box-shadow:0 0 18px rgba(255,210,74,.55),inset 0 0 0 1px rgba(255,210,74,.3) !important;border-radius:6px}
+    @media(max-width:640px){#lobbyTutorialCard{bottom:10px;padding:10px;width:calc(100vw - 16px)}}
+  `;
+  document.head.appendChild(st);
+}
+
+function finishLobbyTutorial(markSeen = true) {
+  lobbyTutorialState = null;
+  document.getElementById('lobbyTutorialCard')?.remove();
+  document.querySelectorAll('.lobby-tut-hi').forEach((n) => n.classList.remove('lobby-tut-hi'));
+  if (markSeen) {
+    try { localStorage.setItem(LOBBY_WEAPON_TUTORIAL_KEY, '1'); } catch {}
+  }
+}
+
+function renderLobbyTutorial() {
+  if (!lobbyTutorialState) return;
+  ensureLobbyTutorialStyles();
+  const step = LOBBY_TUTORIAL_STEPS[lobbyTutorialState.step];
+  if (!step) { finishLobbyTutorial(true); return; }
+
+  let card = document.getElementById('lobbyTutorialCard');
+  if (!card) {
+    card = document.createElement('div');
+    card.id = 'lobbyTutorialCard';
+    document.body.appendChild(card);
+  }
+  const dots = LOBBY_TUTORIAL_STEPS.map((_, i) => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;background:${i < lobbyTutorialState.step ? '#7df09a' : i === lobbyTutorialState.step ? '#ffd24a' : '#4b4237'}"></span>`).join('');
+  card.innerHTML = `
+    <div class="flex items-center gap-2 mb-1">
+      <span>${dots}</span>
+      <b class="text-[#ffd24a] text-xs">${escapeHtml(step.title)}</b>
+      <span class="ml-auto text-[10px] text-[#8a8175]">${lobbyTutorialState.step + 1} / ${LOBBY_TUTORIAL_STEPS.length}</span>
+    </div>
+    <div class="text-[#d9d2c5] text-[11px] leading-relaxed">${escapeHtml(step.text)}</div>
+    <div class="flex gap-2 mt-2">
+      <button id="lobbyTutAction" class="flex-1 bg-[#1c6b33] border border-[#7df09a] text-[#d9ffe4] text-[11px] py-1.5 cursor-pointer active:scale-95">${escapeHtml(step.actionLabel)}</button>
+      <button id="lobbyTutNext" class="bg-[#14100b] border border-[#ffd24a] text-[#ffd24a] text-[11px] px-3 py-1.5 cursor-pointer active:scale-95">다음</button>
+      <button id="lobbyTutSkip" class="bg-[#14100b] border border-[#6b6156] text-[#8a8175] text-[10px] px-2 py-1.5 cursor-pointer active:scale-95">건너뛰기</button>
+    </div>`;
+  card.querySelector('#lobbyTutAction')?.addEventListener('click', () => {
+    step.action?.();
+    setTimeout(renderLobbyTutorial, 120);
+  });
+  card.querySelector('#lobbyTutNext')?.addEventListener('click', () => {
+    lobbyTutorialState.step++;
+    renderLobbyTutorial();
+  });
+  card.querySelector('#lobbyTutSkip')?.addEventListener('click', () => finishLobbyTutorial(true));
+
+  document.querySelectorAll('.lobby-tut-hi').forEach((n) => n.classList.remove('lobby-tut-hi'));
+  const target = document.querySelector(step.target);
+  if (target) {
+    target.classList.add('lobby-tut-hi');
+    target.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }
+}
+
+function startLobbyTutorial({ force = false } = {}) {
+  try {
+    if (!force && localStorage.getItem(LOBBY_WEAPON_TUTORIAL_KEY) === '1') return;
+  } catch {}
+  finishLobbyTutorial(false);
+  if (isPhoneDevice()) {
+    showToast('휴대폰에서는 무기 공방 제작이 어렵습니다. 제작은 PC 또는 태블릿을 권장합니다.');
+  }
+  window.showLobbyHub?.();
+  lobbyTutorialState = { step: 0 };
+  renderLobbyTutorial();
 }
 
 /** Open the workshop editor to edit a saved V2 weapon (full load in the grid task). */
@@ -2211,10 +2383,28 @@ async function renderWorkshopList(el) {
     }).join('');
     listEl.querySelectorAll('[data-i]').forEach(row => {
       const w = items[Number(row.dataset.i)];
-      row.querySelector('[data-act="add"]')?.addEventListener('click', (ev) => {
-        importWorkshopWeapon(w); Sound.play('uiConfirm');
-        ev.currentTarget.textContent = '추가됨 ✓'; ev.currentTarget.disabled = true;
-        showToast(`"${w.name}" 무기고에 추가됨 (무기고 → 무기 탭)`);
+      row.querySelector('[data-act="add"]')?.addEventListener('click', async (ev) => {
+        const btn = ev.currentTarget;
+        if (btn.disabled) return;
+        const freeClaimed = localStorage.getItem(WS_FREE_CLAIM_KEY) === '1';
+        const price = freeClaimed ? WORKSHOP_WEAPON_PRICE : 0;
+        const oldText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = price ? '구매 중...' : '추가 중...';
+        try {
+          if (price > 0) await accountUI.spendWorkshopWeaponCoins?.(price);
+          importWorkshopWeapon(w);
+          localStorage.setItem(WS_FREE_CLAIM_KEY, '1');
+          Sound.play('uiConfirm');
+          btn.textContent = '추가됨 ✓';
+          showToast(price > 0
+            ? `"${w.name}" 구매 완료 (-${price}화폐)`
+            : `"${w.name}" 첫 무기 무료 추가 완료`);
+        } catch (err) {
+          btn.disabled = false;
+          btn.textContent = oldText;
+          showToast(err?.message || '무기 추가 실패');
+        }
       });
       row.querySelector('[data-act="like"]')?.addEventListener('click', (ev) => {
         ev.currentTarget.disabled = true;
@@ -2274,7 +2464,11 @@ function buildArmoryInto(body) {
   // Selection is either a base weapon key or a workshop weapon id ('ws:<id>').
   let wsList = loadWorkshopWeaponsV2();
   const equippedWsId = () => equippedWorkshopWeaponId();
-  let selected = equippedWsId() ? ('ws:' + equippedWsId()) : (document.querySelector('.weapon-card.selected')?.dataset.weapon || weapons[0]);
+  if (!weapons.length && !wsList.length) {
+    openWorkshopWeaponForEdit(null);
+    return;
+  }
+  let selected = equippedWsId() ? ('ws:' + equippedWsId()) : (wsList[0] ? 'ws:' + wsList[0].id : null);
   const openWorkshopFromEmptyArmory = () => {
     document.getElementById('workshopBtn')?.click();
   };
@@ -2282,13 +2476,12 @@ function buildArmoryInto(body) {
   // Build every chip ONCE (base arsenal + local workshop weapons). Workshop
   // chips carry a 공방 badge; both share the 근접/원거리/특수 category filter.
   function buildChips() {
-    const baseHtml = weapons.map(w => `<button class="armory-chip ${w === selected ? 'on' : ''}" data-w="${w}" data-cat="${armoryCategory(w)}">
-        <span class="dot" style="background:${Weapons[w].color || '#caa84a'}"></span>${armoryWeaponName(w)}</button>`).join('');
+    const baseHtml = '';
     const wsHtml = wsList.map(x => `<button class="armory-chip ${('ws:' + x.id) === selected ? 'on' : ''}" data-ws="${x.id}" data-cat="${WS_CAT_KO[x.category] || '근접'}">
         <span class="dot" style="background:${x.color || '#ffb070'}"></span>${escapeHtml(x.name)}<span class="ml-1 text-[8px] px-1 rounded" style="background:#5a3a1a;color:#ffd7a8">공방</span></button>`).join('');
     chipsEl.innerHTML = baseHtml + wsHtml;
     const countEl = body.querySelector('#armoryCount');
-    if (countEl) countEl.textContent = `▼ 기본 ${weapons.length} · 공방 ${wsList.length}`;
+    if (countEl) countEl.textContent = `▼ 공방 ${wsList.length}`;
   }
   function applyFilter() {
     chipsEl.querySelectorAll('.armory-chip').forEach(chip => {
@@ -2331,7 +2524,9 @@ function buildArmoryInto(body) {
       return;
     }
     if (typeof selected === 'string' && selected.startsWith('ws:')) return renderWorkshopDetail(selected.slice(3));
-    return renderBaseDetail();
+    selected = wsList[0] ? 'ws:' + wsList[0].id : null;
+    if (selected) return renderWorkshopDetail(selected.slice(3));
+    return renderDetail();
   }
 
   /** Workshop weapon detail: identity, preset summary, equip / edit / delete. */
@@ -2687,8 +2882,8 @@ function buildCreateInto(body) {
   const opts = (g) => [...(groupEl(g)?.querySelectorAll('.cfg-opt') || [])].map(b => ({ label: b.textContent.trim(), value: b.dataset.value, on: b.classList.contains('selected') }));
   const selectedOf = (g) => opts(g).find(o => o.on) || opts(g)[0];
   const pickHidden = (g, value) => { [...(groupEl(g)?.querySelectorAll('.cfg-opt') || [])].find(b => b.dataset.value === value)?.click(); };
-  const GROUPS = [['platforms', '플랫폼'], ['platformShape', '플랫폼 모양'], ['biome', '지형'], ['cover', '엄폐물'], ['water', '물 (특수 장애물)'], ['healing', '회복 아이템'], ['allowWorkshop', '공방 무기 허용']];
-  const ONOFF = new Set(['water', 'healing', 'allowWorkshop']);   // rendered as sliding switches
+  const GROUPS = [['platforms', '플랫폼'], ['platformShape', '플랫폼 모양'], ['biome', '지형'], ['cover', '엄폐물'], ['water', '물 (특수 장애물)'], ['healing', '회복 아이템']];
+  const ONOFF = new Set(['water', 'healing']);   // rendered as sliding switches
   const healingOn = () => selectedOf('healing')?.value === 'on';
   const PLATFORM_COUNT = { none: 0, few: 2, some: 4, many: 6 };
   const PLATFORM_DESC = { none: '발판 없음', few: '발판 2개', some: '발판 4개', many: '발판 6개' };
@@ -3029,6 +3224,7 @@ registerPwa();
 setupWeaponSelector();
 buildWeaponSwitchPanel();
 setupLobbyHub();
+document.getElementById('lobbyTutorialReplay')?.addEventListener('click', () => startLobbyTutorial({ force: true }));
 setupLobbyPerfToggle();
 
 // Auth gate: account-ui resolves the session and tells us which screen to show.
@@ -3050,6 +3246,7 @@ accountUI.init({
 
     refreshWeaponCards();
     startLobbyBrowsing();
+    setTimeout(() => startLobbyTutorial(), 500);
   },
   onRequireLogin: () => {
     bootScreen?.classList.add('hidden');

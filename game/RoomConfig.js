@@ -83,7 +83,7 @@ export const DEFAULT_ROOM_CONFIG = Object.freeze({
   healingRate: 'normal',
   biome: 'day',
   water: false,
-  // Tier-2 공방 무기 허용. 사용자 창작 무기 중심 구조라 기본 ON.
+  // Tier-2 공방 무기는 사용자 창작 무기 중심 구조라 항상 허용한다.
   allowWorkshop: true
 });
 
@@ -108,7 +108,7 @@ export function normalizeRoomConfig(raw) {
     healingRate: oneOf(c.healingRate, HEAL_RATES, DEFAULT_ROOM_CONFIG.healingRate),
     biome:       oneOf(c.biome, BIOME_LABELS, DEFAULT_ROOM_CONFIG.biome),
     water:       Boolean(c.water),
-    allowWorkshop: c.allowWorkshop === undefined ? DEFAULT_ROOM_CONFIG.allowWorkshop : Boolean(c.allowWorkshop)
+    allowWorkshop: true
   };
 }
 
@@ -131,6 +131,5 @@ export function roomConfigBadges(config) {
   if (cfg.platforms !== 'none') badges.push(`플랫폼 ${PLATFORM_LABELS[cfg.platforms]}`);
   if (cfg.water) badges.push('물');
   if (cfg.healing) badges.push('회복');
-  if (cfg.allowWorkshop !== DEFAULT_ROOM_CONFIG.allowWorkshop) badges.push(cfg.allowWorkshop ? '공방무기' : '기본무기');
   return badges;
 }

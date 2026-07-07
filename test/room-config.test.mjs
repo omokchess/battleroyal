@@ -22,6 +22,7 @@ test('normalizeRoomConfig rejects unknown enum values (anti-cheat on network inp
   assert.equal(c.platformShape, 'balanced');
   assert.equal(c.healingRate, 'normal');
   assert.equal(c.storm, false);          // lava/storm is removed from live rules
+  assert.equal(normalizeRoomConfig({ allowWorkshop: false }).allowWorkshop, true);
 });
 
 test('normalizeRoomConfig keeps valid values', () => {

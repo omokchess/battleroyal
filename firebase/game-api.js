@@ -259,6 +259,27 @@ export async function purchaseItem(itemId) {
   }));
 }
 
+export async function spendCoins(amount, reason = 'spend') {
+  const user = currentUser();
+  if (!firestore || !user) return null;
+  await ensureUserProfile(user);
+  const price = Math.max(0, Math.round(Number(amount) || 0));
+  const profileRef = doc(firestore, 'profiles', user.uid);
+  return oneRow(await runTransaction(firestore, async tx => {
+    const profileSnap = await tx.get(profileRef);
+    if (!profileSnap.exists()) throw new Error('프로필이 없습니다');
+    const profile = profileSnap.data();
+    if (Number(profile.coins || 0) < price) throw new Error('코인이 부족합니다');
+    const next = { ...profile, coins: Number(profile.coins || 0) - price };
+    tx.update(profileRef, {
+      coins: next.coins,
+      updated_at: serverTimestamp(),
+      last_coin_spend_reason: String(reason).slice(0, 40)
+    });
+    return normalizeProfile(user.uid, next);
+  }));
+}
+
 export async function equipItem(itemId) {
   const user = currentUser();
   if (!firestore || !user) return null;

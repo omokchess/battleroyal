@@ -43,6 +43,7 @@ export const ENVELOPE = {
 
 export const VALID_STATUS = new Set(['none', 'slow', 'bleed', 'burn', 'stun']);
 export const POINT_BUDGET = 100;
+const BUDGET_COST_MULT = 1.5;
 
 const clampNum = (v, [lo, hi], dflt) => (Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : dflt);
 
@@ -177,6 +178,7 @@ export function clampWorkshopWeapon(raw) {
     else delete m.hitboxes;
     // Preserve the weapon flip timeline (sanitizeMotion drops it) — cosmetic.
     if (Array.isArray(rawSet[state].flipXKeys)) m.flipXKeys = sanitizeFlipKeys(rawSet[state].flipXKeys);
+    if (Array.isArray(rawSet[state].flipYKeys)) m.flipYKeys = sanitizeFlipKeys(rawSet[state].flipYKeys);
     if (['attack', 'heavy', 'skill', 'skill2', 'skill3'].includes(state)) {
       m.projectileEvents = sanitizeProjectileEvents(rawSet[state].projectileEvents);
       m.teleportEvents = sanitizeTeleportEvents(rawSet[state].teleportEvents);
@@ -330,13 +332,14 @@ export function sanitizeTeleportEvents(list) {
   return out.sort((a, b) => a.time - b.time);
 }
 
-/** Per-preset combat stats (cooldown kept but excluded from the budget). */
+/** Per-preset combat stats. Range is kept only for legacy payload compatibility;
+ *  authored hitboxes/projectiles define reach in the current workshop model. */
 export function sanitizeCombat(c) {
   const r = (c && typeof c === 'object') ? c : {};
   const status = VALID_STATUS.has(r.status) ? r.status : 'none';
   return {
-    damage: Math.round(clampNum(r.damage, ENVELOPE.damage, 18)),
-    range: Math.round(clampNum(r.range, ENVELOPE.range, 70)),
+    damage: Math.round(clampNum(r.damage, [0, 60], 18)),
+    range: 0,
     cooldownMs: Math.round(clampNum(r.cooldownMs, ENVELOPE.cooldownMs, 600)),
     knockback: Math.round(clampNum(r.knockback, ENVELOPE.knockback, 0)),
     status,
@@ -358,7 +361,10 @@ export function sanitizePreset(raw, key) {
     kind,
     motion,
     previewOffset: sanitizePreviewOffset(r.previewOffset),
-    weaponTimeline: { flipXKeys: sanitizeFlipKeys(r.weaponTimeline && r.weaponTimeline.flipXKeys) },
+    weaponTimeline: {
+      flipXKeys: sanitizeFlipKeys(r.weaponTimeline && r.weaponTimeline.flipXKeys),
+      flipYKeys: sanitizeFlipKeys(r.weaponTimeline && r.weaponTimeline.flipYKeys)
+    },
     effects: sanitizeEffects(r.effects),
     hitboxes: [],
     blocks: null,
@@ -380,25 +386,28 @@ export function sanitizePreset(raw, key) {
   return out;
 }
 
-// ── Budget (V2): body + every combat preset's combat, cooldown EXCLUDED ──────
-function baseStatsCost(bs) {
-  const hp = norm(bs.maxHp, ENVELOPE.maxHp), spd = norm(bs.moveSpeed, ENVELOPE.moveSpeed);
-  return 14 * hp + 10 * spd;
+// ── Budget (V2): body budget + per-combat-preset budget ─────────────────────
+export function baseStatsCost(bs = {}) {
+  const hp = Math.max(0, (Number(bs.maxHp) || 100) - 100) * 2;
+  const spdSteps = Math.max(0, Math.round(((Number(bs.moveSpeed) || 1) - 1) * 100));
+  return Math.round((hp + spdSteps * 2) * BUDGET_COST_MULT);
 }
 export function combatCost(combat) {
   const c = combat || {};
-  const dmg = norm(c.damage, ENVELOPE.damage);
-  const range = norm(c.range, ENVELOPE.range);
-  const kb = norm(c.knockback, ENVELOPE.knockback);
-  const status = c.status && c.status !== 'none' ? (0.5 + 0.5 * norm(c.statusDurationMs, ENVELOPE.statusDurationMs)) : 0;
-  return 18 * dmg + 6 * range + 3 * kb + 7 * status;   // NO cooldown
+  const damage = Math.max(0, Math.min(60, Number(c.damage) || 0));
+  const cooldown = Math.max(0, Math.round((2500 - (Number(c.cooldownMs) || 2500)) / 50));
+  const knockback = Math.round(Math.abs((Number(c.knockback) || 60) - 60) / 5) * 2;
+  const dur = Math.max(0, Number(c.statusDurationMs) || 0);
+  const statusMul = c.status === 'slow' ? 1 : (c.status === 'bleed' || c.status === 'burn' ? 2 : (c.status === 'stun' ? 3 : 0));
+  const status = Math.ceil(dur / 100) * statusMul;
+  return Math.round((damage + cooldown + knockback + status) * BUDGET_COST_MULT);
 }
 export function statCostV2(weapon) {
   const w = weapon || {};
   let cost = baseStatsCost(w.baseStats || {});
   for (const key of PRIMARY_PRESET_KEYS) {
     const p = w.presets && w.presets[key];
-    if (p && isCombatKind(p.kind)) cost += combatCost(p.combat);
+    if (p && isCombatKind(p.kind)) cost = Math.max(cost, combatCost(p.combat));
   }
   return Math.round(cost);
 }
@@ -408,16 +417,21 @@ export function enforceBudgetV2(weapon) {
   const w = weapon;
   const over = statCostV2(w) > POINT_BUDGET;
   let guard = 0;
-  // Bleed damage across combat presets (highest first), then body hp/move.
-  while (statCostV2(w) > POINT_BUDGET && guard++ < 4000) {
-    let best = null, bestDmg = -1;
+  while ((baseStatsCost(w.baseStats) > POINT_BUDGET || statCostV2(w) > POINT_BUDGET) && guard++ < 4000) {
+    if (baseStatsCost(w.baseStats) > POINT_BUDGET) {
+      if (w.baseStats.moveSpeed > 1) { w.baseStats.moveSpeed = Math.round((w.baseStats.moveSpeed - 0.01) * 100) / 100; continue; }
+      if (w.baseStats.maxHp > 100) { w.baseStats.maxHp -= 1; continue; }
+    }
+    let best = null, bestCost = -1;
     for (const key of PRIMARY_PRESET_KEYS) {
       const p = w.presets[key];
-      if (p && isCombatKind(p.kind) && p.combat.damage > ENVELOPE.damage[0] && p.combat.damage > bestDmg) { best = p; bestDmg = p.combat.damage; }
+      const cost = p && isCombatKind(p.kind) ? combatCost(p.combat) : -1;
+      if (cost > POINT_BUDGET && cost > bestCost) { best = p; bestCost = cost; }
     }
-    if (best) { best.combat.damage -= 1; continue; }
-    if (w.baseStats.moveSpeed > ENVELOPE.moveSpeed[0]) { w.baseStats.moveSpeed = Math.round((w.baseStats.moveSpeed - 0.01) * 100) / 100; continue; }
-    if (w.baseStats.maxHp > ENVELOPE.maxHp[0]) { w.baseStats.maxHp -= 1; continue; }
+    if (best && best.combat.statusDurationMs > 0) { best.combat.statusDurationMs = Math.max(0, best.combat.statusDurationMs - 100); continue; }
+    if (best && best.combat.cooldownMs < ENVELOPE.cooldownMs[1]) { best.combat.cooldownMs = Math.min(ENVELOPE.cooldownMs[1], best.combat.cooldownMs + 50); continue; }
+    if (best && best.combat.damage > 0) { best.combat.damage -= 1; continue; }
+    if (best && best.combat.knockback !== 60) { best.combat.knockback += best.combat.knockback > 60 ? -5 : 5; continue; }
     break;
   }
   return over;
@@ -460,6 +474,13 @@ export function clampWorkshopWeaponV2(raw) {
     offsetX: clampNum(vv.offsetX, [-120, 120], 0),
     offsetY: clampNum(vv.offsetY, [-120, 120], 0),
     dual: !!vv.dual,   // 쌍수(양손) — draws a second off-hand weapon
+    hat: vv.hat && typeof vv.hat === 'object' ? {
+      imageId: vv.hat.imageId ? sanitizeText(vv.hat.imageId, 128) : null,
+      scale: clampNum(vv.hat.scale, [0.2, 4], 1),
+      offsetX: clampNum(vv.hat.offsetX, [-120, 120], 0),
+      offsetY: clampNum(vv.hat.offsetY, [-120, 120], -18),
+      alpha: clampNum(vv.hat.alpha, [0, 1], 1),
+    } : null,
   };
   const rawPresets = (r.presets && typeof r.presets === 'object') ? r.presets : {};
   const presets = {};

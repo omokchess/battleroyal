@@ -80,6 +80,10 @@ export function importWorkshopWeapon(raw) {
   if (raw && raw.weaponImage && imgId && String(imgId).startsWith('custom:')) {
     saveCustomWeaponRecord({ ...raw.weaponImage, id: imgId });
   }
+  const hatId = raw && raw.weaponVisual && raw.weaponVisual.hat && raw.weaponVisual.hat.imageId;
+  if (raw && raw.hatImage && hatId && String(hatId).startsWith('custom:')) {
+    saveCustomWeaponRecord({ ...raw.hatImage, id: hatId });
+  }
   return saveWorkshopWeaponLocal(toWorkshopWeaponV2(raw));
 }
 
@@ -121,6 +125,8 @@ export function v2ToV1Runtime(w) {
     ...p.motion,
     previewOffset: p.previewOffset || null,
     flipXKeys: (p.weaponTimeline && p.weaponTimeline.flipXKeys) || [],
+    flipYKeys: (p.weaponTimeline && p.weaponTimeline.flipYKeys) || [],
+    effects: p.effects || [],
     projectileEvents: p.projectileEvents || [],
     teleportEvents: p.teleportEvents || [],
   });
@@ -155,7 +161,8 @@ export function v2ToV1Runtime(w) {
       rotationOffset: w.weaponVisual.rotationOffset || 0,
       offsetX: w.weaponVisual.offsetX || 0,
       offsetY: w.weaponVisual.offsetY || 0,
-      dual: !!w.weaponVisual.dual
+      dual: !!w.weaponVisual.dual,
+      hat: w.weaponVisual.hat || null
     };
   }
   // The primary (basic) preset's ranged/projectile config drives the basic attack.

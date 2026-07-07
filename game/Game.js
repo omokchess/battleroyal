@@ -961,11 +961,9 @@ export class Game {
    * null. Cosmetic/peer motions never have hitboxes (dual-trust sanitize), so a
    * guest can't fabricate one — the host only ever reads its own registry here.
    */
-  /** Strip an equipped workshop weapon when the room disallows them (default).
-   *  Host-authoritative: the host clears it, so its broadcast carries null and
-   *  no peer can sneak a workshop weapon into a clean/competitive match. */
+  /** Workshop weapons are always allowed in the creator-first ruleset. */
   _enforceWorkshopPolicy(player) {
-    if (player && !this.roomConfig?.allowWorkshop) player.workshopWeapon = null;
+    return player;
   }
 
   _canonicalHitboxMotion(player) {
@@ -987,6 +985,8 @@ export class Game {
   _fireWorkshopProjectile(player, now) {
     const pj = player.workshopWeapon.projectile; if (!pj) return;
     player.lastAttackTime = now; player.swingDirection *= -1;
+    player.attackMotionTag = 'attack';
+    this._lockPlayerMotion(player, now, player.workshopWeapon?.motionSet?.attack);
     this._spawnWorkshopProjectile(player, pj, player.workshopWeapon?.stats || {}, now, 'basic');
   }
 
@@ -1037,7 +1037,10 @@ export class Game {
    *  basic workshop projectile but carries ITS OWN damage/status so hits apply
    *  the authored skill's combat, not the basic swing's. */
   _fireWorkshopPresetProjectile(player, pj, combat, now, tagSuffix) {
+    if (this._isMotionLocked(player, now)) return;
     player.lastAttackTime = now; player.swingDirection *= -1;
+    player.attackMotionTag = tagSuffix || 'skill';
+    this._lockPlayerMotion(player, now, player.workshopWeapon?.motionSet?.[tagSuffix || 'skill']);
     this._spawnWorkshopProjectile(player, pj, combat, now, tagSuffix || 'skill');
   }
 
@@ -1050,13 +1053,14 @@ export class Game {
     const ws = player && player.workshopWeapon;
     const combat = ws && ws.presetCombat && ws.presetCombat[slot];
     if (!combat) return false;
+    if (this._isMotionLocked(player, now)) return true;
     if (!player.wsSkillCd) player.wsSkillCd = {};
     if ((player.wsSkillCd[slot] || 0) > 0) return true;   // on cooldown — button consumed, nothing fires
     player.wsSkillCd[slot] = (Number.isFinite(combat.cooldownMs) ? combat.cooldownMs : 1000) / 1000;
     const motion = ws.motionSet && ws.motionSet[slot];
     const hasTimelineEvents = !!(motion && ((motion.projectileEvents && motion.projectileEvents.length) || (motion.teleportEvents && motion.teleportEvents.length)));
     const ranged = ws.presetRanged && ws.presetRanged[slot];
-    if (ranged && !hasTimelineEvents) { this._fireWorkshopPresetProjectile(player, ranged, combat, now); return true; }
+    if (ranged && !hasTimelineEvents) { this._fireWorkshopPresetProjectile(player, ranged, combat, now, slot); return true; }
     const hb = ws.presetHitboxes && ws.presetHitboxes[slot];
     if ((Array.isArray(hb) && hb.length) || hasTimelineEvents) {
       const swingMotion = motion ? { ...motion, hitboxes: (Array.isArray(motion.hitboxes) ? motion.hitboxes : hb) || [] } : { duration: 0.4, hitboxes: hb || [] };
@@ -1064,6 +1068,7 @@ export class Game {
         damage: combat.damage, knockback: combat.knockback,
         status: combat.status, statusMs: combat.statusDurationMs,
         projectile: ranged || null,
+        motionTag: slot,
       });
     }
     return true;   // slot is authored (motion + cooldown apply) even with no hitbox/projectile yet
@@ -1073,6 +1078,8 @@ export class Game {
    *  lastAttackTime, and record the active swing for _updateHitboxSwings. */
   _startHitboxSwing(player, motion, now, opts = {}) {
     player.lastAttackTime = now;
+    player.attackMotionTag = opts.motionTag || 'attack';
+    this._lockPlayerMotion(player, now, motion);
     player.swingDirection *= -1;
     player._hbSwing = {
       start: now,
@@ -1080,9 +1087,11 @@ export class Game {
       hitboxes: motion.hitboxes,
       projectileEvents: Array.isArray(motion.projectileEvents) ? motion.projectileEvents : [],
       teleportEvents: Array.isArray(motion.teleportEvents) ? motion.teleportEvents : [],
+      frameEffects: Array.isArray(motion.effects) ? motion.effects : [],
       eventProjectile: opts.projectile || null,
       firedProjectileEvents: new Set(),
       firedTeleportEvents: new Set(),
+      firedFrameEffects: new Set(),
       knockback: Number.isFinite(opts.knockback) ? opts.knockback : (motion.knockback || 0),
       damage: Number.isFinite(opts.damage) ? opts.damage : null,   // override (e.g. heavy/skill preset)
       status: opts.status && opts.status !== 'none' ? opts.status : null,
@@ -1090,6 +1099,16 @@ export class Game {
       hit: new Set(),
     };
     if (player.id === this.localPlayerId) Sound.play(Sound.attackSoundFor(getEffectiveWeapon(player.weapon, player.buffType)));
+  }
+
+  _lockPlayerMotion(player, now, motion = null) {
+    if (!player) return;
+    const durMs = Math.max(80, Math.round(((motion && motion.duration) || 0.42) * 1000));
+    player.motionLockUntil = Math.max(player.motionLockUntil || 0, now + durMs);
+  }
+
+  _isMotionLocked(player, now = Date.now()) {
+    return !!(player && player.motionLockUntil && now < player.motionLockUntil);
   }
 
   /**
@@ -1168,6 +1187,49 @@ export class Game {
       this._displace(player, Math.cos(ang) * dist, Math.sin(ang) * dist);
       this._resolveOutOfTerrain(player);
     }
+    for (let i = 0; i < (sw.frameEffects || []).length; i++) {
+      if (sw.firedFrameEffects.has(i)) continue;
+      const ev = sw.frameEffects[i];
+      if (phase < ev.time) continue;
+      sw.firedFrameEffects.add(i);
+      this._spawnWorkshopFrameEffect(player, ev, now);
+    }
+  }
+
+  _spawnWorkshopFrameEffect(player, ev = {}, now = Date.now()) {
+    if (!player) return;
+    const angle = (player.angle || 0) + ((Number(ev.rotation) || 0) * Math.PI / 180);
+    const forward = Math.cos(player.angle || 0) >= 0 ? 1 : -1;
+    const xOff = Number(ev.x) || 0;
+    const yOff = Number(ev.y) || 0;
+    let bx = player.x;
+    let by = player.y - (player.halfH || 20) * 0.35;
+    if (ev.followBone === 'weaponTip') {
+      bx += Math.cos(player.angle || 0) * ((player.radius || 14) + 28);
+      by += Math.sin(player.angle || 0) * ((player.radius || 14) + 28);
+    } else if (ev.followBone === 'handN' || ev.followBone === 'handR') {
+      bx += Math.cos(player.angle || 0) * ((player.radius || 14) + 10);
+      by += Math.sin(player.angle || 0) * ((player.radius || 14) + 10);
+    } else if (ev.followBone === 'head') {
+      by -= (player.halfH || 20) * 0.85;
+    } else if (ev.followBone === 'root') {
+      by = player.y;
+    }
+    this.effects.push({
+      attackerId: player.id,
+      x: bx + xOff * forward,
+      y: by + yOff,
+      angle,
+      weapon: player.weapon,
+      type: 'workshop_frame_fx',
+      worldAnchored: true,
+      assetId: ev.assetId || 'spark',
+      scale: Number(ev.scale) || 1,
+      alpha: Number.isFinite(ev.alpha) ? ev.alpha : 1,
+      progress: 0,
+      timestamp: now,
+      lifetime: 420
+    });
   }
 
   // ── Block-gimmick VM host integration (weapon blockcoding) ─────────────────
@@ -1514,8 +1576,11 @@ export class Game {
     if (!player || !weaponConfig || !player.canAttack(now)) return false;
     // A block program's basicAttack IS the attack (spawns its own hits); else
     // fall back to a workshop projectile, canonical hitbox swing, or coded kit.
+    if (this._isMotionLocked(player, now)) return false;
     if (player.blockVM && player.blockVM.hasHandler('basicAttack')) {
       player.lastAttackTime = now;
+      player.attackMotionTag = 'attack';
+      this._lockPlayerMotion(player, now, player.workshopWeapon?.motionSet?.attack);
       player.swingDirection *= -1;
       this._runBlockEvent(player, 'basicAttack', now);
       if (player.id === this.localPlayerId) Sound.play(Sound.attackSoundFor(weaponConfig));
@@ -1543,7 +1608,6 @@ export class Game {
         player._basicCombo = (player._basicCombo || 0) + 1;
         if (player._basicCombo >= 3) {
           player._basicCombo = 0;
-          this._triggerStickMotion(player, 'heavy', now);
           const motion = heavyMotion;
           const swingMotion = motion ? { ...motion, hitboxes: (Array.isArray(motion.hitboxes) ? motion.hitboxes : heavyHb) || [] } : { duration: 0.5, hitboxes: heavyHb || [] };
           this._startHitboxSwing(player, swingMotion, now, {
@@ -1551,6 +1615,7 @@ export class Game {
             knockback: heavyCombat.knockback,
             status: heavyCombat.status, statusMs: heavyCombat.statusDurationMs,
             projectile: ws.presetRanged?.heavy || null,
+            motionTag: 'heavy',
           });
           return true;
         }
@@ -2961,6 +3026,7 @@ export class Game {
     } else if (data.action === 'teleportUp') {
       this._handleAltSkillReleased(player, now);
     } else if (data.action === 'basicAttack') {
+      if (this._isMotionLocked(player, now)) return;
       this._applyMobileAimAssistForAttack(player, 'basic');
       this._performBasicAttack(player, getEffectiveWeapon(player.weapon, player.buffType), now);
     } else if (data.action === 'targetCast') {
@@ -3025,10 +3091,11 @@ export class Game {
 
   _handleSkillPressed(player, now) {
     if (!player || player.isDead || player.stunTimeLeft > 0) return;
-    this._triggerStickMotion(player, 'skill', now);   // workshop weapon's F-skill motion (cosmetic)
     // An equipped workshop weapon's OWN skill1 ability (if authored) replaces the
     // base weapon's hardcoded F-skill entirely — its stats assume no workshop kit.
     if (this._activateWorkshopSkill(player, 'skill', now)) return;
+    if (this._isMotionLocked(player, now)) return;
+    this._triggerStickMotion(player, 'skill', now);   // workshop weapon's F-skill motion (cosmetic)
     if (player.weapon === 'dagger' && player.daggerQte) {
       this._tryDaggerQteInput(player, now);
       return;
@@ -3053,8 +3120,9 @@ export class Game {
 
   _handleAltSkillPressed(player, now) {
     if (!player || player.isDead || player.stunTimeLeft > 0) return;
-    this._triggerStickMotion(player, 'skill2', now);   // workshop weapon's E-skill motion (cosmetic)
     if (this._activateWorkshopSkill(player, 'skill2', now)) return;
+    if (this._isMotionLocked(player, now)) return;
+    this._triggerStickMotion(player, 'skill2', now);   // workshop weapon's E-skill motion (cosmetic)
     if (player.weapon === 'sniper') {
       this._handleTeleport(player, now);
     } else if (player.weapon === 'magicstaff') {
@@ -3075,11 +3143,12 @@ export class Game {
 
   _handleTargetCast(player, x, y, now) {
     if (!player || player.isDead || player.stunTimeLeft > 0) return;
-    this._triggerStickMotion(player, 'skill3', now);   // 스킬3 (R) motion
     // The R-skill fires toward the aim direction — workshop skill3 uses the same
     // facing/aim angle a ranged ability would (already resolved into player.angle
     // by the caller); melee skill3 swings its hitboxes from the player's position.
     if (this._activateWorkshopSkill(player, 'skill3', now)) return;
+    if (this._isMotionLocked(player, now)) return;
+    this._triggerStickMotion(player, 'skill3', now);   // 스킬3 (R) motion
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     const targetX = Math.max(0, Math.min(this.mapWidth, x));
     const targetY = Math.max(0, Math.min(this.mapHeight, y));
@@ -6255,6 +6324,7 @@ export class Game {
             p.spearThrown = Boolean(snap.spearThrown);
             p.flameSpraying = Boolean(snap.flameSpraying);
             p.isMobile = Boolean(snap.isMobile);
+            p.attackMotionTag = typeof snap.attackMotionTag === 'string' ? snap.attackMotionTag : null;
             p.arrowStacks = Math.max(0, Math.floor(snap.arrowStacks || 0));
             p.greatswordChargeStart = snap.greatswordChargeMs > 0 ? Date.now() - snap.greatswordChargeMs : 0;
             p.katanaChargeStart = snap.katanaChargeMs > 0 ? Date.now() - snap.katanaChargeMs : 0;
@@ -6277,6 +6347,18 @@ export class Game {
             p.accentColor = snap.accentColor;
             p.costumeDecoration = snap.costumeDecoration || null;
             p.costumeEffect = snap.costumeEffect || null;
+            p.motionLockUntil = snap.motionLockMs > 0 ? Date.now() + Math.max(0, Math.round(snap.motionLockMs || 0)) : 0;
+            if (snap.wsw) {
+              const nextWsKey = `${snap.wsw.id || ''}:${snap.wsw.name || ''}:${snap.wsw.weaponVisual?.imageId || ''}:${snap.wsw.weaponImage?.src?.length || 0}`;
+              if (p._wsSnapshotKey !== nextWsKey) {
+                p._applyWorkshopWeapon(snap.wsw);
+                p._wsSnapshotKey = nextWsKey;
+              }
+            } else if (p.workshopWeapon) {
+              p.workshopWeapon = null;
+              p.blockVM = null;
+              p._wsSnapshotKey = '';
+            }
             p.applyCosmeticsSnapshot(snap.cos);
 
             if (id !== this.localPlayerId) {
@@ -6335,6 +6417,9 @@ export class Game {
             if (Number.isFinite(snap.vx)) proj.vx = snap.vx;
             if (Number.isFinite(snap.vy)) proj.vy = snap.vy;
             proj.weapon = snap.weapon || (snap.kind === 'greatswordwave' ? 'greatsword' : proj.weapon);
+            proj.wsImageId = snap.wsImageId || null;
+            proj.wsScale = snap.wsScale || 1;
+            proj.piercing = !!snap.piercing;
             proj.isDead = snap.isDead;
             return proj;
           });

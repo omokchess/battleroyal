@@ -27,6 +27,7 @@ import {
   equippedFromProfile,
   purchaseItem,
   equipItem,
+  spendCoins,
   adminAddCoins,
   adminGrantAllItems,
   checkIsAdmin,
@@ -155,6 +156,7 @@ function clampFetched(w) {
   // Preserve V2 fields so 무기고에 추가 (importWorkshopWeapon) migrates them faithfully.
   if (Number(w.schemaVersion) === 2) { out.schemaVersion = 2; out.category = w.category; out.baseStats = w.baseStats; out.presets = w.presets; if (w.weaponVisual) out.weaponVisual = w.weaponVisual; }
   if (w.weaponImage) out.weaponImage = w.weaponImage;   // custom pixels → recipient's local store on import
+  if (w.hatImage) out.hatImage = w.hatImage;
   return out;
 }
 export function publishMyWorkshopWeapon(def) { return publishWorkshopWeapon(def, getUsername()); }
@@ -163,6 +165,16 @@ export async function myWorkshopWeapons() { return (await fetchMyWorkshopWeapons
 export function likeWorkshop(id) { return likeWorkshopWeapon(id); }
 export function reportWorkshop(id) { return reportWorkshopWeapon(id); }
 export function moderateWorkshop(id, status) { return setWorkshopWeaponStatus(id, status); }
+
+export async function spendWorkshopWeaponCoins(amount = 100) {
+  if (!profile) throw new Error('로그인이 필요합니다');
+  const updated = await spendCoins(amount, 'workshop_weapon');
+  if (updated) {
+    profile = updated;
+    renderAccountBar();
+  }
+  return updated;
+}
 
 /** 구글 계정 연동 (성공 시 프로필 사진 사용 가능) */
 export async function linkGoogleAccount() {

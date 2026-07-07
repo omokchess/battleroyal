@@ -7,9 +7,10 @@ import { Weapons, getEffectiveWeapon, DashConfig } from './Weapons.js';
 import { STATUS } from './Status.js';
 import { PHYS } from './Level.js';
 import { Collision } from './Collision.js';
-import { clampWorkshopWeapon, sanitizeCombat, clampWorkshopHitboxes, sanitizeProjectile } from './Workshop.js';
+import { clampWorkshopWeapon, sanitizeCombat, clampWorkshopHitboxes, sanitizeProjectile, sanitizeEffects } from './Workshop.js';
 import { BlockVM } from './BlockVM.js';
 import { BlockBudget, weaponBaseDps } from './BlockBudget.js';
+import { saveCustomWeaponRecord } from './WeaponImages.js';
 
 export class Player {
   constructor(id, nickname, weaponType, x = 0, y = 0, costume = null) {
@@ -44,6 +45,7 @@ export class Player {
 
     // Cool down tracker
     this.lastAttackTime = 0;
+    this.motionLockUntil = 0;
     this.swingDirection = -1;   // first triggerAttack flips this to +1 (downward first swing)
     this.gauntletPunchSide = -1;
     this.comboStep = 0;
@@ -168,8 +170,37 @@ export class Player {
         rotationOffset: Number(def.weaponVisual.rotationOffset) || 0,
         offsetX: Number(def.weaponVisual.offsetX) || 0,
         offsetY: Number(def.weaponVisual.offsetY) || 0,
-        dual: !!def.weaponVisual.dual
+        dual: !!def.weaponVisual.dual,
+        hat: def.weaponVisual.hat && typeof def.weaponVisual.hat === 'object' ? {
+          imageId: def.weaponVisual.hat.imageId ? String(def.weaponVisual.hat.imageId).slice(0, 128) : null,
+          scale: Number(def.weaponVisual.hat.scale) || 1,
+          offsetX: Number(def.weaponVisual.hat.offsetX) || 0,
+          offsetY: Number(def.weaponVisual.hat.offsetY) || -18,
+          alpha: Number.isFinite(def.weaponVisual.hat.alpha) ? def.weaponVisual.hat.alpha : 1,
+        } : null
       };
+    }
+    if (def && def.weaponImage && def.weaponVisual?.imageId === def.weaponImage.id) {
+      if (saveCustomWeaponRecord(def.weaponImage)) {
+        safe.weaponImage = {
+          id: def.weaponImage.id,
+          name: String(def.weaponImage.name || safe.name || '공방 무기').slice(0, 40),
+          src: def.weaponImage.src,
+          size: Number(def.weaponImage.size) || 2,
+          anchors: (def.weaponImage.anchors && typeof def.weaponImage.anchors === 'object') ? def.weaponImage.anchors : null,
+        };
+      }
+    }
+    if (def && def.hatImage && safe.weaponVisual?.hat?.imageId === def.hatImage.id) {
+      if (saveCustomWeaponRecord(def.hatImage)) {
+        safe.hatImage = {
+          id: def.hatImage.id,
+          name: String(def.hatImage.name || '모자').slice(0, 40),
+          src: def.hatImage.src,
+          size: Number(def.hatImage.size) || 1,
+          anchors: null,
+        };
+      }
     }
     // Ranged basic attack (projectile config) — kept for the fire path + renderer.
     if (def && def.ranged && def.projectile) { safe.ranged = true; safe.projectile = def.projectile; }
@@ -190,6 +221,14 @@ export class Player {
       const pr = {};
       for (const k in def.presetRanged) pr[k] = sanitizeProjectile(def.presetRanged[k]);
       safe.presetRanged = pr;
+    }
+    if (def && def.motionSet && safe.motionSet) {
+      for (const k in safe.motionSet) {
+        const rawMotion = def.motionSet[k];
+        if (rawMotion && Array.isArray(rawMotion.effects)) {
+          safe.motionSet[k].effects = sanitizeEffects(rawMotion.effects);
+        }
+      }
     }
     this.workshopWeapon = safe;
     if (def && def.id) this.workshopWeapon.id = String(def.id).slice(0, 64);
@@ -579,6 +618,7 @@ export class Player {
       isMobile: this.isMobile,
       mobileAimAssist: this.mobileAimAssist,
       automaticAttack: this.automaticAttack,
+      attackMotionTag: this.attackMotionTag || null,
       arrowStacks: this.arrowStacks || 0,
       greatswordChargeMs: this.greatswordChargeStart > 0 ? Math.max(0, Date.now() - this.greatswordChargeStart) : 0,
       katanaChargeMs: this.katanaChargeStart > 0 ? Math.max(0, Date.now() - this.katanaChargeStart) : 0,
@@ -592,6 +632,7 @@ export class Player {
       sniperTeleportTargetMs: Math.max(0, Math.round((this.sniperTeleportTargetUntil || 0) - Date.now())),
       altSkillCdMs: Math.round((this.altSkillCdLeft || 0) * 1000),
       targetSkillCdMs: Math.round((this.targetSkillCdLeft || 0) * 1000),
+      motionLockMs: Math.max(0, Math.round((this.motionLockUntil || 0) - Date.now())),
       orbitMs: Math.max(0, Math.round((this.chakramOrbitUntil || 0) - Date.now())),
       shieldMs: Math.max(0, Math.round((this.heatShieldUntil || 0) - Date.now())),
       stanceMs: Math.max(0, Math.round((this.guardianStanceUntil || 0) - Date.now())),
@@ -635,6 +676,7 @@ export class Player {
     this.isMobile = Boolean(data.isMobile);
     this.mobileAimAssist = data.mobileAimAssist === undefined ? true : Boolean(data.mobileAimAssist);
     this.automaticAttack = Boolean(data.automaticAttack);
+    this.attackMotionTag = typeof data.attackMotionTag === 'string' ? data.attackMotionTag : null;
     this.arrowStacks = Math.max(0, Math.floor(data.arrowStacks || 0));
     this.greatswordChargeStart = data.greatswordChargeMs > 0 ? Date.now() - data.greatswordChargeMs : 0;
     this.katanaChargeStart = data.katanaChargeMs > 0 ? Date.now() - data.katanaChargeMs : 0;
@@ -643,6 +685,7 @@ export class Player {
     this.sniperTeleportTargetUntil = data.sniperTeleportTargetMs > 0 ? Date.now() + data.sniperTeleportTargetMs : 0;
     this.altSkillCdLeft = Math.max(0, (data.altSkillCdMs || 0) / 1000);
     this.targetSkillCdLeft = Math.max(0, (data.targetSkillCdMs || 0) / 1000);
+    this.motionLockUntil = data.motionLockMs > 0 ? Date.now() + data.motionLockMs : 0;
     this.chakramOrbitUntil = data.orbitMs > 0 ? Date.now() + data.orbitMs : 0;
     this.heatShieldUntil = data.shieldMs > 0 ? Date.now() + data.shieldMs : 0;
     this.guardianStanceUntil = data.stanceMs > 0 ? Date.now() + data.stanceMs : 0;

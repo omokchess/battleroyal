@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   clampWorkshopWeaponV2, migrateV1toV2, toWorkshopWeaponV2, makeEmptyWeaponV2, makeEmptyPreset,
-  statCostV2, combatCost, sanitizeFlipKeys, sampleFlip, sanitizeProjectile, sanitizeEffects,
+  statCostV2, combatCost, sanitizeFlipKeys, sampleFlip, sanitizeProjectile, sanitizeProjectileEvents, sanitizeTeleportEvents, sanitizeEffects,
   POINT_BUDGET, PROJECTILE_IMAGES,
 } from '../game/Workshop.js';
 
@@ -22,11 +22,12 @@ test('V1 → V2 migration moves fields to the right places', () => {
   assert.equal(w.schemaVersion, 2);
   // body stats only on the weapon
   assert.equal(w.baseStats.maxHp, 130);
-  assert.equal(w.baseStats.moveSpeed, 1.2);
+  assert.ok(w.baseStats.moveSpeed <= 1.2);
+  assert.ok(statCostV2(w) <= POINT_BUDGET, 'migrated legacy weapon is clamped to the stronger budget');
   assert.equal(w.baseStats.damage, undefined);
   // V1 combat stats → basic.combat
   assert.equal(w.presets.basic.combat.damage, 40);
-  assert.equal(w.presets.basic.combat.range, 120);
+  assert.equal(w.presets.basic.combat.range, 0);
   assert.equal(w.presets.basic.combat.status, 'bleed');
   // motions routed
   assert.ok(w.presets.basic.motion.keyframes.length);
@@ -49,17 +50,17 @@ test('toWorkshopWeaponV2 passes V2 through and migrates V1', () => {
   assert.equal(migrated.presets.basic.combat.damage, 20);
 });
 
-test('budget: cooldown is excluded and over-budget bleeds to ≤100', () => {
+test('budget: cooldown is included and over-budget bleeds to ≤100 per section', () => {
   const w = makeEmptyWeaponV2({ firstPresetKind: 'basic' });
-  // Two identical combat costs: fast vs slow cooldown → same budget.
+  // Faster cooldown costs more budget.
   const fast = { ...w, presets: { basic: { ...w.presets.basic, combat: { ...w.presets.basic.combat, cooldownMs: 250 } } } };
   const slow = { ...w, presets: { basic: { ...w.presets.basic, combat: { ...w.presets.basic.combat, cooldownMs: 2500 } } } };
-  assert.equal(statCostV2(fast), statCostV2(slow), 'cooldown does not affect budget');
+  assert.ok(statCostV2(fast) > statCostV2(slow), 'cooldown affects budget');
   // Max everything across all 6 combat presets → over budget → clamped ≤100.
   const maxed = clampWorkshopWeaponV2({
     schemaVersion: 2, baseStats: { maxHp: 160, moveSpeed: 1.35 },
     presets: Object.fromEntries(['basic', 'heavy', 'skill1', 'skill2', 'skill3'].map((k) => [k,
-      { kind: k, motion: { keyframes: [{ t: 0, pose: {} }] }, combat: { damage: 55, range: 300, knockback: 200, status: 'bleed', statusDurationMs: 3000 } }])),
+      { kind: k, motion: { keyframes: [{ t: 0, pose: {} }] }, combat: { damage: 60, cooldownMs: 250, knockback: 200, status: 'bleed', statusDurationMs: 3000 } }])),
   });
   assert.ok(statCostV2(maxed) <= POINT_BUDGET, `enforced ${statCostV2(maxed)} ≤ ${POINT_BUDGET}`);
 });
@@ -89,6 +90,12 @@ test('projectile sanitize: valid imageId + hitbox clamped + direction source', (
   assert.ok(p.hitbox.width >= 4, 'negative width fixed');
 });
 
+test('projectile sanitize preserves custom image ids', () => {
+  const id = 'custom:' + 'p'.repeat(72);
+  const p = sanitizeProjectile({ imageId: id, speed: 400 });
+  assert.equal(p.imageId, id);
+});
+
 test('non-combat / dash presets carry no combat or hitboxes', () => {
   const run = makeEmptyPreset('run');
   assert.equal(run.combat, undefined);
@@ -112,4 +119,29 @@ test('effects sanitize: capped, followBone whitelisted, alpha 0..1', () => {
   assert.equal(fx[0].time, 0.1, 'sorted by time');
   assert.ok(fx.every((e) => e.alpha >= 0 && e.alpha <= 1));
   assert.equal(fx.find((e) => e.assetId === 'boom').followBone, null, 'unknown bone → null');
+});
+
+test('frame events sanitize: projectiles capped to 5 and teleports clamped', () => {
+  const shots = sanitizeProjectileEvents(Array.from({ length: 8 }, (_, i) => ({
+    time: 1 - i * 0.1,
+    projectile: { imageId: 'bolt', speed: 99999, hitbox: { shape: 'circle', radius: 999 } },
+  })));
+  assert.equal(shots.length, 5);
+  assert.deepEqual(shots.map(e => e.time), [...shots.map(e => e.time)].sort((a, b) => a - b));
+  assert.ok(shots.every(e => e.projectile.speed <= 1200));
+
+  const teleports = sanitizeTeleportEvents([{ time: 2, directionSource: 'hacked', distance: 9999 }]);
+  assert.equal(teleports[0].time, 1);
+  assert.equal(teleports[0].directionSource, 'cursor');
+  assert.equal(teleports[0].distance, 260);
+});
+
+test('V2 weaponVisual keeps long custom image ids', () => {
+  const id = 'custom:' + 'a'.repeat(80);
+  const w = clampWorkshopWeaponV2({
+    schemaVersion: 2,
+    weaponVisual: { imageId: id, scale: 2 },
+    presets: { basic: makeEmptyPreset('basic') },
+  });
+  assert.equal(w.weaponVisual.imageId, id);
 });

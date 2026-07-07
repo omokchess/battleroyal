@@ -8,6 +8,8 @@
  * in later via imageId; this is the built-in fallback.
  */
 
+import { resolveWeaponImage } from './WeaponImages.js';
+
 const COLORS = {
   arrow: '#d8c38a', bolt: '#9fe0ff', magicbolt: '#c56cff',
   flame: '#ff7a3d', iceshard: '#7fd3ff', bullet: '#e5e7eb',
@@ -16,6 +18,18 @@ const COLORS = {
 /** Draw a projectile of `imageId` centred at (x,y), pointing along `angle` (rad),
  *  sized by `size` px (long axis). Falls back to 'arrow' for unknown ids. */
 export function drawProjectileShape(ctx, x, y, angle, imageId, size = 20) {
+  const custom = typeof imageId === 'string' && imageId.startsWith('custom:') ? resolveWeaponImage(imageId) : null;
+  if (custom && custom.img && custom.img.complete && custom.img.naturalWidth) {
+    const L = Math.max(6, size);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(custom.img, -L / 2, -L / 2, L, L);
+    ctx.imageSmoothingEnabled = true;
+    ctx.restore();
+    return;
+  }
   const col = COLORS[imageId] || COLORS.arrow;
   const L = Math.max(6, size), w = L * 0.42;
   ctx.save();

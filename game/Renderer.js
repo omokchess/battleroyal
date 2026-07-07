@@ -9,7 +9,7 @@ import { drawStickman, WEAPON_STICK_COLOR } from './Stickman.js';
 import { StickAnimator } from './Motion.js';
 import { sanitizeLook } from './StickLook.js';
 import { resolveWeaponImage } from './WeaponImages.js';
-import { drawProjectileShape } from './ProjectileArt.js';
+import { drawProjectileShape, drawFxShape } from './ProjectileArt.js';
 
 // Pixel-detected frame x-ranges of fx/slash2 (SpriteSheetSlash02.png, H=50).
 // The sheet is not a uniform grid; these are the real crescent frames
@@ -557,26 +557,33 @@ export class Renderer {
     const accent = p.accentColor || '#ffffff';
     this._drawCostumeEffect(ctx, bodyScr, p, radius, now);
 
-    // Procedural stick-figure body (Phase A stickman pivot): replaces the sprite
-    // sheet + in-hand weapon sprite. The motion only chooses joint angles — all
-    // combat stays code-defined. The weapon is drawn in-hand by the stickman in
-    // its weapon colour, biased to the (synced) aim so it reads in combat.
-    const { pose, weaponFlip } = this._stick.sample(p, now);
+    // Procedural stick-figure body. Authored workshop motions own the weapon arm
+    // angle; aiming still drives combat direction, but no longer overrides the
+    // visual weapon tilt that the player made in the motion editor.
+    const { pose, weaponFlip, weaponFlipY, rootOffset } = this._stick.sample(p, now);
+    const stickScr = {
+      x: bodyScr.x + (rootOffset?.x || 0) * z,
+      y: bodyScr.y + (rootOffset?.y || 0) * z,
+    };
     const look = sanitizeLook(p.stickLook);
     // A workshop weapon's custom image (resolved locally from the small id) rides
     // on the stick's hand instead of the procedural bar.
     const wv = p.workshopWeapon && p.workshopWeapon.weaponVisual;
     const wimg = wv && wv.imageId ? resolveWeaponImage(wv.imageId) : null;
+    const himg = wv && wv.hat && wv.hat.imageId ? resolveWeaponImage(wv.hat.imageId) : null;
     drawStickman({
-      ctx, x: bodyScr.x, y: bodyScr.y, scale: radius, facing: face,
+      ctx, x: stickScr.x, y: stickScr.y, scale: radius, facing: face,
       color: look.color || bodyColor, accent: '#0d0a06', lineW: look.lineW,
-      pose, aimAngle: p.angle || 0, weapon: p.weapon,
+      pose, aimAngle: 0, weapon: p.weapon, rawNearArm: true,
       headShape: look.head, accessory: look.accessory,
       weaponImage: wimg && wimg.img && wimg.img.complete && wimg.img.naturalWidth ? wimg.img : null,
       weaponImageSize: wimg ? wimg.size : 2.0,
       weaponImageAnchors: wimg ? wimg.anchors : null,
       weaponFlip: !!weaponFlip,
+      weaponFlipY: !!weaponFlipY,
       weaponDual: !!(wv && wv.dual),
+      hatImage: himg && himg.img && himg.img.complete && himg.img.naturalWidth ? himg.img : null,
+      hat: wv?.hat || null,
     });
 
     if (p.burnTimeLeft > 0) this._drawBurnFlames(ctx, bodyScr, radius, z);
@@ -2791,9 +2798,23 @@ export class Renderer {
         this._drawKillFx(ctx, scr, e, alpha, zoom);
       } else if (e.type === 'respawn_fx') {
         this._drawRespawnFx(ctx, scr, e, alpha, zoom);
+      } else if (e.type === 'workshop_frame_fx') {
+        this._drawWorkshopFrameFx(ctx, scr, e, alpha, zoom);
       }
     });
 
+    ctx.restore();
+  }
+
+  _drawWorkshopFrameFx(ctx, scr, e, alpha, zoom) {
+    const progress = clamp01(e.progress);
+    const baseAlpha = Number.isFinite(e.alpha) ? e.alpha : 1;
+    const pulse = 0.85 + Math.sin(progress * Math.PI) * 0.35;
+    ctx.save();
+    ctx.translate(scr.x, scr.y);
+    if (Number.isFinite(e.angle)) ctx.rotate(e.angle);
+    ctx.globalAlpha = Math.max(0, Math.min(1, alpha * baseAlpha * (1 - progress * 0.35)));
+    drawFxShape(ctx, e.assetId || 'spark', 18 * (Number(e.scale) || 1) * zoom * pulse);
     ctx.restore();
   }
 

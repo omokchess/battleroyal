@@ -80,6 +80,10 @@ export function importWorkshopWeapon(raw) {
   if (raw && raw.weaponImage && imgId && String(imgId).startsWith('custom:')) {
     saveCustomWeaponRecord({ ...raw.weaponImage, id: imgId });
   }
+  const hatId = raw && raw.weaponVisual && raw.weaponVisual.hat && raw.weaponVisual.hat.imageId;
+  if (raw && raw.hatImage && hatId && String(hatId).startsWith('custom:')) {
+    saveCustomWeaponRecord({ ...raw.hatImage, id: hatId });
+  }
   return saveWorkshopWeaponLocal(toWorkshopWeaponV2(raw));
 }
 
@@ -117,8 +121,17 @@ export function v2ToV1Runtime(w) {
   const motionSet = {};
   // Attach each preset's flip timeline onto its runtime motion so the in-game
   // renderer can flip the weapon exactly like the editor preview does.
-  const withFlip = (p) => ({ ...p.motion, flipXKeys: (p.weaponTimeline && p.weaponTimeline.flipXKeys) || [] });
-  if (basic) motionSet.attack = { ...basic.motion, hitboxes: basic.hitboxes || [], flipXKeys: (basic.weaponTimeline && basic.weaponTimeline.flipXKeys) || [] };
+  const withTimelineEvents = (p) => ({
+    ...p.motion,
+    previewOffset: p.previewOffset || null,
+    flipXKeys: (p.weaponTimeline && p.weaponTimeline.flipXKeys) || [],
+    flipYKeys: (p.weaponTimeline && p.weaponTimeline.flipYKeys) || [],
+    effects: p.effects || [],
+    projectileEvents: p.projectileEvents || [],
+    teleportEvents: p.teleportEvents || [],
+  });
+  const withFlip = (p) => withTimelineEvents(p);
+  if (basic) motionSet.attack = { ...withTimelineEvents(basic), hitboxes: basic.hitboxes || [] };
   if (w.presets.dash) motionSet.dash = withFlip(w.presets.dash);
   for (const k of NONCOMBAT_PRESET_KINDS) if (w.presets[k]) motionSet[k] = withFlip(w.presets[k]);
   // Combat skill preset motions → the runtime slots the animator plays via synced
@@ -132,7 +145,7 @@ export function v2ToV1Runtime(w) {
     motionSet[SKILL_MOTION_SLOT[k]] = { ...withFlip(sp), hitboxes: sp.hitboxes || [] };
   }
   // Heavy (평타 3연타 finisher) keeps its OWN hitboxes for the 3rd-hit swing.
-  if (w.presets.heavy) motionSet.heavy = { ...w.presets.heavy.motion, hitboxes: w.presets.heavy.hitboxes || [], flipXKeys: (w.presets.heavy.weaponTimeline && w.presets.heavy.weaponTimeline.flipXKeys) || [] };
+  if (w.presets.heavy) motionSet.heavy = { ...withTimelineEvents(w.presets.heavy), hitboxes: w.presets.heavy.hitboxes || [] };
   const c = basic ? basic.combat : {};
   const stats = {
     maxHp: w.baseStats.maxHp, moveSpeed: w.baseStats.moveSpeed,
@@ -141,7 +154,17 @@ export function v2ToV1Runtime(w) {
   };
   const rt = clampWorkshopWeapon({ name: w.name, color: w.color, stats, motionSet, blocks: basic ? basic.blocks : null });
   // Carry the (small, id-only) custom weapon image for the in-game renderer.
-  if (w.weaponVisual && (w.weaponVisual.imageId || w.weaponVisual.dual)) rt.weaponVisual = { imageId: w.weaponVisual.imageId || null, scale: w.weaponVisual.scale || 1, dual: !!w.weaponVisual.dual };
+  if (w.weaponVisual && (w.weaponVisual.imageId || w.weaponVisual.dual)) {
+    rt.weaponVisual = {
+      imageId: w.weaponVisual.imageId || null,
+      scale: w.weaponVisual.scale || 1,
+      rotationOffset: w.weaponVisual.rotationOffset || 0,
+      offsetX: w.weaponVisual.offsetX || 0,
+      offsetY: w.weaponVisual.offsetY || 0,
+      dual: !!w.weaponVisual.dual,
+      hat: w.weaponVisual.hat || null
+    };
+  }
   // The primary (basic) preset's ranged/projectile config drives the basic attack.
   if (basic && basic.ranged && basic.projectile) { rt.ranged = true; rt.projectile = basic.projectile; }
   // Heavy (3rd-hit finisher) + skill1/2/3 each carry their OWN combat stats
@@ -164,6 +187,7 @@ export function v2ToV1Runtime(w) {
   if (Object.keys(presetCombat).length) rt.presetCombat = presetCombat;
   if (Object.keys(presetHitboxes).length) rt.presetHitboxes = presetHitboxes;
   if (Object.keys(presetRanged).length) rt.presetRanged = presetRanged;
+  rt.id = w.id || rt.id || null;
   return rt;
 }
 

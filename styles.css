@@ -171,17 +171,18 @@
 .mobile-action-bottom { left: 50%; bottom: 0; transform: translateX(-50%); }
 .mobile-action-attack { right: 0.7rem; bottom: 0.7rem; }
 
-/* Platformer jump button — anchored above the left move stick. */
+/* Platformer jump button — sits just left of the right action cluster. */
 .mobile-jump-btn {
   position: absolute;
-  left: 2.4rem;
-  bottom: 9rem;
+  left: auto;
+  right: 14.4rem;
+  bottom: 2.2rem;
   width: 4.2rem;
   height: 4.2rem;
   z-index: 4;
 }
 @media (min-width: 768px) {
-  .mobile-jump-btn { left: 3.8rem; bottom: 12.5rem; width: 5.4rem; height: 5.4rem; }
+  .mobile-jump-btn { left: auto; right: 17.8rem; bottom: 3.6rem; width: 5.4rem; height: 5.4rem; }
 }
 .weapon-switch.weapon-current::after { content: "착용"; background: #d4af37; }
 .weapon-switch.weapon-pending::after { content: "대기"; background: #fbbf24; }
@@ -1198,6 +1199,10 @@ html.touch-ui #weaponPanelBackdrop.open { display: block !important; } /* re-ena
 .armory-head { display: flex; gap: 12px; align-items: flex-start; }
 .armory-sprite { width: 84px; height: 84px; flex: none; display: flex; align-items: center; justify-content: center; }
 .armory-sprite img { width: 80%; height: 80%; object-fit: contain; image-rendering: pixelated; }
+.armory-workshop-img { width: 86%; height: 86%; object-fit: contain; image-rendering: pixelated; }
+.workshop-card-img { width: min(76%, 96px); height: min(76%, 96px); object-fit: contain; image-rendering: pixelated; }
+.workshop-list-thumb { width: 42px; height: 42px; display: flex; align-items: center; justify-content: center; }
+.workshop-list-img { width: 86%; height: 86%; object-fit: contain; image-rendering: pixelated; }
 .armory-tag { display: inline-block; font-size: 10px; font-family: var(--font-mono); padding: 2px 7px; border: 1px solid currentColor; }
 
 /* Stat bars */

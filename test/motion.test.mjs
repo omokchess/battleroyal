@@ -2,18 +2,33 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   sanitizeMotion, sanitizeMotionSetId, registerMotionSet, hasMotionSet,
-  weaponSetId, resolveMotion, MOTION_LIMITS, DEFAULT_MOTION,
+  weaponSetId, resolveMotion, MOTION_LIMITS, DEFAULT_MOTION, sampleRootOffset,
 } from '../game/Motion.js';
 
 test('sanitizeMotion clamps angles and caps keyframes', () => {
   const huge = { duration: 999, loop: true,
-    keyframes: Array.from({ length: 40 }, (_, i) => ({ t: i / 40, pose: { spine: 99999 } })),
+    keyframes: Array.from({ length: 80 }, (_, i) => ({ t: i / 79, pose: { spine: 99999 } })),
     events: [{ t: 0.5, type: 'impact' }] };
   const m = sanitizeMotion(huge);
   assert.ok(m.duration <= MOTION_LIMITS.maxDuration);
   assert.ok(m.keyframes.length <= MOTION_LIMITS.maxKeyframes);
   assert.equal(m.keyframes[0].pose.spine, MOTION_LIMITS.angleMax); // clamped, not 99999
   assert.equal(m.events[0].type, 'impact');
+});
+
+test('sanitizeMotion preserves keyframe root offsets and samples them', () => {
+  const m = sanitizeMotion({
+    duration: 1,
+    keyframes: [
+      { t: 0, pose: { spine: -90 }, root: { x: -999, y: 10 } },
+      { t: 1, pose: { spine: -90 }, root: { x: 100, y: 50 } },
+    ],
+  });
+  assert.equal(m.keyframes[0].root.x, -MOTION_LIMITS.rootOffsetMax);
+  assert.equal(m.keyframes[0].root.y, 10);
+  const mid = sampleRootOffset(m, 0.5);
+  assert.ok(mid.x > -MOTION_LIMITS.rootOffsetMax && mid.x < 100);
+  assert.equal(mid.y, 30);
 });
 
 test('sanitizeMotion drops unknown joints and invalid events', () => {

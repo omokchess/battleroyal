@@ -89,6 +89,9 @@ export class Projectile {
       damage: this.damage,
       kind: this.kind,
       weapon: this.weapon,
+      wsImageId: this.wsImageId || null,
+      wsScale: this.wsScale || 1,
+      piercing: !!this.piercing,
       isDead: this.isDead
     };
   }

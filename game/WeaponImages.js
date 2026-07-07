@@ -6,9 +6,9 @@
  * <img> + its grip/tip anchors + size, for the IN-GAME stick renderer.
  *
  * Images live per-device in localStorage (psd_custom_weapons, a data-URL each).
- * Only the small imageId travels in the synced appearance — the renderer looks
- * the pixels up locally. So the local player sees their own uploaded weapon;
- * peers who don't have that image just get the default stick (local-first).
+ * Multiplayer/published workshop payloads may carry the compact image record;
+ * receivers fold that record into localStorage, then the renderer resolves it
+ * by imageId like any locally authored weapon.
  */
 
 const KEY = 'psd_custom_weapons';
@@ -34,7 +34,7 @@ export function invalidateWeaponImage(imageId) { cache.delete(imageId); }
 // Shared byte budget for a custom weapon image dataURL — kept the same on the
 // upload side (this file) and the Firestore rule, so nothing gets silently
 // rejected downstream after clearing this check.
-export const WEAPON_IMAGE_BUDGET = 350000;
+export const WEAPON_IMAGE_BUDGET = 850000;
 
 /**
  * Re-encode a dataURL to fit under `maxBytes` by progressively downscaling —

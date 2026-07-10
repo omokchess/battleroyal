@@ -3561,6 +3561,22 @@ export class MotionEditor {
     return AUTHORING_PRESET_KEYS.filter(key => !w.presets[key]?.complete);
   }
 
+  _workshopUploadPayload(w) {
+    const upload = JSON.parse(JSON.stringify(w || {}));
+    if (!upload.presets || typeof upload.presets !== 'object') return upload;
+    for (const key of Object.keys(upload.presets)) {
+      if (!upload.presets[key]?.complete) delete upload.presets[key];
+    }
+    if (!Object.keys(upload.presets).length) {
+      upload.presets.basic = makeEmptyPreset('basic');
+      upload.presets.basic.complete = true;
+    }
+    if (!upload.presets[upload.equippedPresetKey]) {
+      upload.equippedPresetKey = upload.presets.basic ? 'basic' : Object.keys(upload.presets)[0];
+    }
+    return clampWorkshopWeaponV2(upload);
+  }
+
   /** Tier-2 저장 + 장착: LOCAL only — save to the device store + equip.
    *  NEVER publishes; sharing is the separate 업로드 button. */
   _saveWorkshop() {
@@ -3586,17 +3602,14 @@ export class MotionEditor {
     this._saveWorkshop();
     const w = this._lastSaved;
     if (!w) { this._setStatus('업로드하려면 먼저 저장이 성공해야 합니다.'); return; }
-    const incomplete = this._incompleteWorkshopPresets(w);
-    if (incomplete.length) {
-      this._setStatus(`업로드 불가: ${incomplete.map(k => PRESET_LABELS[k] || k).join(', ')} 프리셋을 먼저 [해당 프리셋 완성]으로 표시하세요.`);
-      return;
-    }
     if (!this.onUploadWorkshop) { this._setStatus('업로드 기능을 사용할 수 없습니다.'); return; }
-    this._setStatus(`"${w.name}" 업로드 중...`);
+    const upload = this._workshopUploadPayload(w);
+    const skipped = this._incompleteWorkshopPresets(w);
+    this._setStatus(`"${w.name}" 업로드 중...${skipped.length ? ` 미완성 프리셋 ${skipped.length}개는 제외됩니다.` : ''}`);
     try {
       // Bridge: attach a V1 runtime projection so the existing publish path
       // (stats/motionSet/blocks) stores a usable doc alongside the V2 fields.
-      const v1 = v2ToV1Runtime(w) || {};
+      const v1 = v2ToV1Runtime(upload) || {};
       // Carry the custom weapon's actual pixels so RECIPIENTS see the image too
       // (the imageId alone only resolves on the author's device). Shrunk to fit
       // the shared budget rather than silently dropped when the source is large
@@ -3606,7 +3619,7 @@ export class MotionEditor {
       let hatImage = null;
       const hatImages = [];
       const effectImages = [];
-      const imgId = w.weaponVisual && w.weaponVisual.imageId;
+      const imgId = upload.weaponVisual && upload.weaponVisual.imageId;
       if (imgId && imgId.startsWith('custom:')) {
         const rec = this._customWeapon(imgId);
         if (rec && rec.src) {
@@ -3616,7 +3629,7 @@ export class MotionEditor {
           }
         }
       }
-      const offhandId = w.weaponVisual?.offhand?.imageId;
+      const offhandId = upload.weaponVisual?.offhand?.imageId;
       if (offhandId && offhandId.startsWith('custom:')) {
         const rec = this._customWeapon(offhandId);
         if (rec && rec.src) {
@@ -3626,7 +3639,7 @@ export class MotionEditor {
           }
         }
       }
-      const hats = Array.isArray(w.weaponVisual?.hats) && w.weaponVisual.hats.length ? w.weaponVisual.hats.slice(0, 5) : (w.weaponVisual?.hat ? [w.weaponVisual.hat] : []);
+      const hats = Array.isArray(upload.weaponVisual?.hats) && upload.weaponVisual.hats.length ? upload.weaponVisual.hats.slice(0, 5) : (upload.weaponVisual?.hat ? [upload.weaponVisual.hat] : []);
       for (const hat of hats) {
         const hatId = hat?.imageId;
         if (!hatId || !hatId.startsWith('custom:')) continue;
@@ -3641,7 +3654,7 @@ export class MotionEditor {
         }
       }
       const effectIds = new Set();
-      for (const preset of Object.values(w.presets || {})) {
+      for (const preset of Object.values(upload.presets || {})) {
         for (const fx of (Array.isArray(preset?.effects) ? preset.effects : [])) {
           if (fx?.assetId && String(fx.assetId).startsWith('custom:fx_')) effectIds.add(fx.assetId);
         }
@@ -3654,8 +3667,8 @@ export class MotionEditor {
           effectImages.push({ id: rec.id, name: rec.name, src, size: rec.size || 1, anchors: null });
         }
       }
-      await this.onUploadWorkshop({ ...w, stats: v1.stats, motionSet: v1.motionSet, blocks: v1.blocks, weaponImage, offhandImage, hatImage, hatImages, effectImages });
-      this._setStatus(`"${w.name}" 업로드 완료! 워크샵에서 다른 유저가 사용할 수 있습니다.`);
+      await this.onUploadWorkshop({ ...upload, stats: v1.stats, motionSet: v1.motionSet, blocks: v1.blocks, weaponImage, offhandImage, hatImage, hatImages, effectImages });
+      this._setStatus(`"${w.name}" 업로드 완료!${skipped.length ? ` 미완성 프리셋 ${skipped.length}개는 제외했습니다.` : ' 워크샵에서 다른 유저가 사용할 수 있습니다.'}`);
     } catch (e) {
       // Local save stays intact — only the share failed.
       this._setStatus(`업로드 실패 (${e && e.message ? e.message : '네트워크'}) — 로컬 저장/장착은 그대로예요. 나중에 다시 업로드하세요.`);

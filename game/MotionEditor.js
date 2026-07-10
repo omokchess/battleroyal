@@ -1064,6 +1064,7 @@ export class MotionEditor {
     const ws = this.mode === 'workshop';
     $('meStatsPanel')?.classList.toggle('hidden', !ws);
     $('mePresetBar')?.classList.toggle('hidden', !ws);
+    $('mePresetComplete')?.classList.toggle('hidden', !ws);
     $('meEffectsBlock')?.classList.toggle('hidden', !ws);
     $('meLegacyPresetBlock')?.classList.toggle('hidden', ws);   // V2 preset bar replaces it in workshop
     const title = this.root.querySelector('h2'); if (title) title.textContent = ws ? '🔧 무기 공방' : '🎬 모션 에디터';
@@ -1132,7 +1133,7 @@ export class MotionEditor {
       const wrap = document.createElement('span'); wrap.style.cssText = 'display:inline-flex;align-items:center;gap:2px;flex:0 0 auto';
       const b = document.createElement('button');
       const active = key === this._activeKey;
-      b.className = 'min-w-[74px] text-[10px] px-3 py-1 rounded cursor-pointer active:scale-95 ' + (active ? 'bg-[#1c6b33] text-white border border-[#7df09a]' : 'bg-[#14100b] text-gray-300 border border-gray-700 hover:border-gray-500');
+      b.className = 'min-w-[56px] text-[10px] px-2 py-1 rounded cursor-pointer active:scale-95 ' + (active ? 'bg-[#1c6b33] text-white border border-[#7df09a]' : 'bg-[#14100b] text-gray-300 border border-gray-700 hover:border-gray-500');
       const star = w.equippedPresetKey === key ? '★ ' : '';
       const done = !!w.presets[key]?.complete;
       const presetName = w.presets[key]?.displayName || PRESET_LABELS[key] || key;

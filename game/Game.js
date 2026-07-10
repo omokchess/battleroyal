@@ -423,7 +423,10 @@ export class Game {
         this.camera.updateAction(this._cameraFocusPoints(), this.canvas.width, this.canvas.height, this.level);
         if (!hp.isDead) {
           this.input.updateAimAngle(hp, this.camera, this.canvas.width, this.canvas.height, this.mapWidth, this.mapHeight);
-          hp.angle = this.input.aimAngle;
+          // Feed the local device's input into the sim exactly like a remote
+          // client's PLAYER_INPUT/PLAYER_AIM packet would.
+          this.applyAim(this.localPlayerId, this.input.aimAngle);
+          this.applyInput(this.localPlayerId, this.input.keys);
           // Host applies its own dash/skill directly (it is authoritative).
           const dash = this.input.consumeDash();
           if (dash) {
@@ -549,14 +552,10 @@ export class Game {
       const wasGrounded = p.grounded;
       const fallVy = p.vy;
 
-      if (id === this.localPlayerId) {
-        // Local host: set aim first so facing follows the cursor this frame.
-        p.angle = this.input.aimAngle;
-        p.updatePosition(deltaTime, this.input.keys, this.level);
-      } else {
-        // Remote guest input updates (platformer physics vs the level).
-        p.updatePosition(deltaTime, p.keys || {}, this.level);
-      }
+      // Every player — local, remote and bot alike — moves from the keys/aim
+      // last installed via applyInput()/applyAim(). The simulation never reads
+      // an input device, so this same step runs on a headless server.
+      p.updatePosition(deltaTime, p.keys || {}, this.level);
       if (!wasGrounded && p.grounded && fallVy > 520) {
         this._spawnLandingDust(p, now, fallVy);
       }
@@ -3203,6 +3202,29 @@ export class Game {
     if (!m || !Array.isArray(m.keyframes) || !m.keyframes.length) return;
     const life = Math.max(200, Math.min(1500, Math.round((m.duration || 0.6) * 1000)));
     this.effects.push({ attackerId: player.id, x: player.x, y: player.y, weapon: '', type: 'stick_motion', tag, progress: 0, timestamp: now, lifetime: life });
+  }
+
+  // ── Simulation input entry points ─────────────────────────────────────────
+  // The ONLY way movement keys / aim reach a player. Every player — the local
+  // one included — goes through these, so the simulation never reads an input
+  // device and treats "the local player" as just another client whose packets
+  // happen to arrive locally. That is what lets the same core run on a headless
+  // server, where no player is local.
+
+  /** Install a player's movement keys (sanitized — never trust the wire). */
+  applyInput(playerId, keys) {
+    const p = this.players[playerId];
+    if (!p || p.isDead) return false;
+    p.keys = sanitizeInputKeys(keys);
+    return true;
+  }
+
+  /** Install a player's aim angle. */
+  applyAim(playerId, angle) {
+    const p = this.players[playerId];
+    if (!p || p.isDead || !Number.isFinite(angle)) return false;
+    p.angle = angle;
+    return true;
   }
 
   _resolveInputDashVector(dash) {
@@ -6512,11 +6534,9 @@ export class Game {
         if (player.isDead) return;
 
         if (data.type === MsgType.PLAYER_INPUT) {
-          player.keys = sanitizeInputKeys(data.keys);
+          this.applyInput(player.id, data.keys);
         } else if (data.type === MsgType.PLAYER_AIM) {
-          if (Number.isFinite(data.angle)) {
-            player.angle = data.angle;
-          }
+          this.applyAim(player.id, data.angle);
         } else if (data.type === MsgType.PLAYER_ACTION) {
           this._handlePlayerAction(player, data, now);
         }

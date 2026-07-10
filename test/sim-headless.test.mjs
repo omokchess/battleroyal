@@ -13,9 +13,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { Game } from '../game/Game.js';
+import { Game, rebaseEffectSnapshot } from '../game/Game.js';
 import { Player } from '../game/Player.js';
 import { NullFx, RecordingFx, NULL_FX } from '../game/sim/Fx.js';
+import { makeRng, FixedClock, SystemClock } from '../game/sim/env.js';
 
 // Guard the guard: if a browser global ever leaks in, these tests would stop
 // proving anything.
@@ -124,4 +125,98 @@ test('applyAim installs a finite angle and rejects anything else', () => {
   assert.equal(sim.applyAim('p1', undefined), false);
   assert.equal(sim.applyAim('nobody', 0), false);
   assert.equal(p.angle, 1.25, 'a rejected aim must not clobber the last good one');
+});
+
+// ── P0c: seeded randomness + injected clock ─────────────────────────────────
+
+test('the same seed replays the same random sequence', () => {
+  const a = makeRng(12345);
+  const b = makeRng(12345);
+  const c = makeRng(12346);
+
+  const seqA = Array.from({ length: 8 }, () => a());
+  const seqB = Array.from({ length: 8 }, () => b());
+  const seqC = Array.from({ length: 8 }, () => c());
+
+  assert.deepEqual(seqA, seqB, 'identical seeds must replay identically');
+  assert.notDeepEqual(seqA, seqC, 'a different seed must diverge');
+  assert.ok(seqA.every(v => v >= 0 && v < 1), 'values live in [0,1)');
+  assert.equal(new Set(seqA).size, 8, 'no immediate repeats');
+});
+
+test('a zero seed does not degenerate the generator', () => {
+  const rng = makeRng(0);
+  const seq = Array.from({ length: 5 }, () => rng());
+  assert.ok(seq.every(v => v >= 0 && v < 1));
+  assert.ok(new Set(seq).size > 1, 'must not emit a constant');
+});
+
+test('rng() is well distributed in the low bits (floor(rng()*n) hits every bucket)', () => {
+  // The sim does Math.floor(rng() * n) to pick targets/weapons; a bad PRNG would
+  // bias those buckets. Check all 3 buckets get hit, as _castMagicStaff needs.
+  const rng = makeRng(99);
+  const buckets = [0, 0, 0];
+  for (let i = 0; i < 300; i++) buckets[Math.floor(rng() * 3)]++;
+  assert.ok(buckets.every(b => b > 60), `buckets skewed: ${buckets}`);
+});
+
+test('a Game seeds its rng from options.seed and reuses it as the terrain seed', () => {
+  const mk = seed => Object.assign(Object.create(Game.prototype), { seed, rng: makeRng(seed) });
+  const g1 = mk(777);
+  const g2 = mk(777);
+  assert.equal(g1.rng(), g2.rng(), 'same seed -> same first draw');
+});
+
+test('the sim clock is injectable and never reads the wall clock', () => {
+  const clock = new FixedClock(1000);
+  const sim = Object.create(Game.prototype);
+  sim.clock = clock;
+
+  assert.equal(sim.now(), 1000);
+  clock.advance(250);
+  assert.equal(sim.now(), 1250, 'time only moves when the harness advances it');
+
+  // Default (no injection) falls back to the real clock.
+  const real = Object.create(Game.prototype);
+  assert.equal(real.clock, SystemClock);
+  assert.ok(Math.abs(real.now() - Date.now()) < 50);
+});
+
+test('_canApplyStatus reads the injected clock, not Date.now', () => {
+  const clock = new FixedClock(5000);
+  const sim = Object.create(Game.prototype);
+  sim.clock = clock;
+
+  const target = new Player('t', 'T', 'sword', 0, 0);
+  target.statusImmuneUntil = 6000;   // still immune at t=5000
+
+  assert.equal(sim._canApplyStatus(target), false, 'immune while clock < immuneUntil');
+  clock.advance(1500);               // t=6500, immunity expired
+  assert.notEqual(sim._canApplyStatus(target), false, 'no longer immune once the clock passes');
+});
+
+test('simulation methods never reach for ambient randomness or the wall clock', () => {
+  // Render-only juice (_spawnHitSpark/_spawnDeathBurst/_trackDamagePopups) is
+  // deliberately excluded: it never touches sim state, so seeding it would only
+  // correlate particles across clients for no benefit.
+  const simMethods = [
+    '_updateHostPhysics', '_performBasicAttack', '_performAutomaticAttack',
+    '_creditKill', '_tryDash', '_canApplyStatus', '_applyStun',
+    '_pickBotWorkshopWeapon', '_castMagicStaff', '_resolveMeleeHitResult',
+    '_spawnWorkshopProjectile', '_applyAirborne', '_isMotionLocked',
+  ];
+  for (const name of simMethods) {
+    const fn = Game.prototype[name];
+    assert.equal(typeof fn, 'function', `${name} should exist`);
+    const src = fn.toString();
+    assert.ok(!/Math\.random\(/.test(src), `${name} must use this.rng() instead of Math.random()`);
+    assert.ok(!/Date\.now\(/.test(src), `${name} must use this.now() instead of Date.now()`);
+  }
+});
+
+test('rebaseEffectSnapshot is a top-level helper and defaults without a `this`', () => {
+  // Regression: it briefly defaulted to `this.now()`, which throws when called
+  // as a bare function (there is no `this` in an ES module).
+  const out = rebaseEffectSnapshot({ progress: 0, lifetime: 300, timestamp: Date.now() });
+  assert.ok(out && typeof out === 'object');
 });

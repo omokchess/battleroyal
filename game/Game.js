@@ -16,6 +16,7 @@ import { normalizeRoomConfig, arenaDimensions, HEAL_RATES } from './RoomConfig.j
 import { Sound } from './Sound.js';
 import { BrowserFx } from './BrowserFx.js';
 import { NULL_FX } from './sim/Fx.js';
+import { makeRng, randomSeed, SystemClock } from './sim/env.js';
 import { generateCover, resolveCover, coverBlocksSegment, coverRayDistance, coverClearOfPoint, coverBlocksCircle } from './Cover.js';
 import { generateWater, emptyWater } from './Water.js';
 import { buildLevel, PHYS } from './Level.js';
@@ -67,6 +68,14 @@ export class Game {
       : [];
     this._botSeq = 0;
     this._bots = [];   // BotBrain instances (host only)
+
+    // The simulation's two ambient dependencies, injected (see sim/env.js).
+    // A server supplies its own seed + clock; the browser gets a fresh seed and
+    // the real wall clock. Simulation code must use this.rng()/this.now() and
+    // never Math.random()/Date.now(), so a match stays reproducible.
+    this.seed = Number.isFinite(options.seed) ? (options.seed >>> 0) : randomSeed();
+    this.rng = makeRng(this.seed);
+    this.clock = options.clock || SystemClock;
 
     // Short-round support (demo bot match): an optional time limit and/or kill
     // target end the match with a result screen. 0/unset = endless (the normal
@@ -225,7 +234,7 @@ export class Game {
     if (this.networkManager.isHost) {
       // Host picks one per-match seed; the layout is derived deterministically
       // from it (grass-style). Only the seed ships to clients via ROOM_JOINED.
-      this.coverSeed = (Math.random() * 0xffffffff) >>> 0;
+      this.coverSeed = this.seed;
       this._buildTerrain();   // builds water + cover (avoiding water) from the seed
 
       // Host adds themselves directly
@@ -412,7 +421,7 @@ export class Game {
     const deltaTime = Math.min((timestamp - this.lastFrameTime) / 1000, 0.1); // Cap deltaTime to prevent quantum tunneling on lags
     this.lastFrameTime = timestamp;
 
-    const now = Date.now();
+    const now = this.now();
 
     if (this.networkManager.isHost) {
       // --- HOST (AUTHORITATIVE) ROUTE ---
@@ -826,7 +835,7 @@ export class Game {
               Collision.clampToMap(target, this.mapWidth, this.mapHeight);
               this._resolveOutOfTerrain(target);   // harpoon yank: don't land in a wall
               this._applySlow(target, hk.slowMs || 300);
-              if (hk.pullStunMs) this._applyStun(target, hk.pullStunMs, Date.now());
+              if (hk.pullStunMs) this._applyStun(target, hk.pullStunMs, now);
               target.prevX = target.x; // discontinuous move — don't let melee sweep it
               target.prevY = target.y;
             }
@@ -945,7 +954,7 @@ export class Game {
   }
 
   /** Milliseconds left in the round (Infinity when there is no time limit). */
-  matchTimeLeftMs(now = Date.now()) {
+  matchTimeLeftMs(now = this.now()) {
     if (!this.matchDurationMs) return Infinity;
     // Held / counting down → the clock hasn't started; show the full duration.
     if (this.matchHold || now < this.countdownUntil) return this.matchDurationMs;
@@ -960,7 +969,7 @@ export class Game {
   releaseMatchHold() {
     if (!this.matchHold) return;
     this.matchHold = false;
-    const now = Date.now();
+    const now = this.now();
     this.countdownUntil = now + 3000;
     this.matchStartTime = this.countdownUntil; // 2:00 starts when the fight does
     this._announce('3');
@@ -1040,7 +1049,7 @@ export class Game {
     return player.angle || 0;   // cursor/default = aim angle
   }
 
-  _spawnWorkshopProjectile(player, pj, combat = {}, now = Date.now(), tagSuffix = 'evt') {
+  _spawnWorkshopProjectile(player, pj, combat = {}, now = this.now(), tagSuffix = 'evt') {
     if (!player || !pj) return;
     const ang = this._projectileAngle(player, pj);
     const speed = pj.speed || 600;
@@ -1084,7 +1093,7 @@ export class Game {
     else if (status === 'airborne') this._applyAirborne(target, ms, airborneHeight, now);
   }
 
-  _applyAirborne(target, durationMs = 400, height = 120, now = Date.now()) {
+  _applyAirborne(target, durationMs = 400, height = 120, now = this.now()) {
     if (!this._canApplyStatus(target)) return;
     const ms = Math.max(100, Number(durationMs) || 400);
     const h = Math.max(20, Math.min(260, Number(height) || 120));
@@ -1196,7 +1205,7 @@ export class Game {
     }
   }
 
-  _isMotionLocked(player, now = Date.now()) {
+  _isMotionLocked(player, now = this.now()) {
     return !!(player && player.motionLockUntil && now < player.motionLockUntil);
   }
 
@@ -1309,7 +1318,7 @@ export class Game {
     }
   }
 
-  _spawnWorkshopFrameEffect(player, ev = {}, now = Date.now(), motionDurMs = 420) {
+  _spawnWorkshopFrameEffect(player, ev = {}, now = this.now(), motionDurMs = 420) {
     if (!player) return;
     const angle = (player.angle || 0) + ((Number(ev.rotation) || 0) * Math.PI / 180);
     const forward = Math.cos(player.angle || 0) >= 0 ? 1 : -1;
@@ -1393,7 +1402,7 @@ export class Game {
         api: this._blockApi(player, now),
         vars: player.blockVars || (player.blockVars = {}),
         lists: player.blockLists || (player.blockLists = {}),
-        rng: Math.random,                        // host-side; clients only render results
+        rng: this.rng,                           // host-side; clients only render results
         now,
         damageBase: player.workshopWeapon?.stats?.damage || 20,
         sense: this._blockSense(player, now),
@@ -1605,7 +1614,7 @@ export class Game {
         api: this._blockEntityApi(owner, proj, now, dt),
         vars: proj._entVars || (proj._entVars = {}),
         lists: owner.blockLists || (owner.blockLists = {}),
-        rng: Math.random, now,
+        rng: this.rng, now,
         damageBase: owner.workshopWeapon?.stats?.damage || 20,
         sense: this._blockEntitySense(proj, now),
       });
@@ -1691,7 +1700,7 @@ export class Game {
     return null;
   }
 
-  _performBasicAttack(player, weaponConfig = getEffectiveWeapon(player?.weapon, player?.buffType), now = Date.now()) {
+  _performBasicAttack(player, weaponConfig = getEffectiveWeapon(player?.weapon, player?.buffType), now = this.now()) {
     if (!player || !weaponConfig || !player.canAttack(now)) return false;
     // A block program's basicAttack IS the attack (spawns its own hits); else
     // fall back to a workshop projectile, canonical hitbox swing, or coded kit.
@@ -1854,7 +1863,7 @@ export class Game {
 
     // Optional per-shot spread (pistols) so accuracy drops at max range.
     const spread = attackConfig.spreadDeg
-      ? ((Math.random() - 0.5) * 2 * attackConfig.spreadDeg * Math.PI) / 180
+      ? ((this.rng() - 0.5) * 2 * attackConfig.spreadDeg * Math.PI) / 180
       : 0;
     const fireAngle = player.angle + spread;
     const proj = new Projectile(
@@ -1979,7 +1988,7 @@ export class Game {
     return hitCount;
   }
 
-  _resolveMeleeHitResult(attacker, target, weapon, now = Date.now()) {
+  _resolveMeleeHitResult(attacker, target, weapon, now = this.now()) {
     if (!target || target.isInvincible?.()) return null;
     if (!Collision.checkMeleeHit(attacker, target, weapon)) return null;
     // A cover tile between attacker and target blocks the strike.
@@ -2644,7 +2653,7 @@ export class Game {
   _pickBotWorkshopWeapon() {
     const list = this.botWorkshopWeapons;
     if (!list.length) return null;
-    const raw = list[Math.floor(Math.random() * list.length)];
+    const raw = list[Math.floor(this.rng() * list.length)];
     try {
       if (typeof structuredClone === 'function') return structuredClone(raw);
     } catch {}
@@ -2769,7 +2778,7 @@ export class Game {
         this.effects.push({
           attackerId: killer.id, x: target.x, y: target.y,
           weapon: '', type: 'kill_fx', style: kfx.style, color: kfx.color || '#ffd24a',
-          progress: 0, timestamp: Date.now(), lifetime: 520
+          progress: 0, timestamp: this.now(), lifetime: 520
         });
       }
     } else {
@@ -2968,7 +2977,7 @@ export class Game {
     const anchors = this.level?.itemSpawns;
     if (Array.isArray(anchors) && anchors.length) {
       const shuffled = anchors
-        .map(a => ({ a, sort: Math.random() }))
+        .map(a => ({ a, sort: this.rng() }))
         .sort((l, r) => l.sort - r.sort)
         .map(v => v.a);
       for (const a of shuffled) {
@@ -2986,8 +2995,8 @@ export class Game {
     }
     const margin = 90;
     for (let i = 0; i < 24; i++) {
-      const x = margin + Math.random() * (this.mapWidth - margin * 2);
-      const y = margin + Math.random() * (this.mapHeight - margin * 2);
+      const x = margin + this.rng() * (this.mapWidth - margin * 2);
+      const y = margin + this.rng() * (this.mapHeight - margin * 2);
       if (this.moveTiles.length && !coverClearOfPoint(this.moveTiles, x, y, 28)) continue;
       let tooClose = false;
       for (const p of Object.values(this.players)) {
@@ -3189,7 +3198,7 @@ export class Game {
     if (!player || player.isDead) return;
     if (player.daggerQte) return;
     if (player.startDash(dirX, dirY)) {
-      this._triggerStickMotion(player, 'dash', Date.now());
+      this._triggerStickMotion(player, 'dash', this.now());
       this.fx.sfx('dash', player.id);
     }
   }
@@ -3202,6 +3211,12 @@ export class Game {
     if (!m || !Array.isArray(m.keyframes) || !m.keyframes.length) return;
     const life = Math.max(200, Math.min(1500, Math.round((m.duration || 0.6) * 1000)));
     this.effects.push({ attackerId: player.id, x: player.x, y: player.y, weapon: '', type: 'stick_motion', tag, progress: 0, timestamp: now, lifetime: life });
+  }
+
+  /** Simulation wall clock. Never call Date.now() from sim code — a server (or
+   *  a replay/test) drives time through the injected clock. */
+  now() {
+    return this.clock.now();
   }
 
   // ── Simulation input entry points ─────────────────────────────────────────
@@ -4179,7 +4194,7 @@ export class Game {
   _castMagicStaff(player, now) {
     player.lastAttackTime = now;
     player.lastAttackMotionTag = 'attack';
-    const roll = Math.floor(Math.random() * 3);
+    const roll = Math.floor(this.rng() * 3);
     if (roll === 0) this._castFireball(player, now);
     else if (roll === 1) this._castIceShards(player, now);
     else this._castLifebound(player, now);
@@ -4374,7 +4389,7 @@ export class Game {
   // existing DoTs keep ticking regardless.
   _canApplyStatus(target) {
     if (!target || target.isDead) return false;
-    if (Date.now() < (target.statusImmuneUntil || 0)) return false;
+    if (this.now() < (target.statusImmuneUntil || 0)) return false;
     if (target.isInvincible && target.isInvincible()) return false;
     return true;
   }
@@ -4404,7 +4419,7 @@ export class Game {
   }
 
   // Stun, with a post-stun immunity window so a target can't be chain-stunned.
-  _applyStun(target, durationMs, now = Date.now()) {
+  _applyStun(target, durationMs, now = this.now()) {
     if (!this._canApplyStatus(target)) return;
     if (now < (target.stunImmuneUntil || 0)) return;
     const ms = durationMs || 400;
@@ -5298,7 +5313,7 @@ export class Game {
     const blades = this._guardianBladePositions(player, now);
     for (let i = 0; i < (cfg.orbitCount || 3); i++) {
       if (deployedSlots.has(i)) continue;
-      const target = enemies[Math.floor(Math.random() * enemies.length)];
+      const target = enemies[Math.floor(this.rng() * enemies.length)];
       const b = blades[i];
       const angle = Math.atan2(target.y - b.y, target.x - b.x);
       const proj = new Projectile(
@@ -5425,7 +5440,7 @@ export class Game {
       for (let i = 0; i < (cfg.orbitCount || 3); i++) {
         if (!deployedSlots.has(i)) { slot = i; break; }
       }
-      const target = enemies[Math.floor(Math.random() * enemies.length)];
+      const target = enemies[Math.floor(this.rng() * enemies.length)];
       const b = this._guardianBladePositions(player, now)[slot];
       const angle = Math.atan2(target.y - b.y, target.x - b.x);
       const proj = new Projectile(
@@ -5600,7 +5615,7 @@ export class Game {
    * Client-side Coordinate linear interpolations for buffer frames
    */
   _updateClientInterpolations(deltaTime) {
-    const now = Date.now();
+    const now = this.now();
 
     // Locally drain i-frame / buff timers so the white dash flash and buff aura
     // fade smoothly at 60fps between the ~22Hz host snapshots.
@@ -5658,7 +5673,7 @@ export class Game {
    * Render composite scene
    */
   _renderFrame() {
-    const now = Date.now();
+    const now = this.now();
     // Always track HP deltas, even during hitstop, so no damage number is lost.
     this._trackDamagePopups(now);
     this._trackSoundCues();
@@ -6064,7 +6079,7 @@ export class Game {
     return clampSkillLabel(player?.workshopWeapon?.presetNames?.[slot], fallback);
   }
 
-  _showSkillCallout(player, slot, fallback = '스킬', now = Date.now()) {
+  _showSkillCallout(player, slot, fallback = '스킬', now = this.now()) {
     if (!player) return;
     const text = this._workshopSkillName(player, slot, fallback);
     this.effects.push({
@@ -6512,7 +6527,7 @@ export class Game {
 
     // NETWORK EXCHANGES (CLIENT + HOST ROUTING SEPARATIONS)
     this.networkManager.on('onData', (fromId, data) => {
-      const now = Date.now();
+      const now = this.now();
 
       if (this.networkManager.isHost) {
         // --- HOST HANDLERS ---
@@ -6798,6 +6813,8 @@ export class Game {
   }
 }
 
+// Top-level helper (not a method): it has no `this`, so it keeps the real clock.
+// Callers inside the sim pass their injected `now` explicitly.
 export function rebaseEffectSnapshot(effectSnap, now = Date.now()) {
   const lifetime = positiveFinite(effectSnap?.lifetime) ? effectSnap.lifetime : 300;
   let progress = Number.isFinite(effectSnap?.progress) ? effectSnap.progress : 0;
@@ -7012,3 +7029,9 @@ function damageTier(amount) {
 // BrowserFx in the constructor; a server (or a test that builds an instance
 // straight off the prototype) inherits this no-op and stays DOM-free.
 Game.prototype.fx = NULL_FX;
+
+// Defaults for the injected simulation environment, so an instance built
+// straight off the prototype (server harness / test) still has a clock and a
+// source of randomness. The constructor installs the seeded rng + chosen clock.
+Game.prototype.clock = SystemClock;
+Game.prototype.rng = Math.random;

@@ -3562,19 +3562,17 @@ export class MotionEditor {
   }
 
   _workshopUploadPayload(w) {
-    const upload = JSON.parse(JSON.stringify(w || {}));
-    if (!upload.presets || typeof upload.presets !== 'object') return upload;
-    for (const key of Object.keys(upload.presets)) {
-      if (!upload.presets[key]?.complete) delete upload.presets[key];
-    }
-    if (!Object.keys(upload.presets).length) {
-      upload.presets.basic = makeEmptyPreset('basic');
-      upload.presets.basic.complete = true;
+    const source = JSON.parse(JSON.stringify(w || {}));
+    const completeKeys = Object.keys(source.presets || {}).filter(key => source.presets[key]?.complete);
+    if (!completeKeys.length) return null;
+    const upload = clampWorkshopWeaponV2(source);
+    for (const key of Object.keys(upload.presets || {})) {
+      if (!completeKeys.includes(key)) delete upload.presets[key];
     }
     if (!upload.presets[upload.equippedPresetKey]) {
       upload.equippedPresetKey = upload.presets.basic ? 'basic' : Object.keys(upload.presets)[0];
     }
-    return clampWorkshopWeaponV2(upload);
+    return upload;
   }
 
   /** Tier-2 저장 + 장착: LOCAL only — save to the device store + equip.
@@ -3604,6 +3602,7 @@ export class MotionEditor {
     if (!w) { this._setStatus('업로드하려면 먼저 저장이 성공해야 합니다.'); return; }
     if (!this.onUploadWorkshop) { this._setStatus('업로드 기능을 사용할 수 없습니다.'); return; }
     const upload = this._workshopUploadPayload(w);
+    if (!upload) { this._setStatus('업로드하려면 최소 1개 이상의 프리셋을 완성 표시해야 합니다.'); return; }
     const skipped = this._incompleteWorkshopPresets(w);
     this._setStatus(`"${w.name}" 업로드 중...${skipped.length ? ` 미완성 프리셋 ${skipped.length}개는 제외됩니다.` : ''}`);
     try {

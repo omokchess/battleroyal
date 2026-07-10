@@ -473,7 +473,10 @@ export class Game {
       // the final tableau); the render below keeps drawing the frozen scene.
       // Also frozen while the onboarding card holds the match / countdown runs.
       const holding = this.matchHold || now < this.countdownUntil;
-      if (!this.matchOver && !holding) this._updateHostPhysics(deltaTime, now);
+      if (!this.matchOver && !holding) {
+        this._updateHostPhysics(deltaTime, now);
+        this._updateHUD();   // shell-side; the sim tick must not touch the DOM
+      }
 
       // Render frame
       this._renderFrame();
@@ -948,9 +951,8 @@ export class Game {
 
     // Round end (demo bot match): time limit or kill target reached.
     this._checkMatchEnd(now);
-
-    // Update stats UI counters
-    this._updateHUD();
+    // NOTE: the HUD is refreshed by the shell right after this tick — the
+    // simulation must not touch it (it also runs on a headless server).
   }
 
   /** Milliseconds left in the round (Infinity when there is no time limit). */
@@ -4642,7 +4644,9 @@ export class Game {
       lifetime: 420
     };
     this.effects.push(effect);
-    this._triggerLocalBowSkillVibration(effect);
+    // Authority-side juice for the shooter; remote clients raise the same cue by
+    // scanning the synced effect (_triggerLocalBowSkillVibrations).
+    this.fx.vibrate([35, 20, 55], player.id);
   }
 
   _triggerLocalBowSkillVibrations(effects) {
@@ -4800,7 +4804,11 @@ export class Game {
       lifetime: 260
     };
     this.effects.push(throwEffect);
-    this._triggerLocalSpearThrowFeedback(throwEffect);
+    // Authority-side juice for the thrower. Remote clients raise the same cue by
+    // scanning the synced effect (_triggerLocalSpearThrowFeedbacks), so this must
+    // not run the deduped scan path itself — just tag the cue with its owner.
+    this.fx.shake(9, 260, player.id);
+    this.fx.vibrate([45, 25, 35], player.id);
 
     this._damageSpearThrowPath(player, dirX, dirY, travelDist);
   }

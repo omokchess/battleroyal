@@ -152,7 +152,9 @@ export function clampWorkshopHitboxes(hitboxes) {
     if (aE < aS) { const t = aS; aS = aE; aE = t; }
     if (aE - aS > ENVELOPE.activeLenMax) aE = aS + ENVELOPE.activeLenMax;   // cap window length
     const frameTime = clampNum(hb.frameTime, [0, 1], (aS + aE) / 2);
-    out.push({ ox: clampNum(hb.ox, [-220, 220], 0), oy: clampNum(hb.oy, [-220, 220], 0), w, h, activeStart: aS, activeEnd: aE, frameTime });
+    const item = { ox: clampNum(hb.ox, [-220, 220], 0), oy: clampNum(hb.oy, [-220, 220], 0), w, h, activeStart: aS, activeEnd: aE, frameTime };
+    if (Number.isFinite(Number(hb.damage))) item.damage = Math.round(clampNum(hb.damage, [0, 60], 0));
+    out.push(item);
   }
   return out;
 }
@@ -174,18 +176,20 @@ export function clampWorkshopWeapon(raw) {
   // Motion set: cosmetic pose data + the attack's hitboxes (kept via allowGameplay),
   // then geometry re-clamped to the workshop envelope. Keys are the FIXED motion
   // tag vocabulary only — unknown slots are dropped (no smuggling arbitrary data).
-  const MOTION_STATES = ['attack', 'run', 'idle', 'jump', 'dash', 'skill', 'skill2', 'skill3', 'heavy', 'hurt', 'kill'];
+  const MOTION_STATES = ['attack', 'run', 'idle', 'jump', 'dash', 'skill', 'skill2', 'skill3', 'heavy', 'hurt'];
   const rawSet = (r.motionSet && typeof r.motionSet === 'object') ? r.motionSet : {};
   const motionSet = {};
   for (const state of MOTION_STATES) {
     if (!rawSet[state]) continue;
     const m = sanitizeMotion(rawSet[state], undefined, { allowGameplay: true });
     // Attack/heavy/skill1-3 carry real hitboxes (they drive combat); rest cosmetic.
-    if (['attack', 'heavy', 'skill', 'skill2', 'skill3'].includes(state)) { if (Array.isArray(m.hitboxes)) m.hitboxes = clampWorkshopHitboxes(m.hitboxes); }
+    if (['attack', 'heavy', 'skill', 'skill2', 'skill3'].includes(state)) { if (Array.isArray(rawSet[state].hitboxes)) m.hitboxes = clampWorkshopHitboxes(rawSet[state].hitboxes); }
     else delete m.hitboxes;
     // Preserve the weapon flip timeline (sanitizeMotion drops it) — cosmetic.
     if (Array.isArray(rawSet[state].flipXKeys)) m.flipXKeys = sanitizeFlipKeys(rawSet[state].flipXKeys);
     if (Array.isArray(rawSet[state].flipYKeys)) m.flipYKeys = sanitizeFlipKeys(rawSet[state].flipYKeys);
+    if (Array.isArray(rawSet[state].leftFlipXKeys)) m.leftFlipXKeys = sanitizeFlipKeys(rawSet[state].leftFlipXKeys);
+    if (Array.isArray(rawSet[state].leftFlipYKeys)) m.leftFlipYKeys = sanitizeFlipKeys(rawSet[state].leftFlipYKeys);
     if (Array.isArray(rawSet[state].handSwapKeys)) m.handSwapKeys = sanitizeFlipKeys(rawSet[state].handSwapKeys);
     if (['attack', 'heavy', 'skill', 'skill2', 'skill3'].includes(state)) {
       m.projectileEvents = sanitizeProjectileEvents(rawSet[state].projectileEvents);
@@ -210,19 +214,20 @@ export function clampWorkshopWeapon(raw) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const WEAPON_CATEGORIES = new Set(['melee', 'ranged', 'special']);
-// The six primary preset slots + absorbed non-attack (cosmetic) motion slots.
-export const COMBAT_PRESET_KINDS = new Set(['basic', 'heavy', 'skill1', 'skill2', 'skill3']);
-export const NONCOMBAT_PRESET_KINDS = new Set(['idle', 'run', 'jump', 'hurt', 'kill']);
-export const ALL_PRESET_KINDS = new Set(['basic', 'heavy', 'dash', 'skill1', 'skill2', 'skill3', ...NONCOMBAT_PRESET_KINDS]);
-export const PRIMARY_PRESET_KEYS = ['basic', 'heavy', 'dash', 'skill1', 'skill2', 'skill3'];
+// The primary combat preset slots + absorbed non-attack (cosmetic) motion slots.
+export const COMBAT_PRESET_KINDS = new Set(['basic', 'heavy', 'skill1', 'skill2', 'skill3', 'ultimate']);
+export const NONCOMBAT_PRESET_KINDS = new Set(['idle', 'run', 'jump', 'hurt']);
+export const ALL_PRESET_KINDS = new Set(['basic', 'heavy', 'dash', 'skill1', 'skill2', 'skill3', 'ultimate', ...NONCOMBAT_PRESET_KINDS]);
+export const PRIMARY_PRESET_KEYS = ['basic', 'heavy', 'dash', 'skill1', 'skill2', 'skill3', 'ultimate'];
 export const PRESET_LABELS = {
-  basic: '평타', heavy: '강공격', dash: '대시', skill1: '스킬 1', skill2: '스킬 2', skill3: '궁극기',
-  idle: '대기', run: '걷기', jump: '점프', hurt: '피격', kill: '처치',
+  basic: '평타', heavy: '강공격', dash: '대시', skill1: '스킬 1', skill2: '스킬 2', skill3: '스킬 3', ultimate: '궁극기',
+  idle: '대기', run: '걷기', jump: '점프', hurt: '피격',
 };
+export const AUTHORING_PRESET_KEYS = [...PRIMARY_PRESET_KEYS, ...NONCOMBAT_PRESET_KINDS];
 // Which in-game input fires each combat/dash preset (cooldown = preset.combat).
 // heavy = a basic-attack combo finisher. The required basic count is authored
 // on the heavy preset as comboAfter (1..5), defaulting to the old 3-hit behavior.
-export const PRESET_INPUT = { basic: 'lmb', heavy: 'combo', skill1: 'skillF', skill2: 'skillE', skill3: 'skillR', dash: 'dash' };
+export const PRESET_INPUT = { basic: 'lmb', heavy: 'combo', skill1: 'skillF', skill2: 'skillE', skill3: 'skillR', ultimate: 'ultimate', dash: 'dash' };
 export const FIXED_PRESET_DURATIONS = Object.freeze({
   dash: 0.16,  // DashConfig.durationMs
   run: 0.5,    // STICK_MOTIONS.run
@@ -374,6 +379,33 @@ export function sanitizeCombat(c) {
   };
 }
 
+export function sanitizeCombatKeys(keys, fallbackCombat = null) {
+  if (!Array.isArray(keys)) return [];
+  const byTime = new Map();
+  for (const k of keys.slice(0, 64)) {
+    if (!k || typeof k !== 'object') continue;
+    const rawTime = Number.isFinite(Number(k.time)) ? Number(k.time) : Number(k.t);
+    const time = Math.round(clampNum(rawTime, [0, 1], 0) * 1000) / 1000;
+    const rawCombat = (k.combat && typeof k.combat === 'object') ? k.combat : k;
+    byTime.set(time, sanitizeCombat({ ...(fallbackCombat || {}), ...rawCombat }));
+  }
+  return [...byTime.entries()].sort((a, b) => a[0] - b[0]).slice(0, 64)
+    .map(([time, combat]) => ({ time, combat }));
+}
+
+export function sampleCombatKeys(keys, fallbackCombat = null, time = 0) {
+  const base = sanitizeCombat(fallbackCombat);
+  const list = sanitizeCombatKeys(keys, base);
+  if (!list.length) return base;
+  const t = clampNum(time, [0, 1], 0);
+  let out = list[0].combat;
+  for (const k of list) {
+    if (k.time <= t) out = k.combat;
+    else break;
+  }
+  return sanitizeCombat({ ...base, ...out });
+}
+
 const sanitizeBlocksData = (b) => (b && typeof b === 'object' && Array.isArray(b.events)) ? b : null;
 
 /** Sanitize one preset. `key` is the preset kind and drives which fields apply. */
@@ -387,12 +419,16 @@ export function sanitizePreset(raw, key) {
   }
   const out = {
     label: PRESET_LABELS[kind] || kind,
+    displayName: sanitizeText(r.displayName, 24),
     kind,
+    complete: !!r.complete,
     motion,
     previewOffset: sanitizePreviewOffset(r.previewOffset),
     weaponTimeline: {
       flipXKeys: sanitizeFlipKeys(r.weaponTimeline && r.weaponTimeline.flipXKeys),
       flipYKeys: sanitizeFlipKeys(r.weaponTimeline && r.weaponTimeline.flipYKeys),
+      leftFlipXKeys: sanitizeFlipKeys(r.weaponTimeline && r.weaponTimeline.leftFlipXKeys),
+      leftFlipYKeys: sanitizeFlipKeys(r.weaponTimeline && r.weaponTimeline.leftFlipYKeys),
       handSwapKeys: sanitizeFlipKeys(r.weaponTimeline && r.weaponTimeline.handSwapKeys)
     },
     effects: sanitizeEffects(r.effects),
@@ -401,6 +437,7 @@ export function sanitizePreset(raw, key) {
   };
   if (isCombatKind(kind)) {
     out.combat = sanitizeCombat(r.combat);
+    out.combatKeys = sanitizeCombatKeys(r.combatKeys, out.combat);
     out.hitboxes = clampWorkshopHitboxes(r.hitboxes);
     out.ranged = !!r.ranged;
     out.projectile = sanitizeProjectile(r.projectile);
@@ -443,7 +480,12 @@ export function statCostV2(weapon) {
   let cost = baseStatsCost(w.baseStats || {});
   for (const key of PRIMARY_PRESET_KEYS) {
     const p = w.presets && w.presets[key];
-    if (p && isCombatKind(p.kind)) cost = Math.max(cost, combatCost(p.combat));
+    if (p && isCombatKind(p.kind)) {
+      cost = Math.max(cost, combatCost(p.combat));
+      for (const ck of sanitizeCombatKeys(p.combatKeys, p.combat)) {
+        cost = Math.max(cost, combatCost(ck.combat));
+      }
+    }
   }
   return Math.round(cost);
 }
@@ -461,8 +503,15 @@ export function enforceBudgetV2(weapon) {
     let best = null, bestCost = -1;
     for (const key of PRIMARY_PRESET_KEYS) {
       const p = w.presets[key];
-      const cost = p && isCombatKind(p.kind) ? combatCost(p.combat) : -1;
-      if (cost > POINT_BUDGET && cost > bestCost) { best = p; bestCost = cost; }
+      if (!p || !isCombatKind(p.kind)) continue;
+      const candidates = [{ get combat() { return p.combat; }, set combat(v) { p.combat = v; } }];
+      if (Array.isArray(p.combatKeys)) {
+        for (const ck of p.combatKeys) candidates.push({ get combat() { return ck.combat; }, set combat(v) { ck.combat = v; } });
+      }
+      for (const c of candidates) {
+        const cost = combatCost(c.combat);
+        if (cost > POINT_BUDGET && cost > bestCost) { best = c; bestCost = cost; }
+      }
     }
     if (best && best.combat.statusDurationMs > 0) { best.combat.statusDurationMs = Math.max(0, best.combat.statusDurationMs - 100); continue; }
     if (best && best.combat.ultimateGain > 10) { best.combat.ultimateGain = Math.max(10, best.combat.ultimateGain - 5); continue; }
@@ -483,7 +532,7 @@ export function makeEmptyPreset(kind) {
 export function makeEmptyWeaponV2({ name = '새 무기', desc = '', category = 'melee', firstPresetKind = 'basic' } = {}) {
   const cat = WEAPON_CATEGORIES.has(category) ? category : 'melee';
   const firstKind = ALL_PRESET_KINDS.has(firstPresetKind) ? firstPresetKind : 'basic';
-  const presets = { [firstKind]: makeEmptyPreset(firstKind) };
+  const presets = Object.fromEntries(AUTHORING_PRESET_KEYS.map(k => [k, makeEmptyPreset(k)]));
   return clampWorkshopWeaponV2({
     schemaVersion: 2,
     id: 'w2_' + Date.now().toString(36) + '_' + (_v2seq++),
@@ -548,15 +597,25 @@ export function clampWorkshopWeaponV2(raw) {
     .filter(Boolean)
     .slice(0, 5);
   const sanitizeLayerOrder = (raw) => {
-    const allowed = new Set(['player', 'weapon', ...hats.map((_, i) => `hat:${i}`)]);
+    const dual = !!vv.dual;
+    const weapons = dual ? ['weapon:left', 'weapon:right'] : ['weapon'];
+    const allowed = new Set(['player', ...weapons, ...hats.map((_, i) => `hat:${i}`)]);
     const out = [];
     if (Array.isArray(raw)) {
       for (const item of raw) {
         const key = sanitizeText(item, 16);
+        if (dual && key === 'weapon') {
+          for (const w of weapons) if (!out.includes(w)) out.push(w);
+          continue;
+        }
+        if (!dual && (key === 'weapon:left' || key === 'weapon:right')) {
+          if (!out.includes('weapon')) out.push('weapon');
+          continue;
+        }
         if (allowed.has(key) && !out.includes(key)) out.push(key);
       }
     }
-    for (const item of ['player', 'weapon', ...hats.map((_, i) => `hat:${i}`)]) {
+    for (const item of ['player', ...weapons, ...hats.map((_, i) => `hat:${i}`)]) {
       if (!out.includes(item)) out.push(item);
     }
     return out;
@@ -587,7 +646,9 @@ export function clampWorkshopWeaponV2(raw) {
     if (!ALL_PRESET_KINDS.has(key)) continue;   // drop unknown slots
     presets[key] = sanitizePreset(rawPresets[key], key);
   }
-  if (!Object.keys(presets).length) presets.basic = makeEmptyPreset('basic');
+  for (const key of AUTHORING_PRESET_KEYS) {
+    if (!presets[key]) presets[key] = makeEmptyPreset(key);
+  }
   let equippedPresetKey = presets[r.equippedPresetKey] ? r.equippedPresetKey : Object.keys(presets)[0];
 
   const out = {

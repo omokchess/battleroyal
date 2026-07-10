@@ -256,7 +256,7 @@ export function solveStickman(pose, scale, x, y, facing = 1, opts = {}) {
 
 /** Draw a stick figure from solved screen joints. `aimAngle` only orients the
  *  held weapon. Used by both the game and the editor preview. */
-export function drawStickFromJoints(ctx, sc, headR, { color = '#cdd3da', accent = '#0d0a06', lineW = 3, scale = 14, weapon = 'sword', drawWeapon = true, aimAngle = 0, headShape = 'circle', accessory = 'none', weaponImage = null, weaponImageSize = 2.0, weaponImageAnchors = null, weaponFlip = false, weaponFlipY = false, weaponDual = false, weaponHandSwapped = false, offhandWeapon = null, offhandImage = null, offhandImageSize = 2.0, offhandImageAnchors = null, hatImage = null, hat = null, hatImages = null, hats = null, layerOrder = null } = {}) {
+export function drawStickFromJoints(ctx, sc, headR, { color = '#cdd3da', accent = '#0d0a06', lineW = 3, scale = 14, weapon = 'sword', drawWeapon = true, aimAngle = 0, headShape = 'circle', accessory = 'none', weaponImage = null, weaponImageSize = 2.0, weaponImageAnchors = null, weaponFlip = false, weaponFlipY = false, weaponRightFlip = null, weaponRightFlipY = null, weaponLeftFlip = null, weaponLeftFlipY = null, weaponDual = false, weaponHandSwapped = false, offhandWeapon = null, offhandImage = null, offhandImageSize = 2.0, offhandImageAnchors = null, hatImage = null, hat = null, hatImages = null, hats = null, layerOrder = null } = {}) {
   const lw = Math.max(2, lineW * (scale / 14));
   const visualFacing = sc && sc._facing < 0 ? -1 : 1;
   const limb = (a, b, w, col) => {
@@ -270,6 +270,15 @@ export function drawStickFromJoints(ctx, sc, headR, { color = '#cdd3da', accent 
   const mainTip = weaponHandSwapped && sc.weaponOffTip ? sc.weaponOffTip : sc.weaponTip;
   const offHand = weaponHandSwapped && sc.handN ? sc.handN : sc.handF;
   const offTipBase = weaponHandSwapped && sc.weaponTip ? sc.weaponTip : sc.weaponOffTip;
+  const rightFlipX = weaponRightFlip == null ? !!weaponFlip : !!weaponRightFlip;
+  const rightFlipY = weaponRightFlipY == null ? !!weaponFlipY : !!weaponRightFlipY;
+  // Legacy data used the inverse X value for the offhand. New per-hand data
+  // supplies the left value explicitly, so hand-swap stays physical-hand based.
+  const leftFlipX = weaponLeftFlip == null ? !rightFlipX : !!weaponLeftFlip;
+  const leftFlipY = weaponLeftFlipY == null ? rightFlipY : !!weaponLeftFlipY;
+  const handFlip = (hand) => (hand === sc.handN
+    ? { x: rightFlipX, y: rightFlipY }
+    : { x: leftFlipX, y: leftFlipY });
   const drawOffhandWeapon = () => {
     // Dual-wield: a second (back-hand) weapon. In custom layer mode it follows
     // the weapon layer; in legacy mode it remains behind the body as before.
@@ -277,10 +286,11 @@ export function drawStickFromJoints(ctx, sc, headR, { color = '#cdd3da', accent 
     const offTip = offTipBase || (mainTip && mainHand
       ? { x: offHand.x + (mainTip.x - mainHand.x), y: offHand.y + (mainTip.y - mainHand.y) }
       : null);
+    const flip = handFlip(offHand);
     if (offTip && offhandImage && offhandImage.complete && offhandImage.naturalWidth) {
-      ctx.save(); ctx.globalAlpha = 0.85; drawImageWeapon(ctx, offHand, offTip, scale, offhandImage, offhandImageSize, offhandImageAnchors, !weaponFlip, weaponFlipY, visualFacing); ctx.restore();
+      ctx.save(); ctx.globalAlpha = 0.85; drawImageWeapon(ctx, offHand, offTip, scale, offhandImage, offhandImageSize, offhandImageAnchors, flip.x, flip.y, visualFacing); ctx.restore();
     } else if (offTip && weaponImage && weaponImage.complete && weaponImage.naturalWidth) {
-      ctx.save(); ctx.globalAlpha = 0.85; drawImageWeapon(ctx, offHand, offTip, scale, weaponImage, weaponImageSize, weaponImageAnchors, !weaponFlip, weaponFlipY, visualFacing); ctx.restore();
+      ctx.save(); ctx.globalAlpha = 0.85; drawImageWeapon(ctx, offHand, offTip, scale, weaponImage, weaponImageSize, weaponImageAnchors, flip.x, flip.y, visualFacing); ctx.restore();
     } else if (offTip) {
       const ow = offhandWeapon || weapon;
       drawHeldWeapon(ctx, offHand, offTip, scale, ow, shade(WEAPON_STICK_COLOR[ow] || WEAPON_STICK_COLOR[weapon] || color, -0.25));
@@ -288,12 +298,19 @@ export function drawStickFromJoints(ctx, sc, headR, { color = '#cdd3da', accent 
   };
   const drawMainWeapon = () => {
     if (!drawWeapon || !mainTip || !mainHand) return;
+    const flip = handFlip(mainHand);
     if (weaponImage && weaponImage.complete && weaponImage.naturalWidth) {
-      drawImageWeapon(ctx, mainHand, mainTip, scale, weaponImage, weaponImageSize, weaponImageAnchors, weaponFlip, weaponFlipY, visualFacing);
+      drawImageWeapon(ctx, mainHand, mainTip, scale, weaponImage, weaponImageSize, weaponImageAnchors, flip.x, flip.y, visualFacing);
     } else {
       const wcol = WEAPON_STICK_COLOR[weapon] || color;
       drawHeldWeapon(ctx, mainHand, mainTip, scale, weapon, wcol);
     }
+  };
+  const drawWeaponHandLayer = (handKey) => {
+    const hand = handKey === 'left' ? sc.handF : sc.handN;
+    if (!hand) return;
+    if (mainHand === hand) drawMainWeapon();
+    else if (weaponDual && offHand === hand) drawOffhandWeapon();
   };
   const drawPlayerBody = () => {
     limb(sc.pelvis, sc.kneeF, lw, back); limb(sc.kneeF, sc.footF, lw, back);
@@ -305,11 +322,13 @@ export function drawStickFromJoints(ctx, sc, headR, { color = '#cdd3da', accent 
     drawHead(ctx, sc.head, sc.neck, headR, color, accent, Math.max(1, lw * 0.5), headShape, accessory);
     limb(sc.neck, sc.elbowN, lw, color); limb(sc.elbowN, sc.handN, lw, color);
   };
-  const customOrder = normalizeVisualLayerOrder(layerOrder, hatList);
+  const customOrder = normalizeVisualLayerOrder(layerOrder, hatList, weaponDual);
   if (customOrder) {
     for (const item of customOrder) {
       if (item === 'player') drawPlayerBody();
       else if (item === 'weapon') { drawOffhandWeapon(); drawMainWeapon(); }
+      else if (item === 'weapon:right') drawWeaponHandLayer('right');
+      else if (item === 'weapon:left') drawWeaponHandLayer('left');
       else if (item.startsWith('hat:')) drawDecorationAt(ctx, sc, headR, scale, hatList, imgList, Number(item.slice(4)), visualFacing);
     }
     return;
@@ -330,16 +349,30 @@ export function drawStickFromJoints(ctx, sc, headR, { color = '#cdd3da', accent 
   drawDecorationLayer(ctx, sc, headR, scale, hatList, imgList, 'overWeapon', visualFacing);
 }
 
-function normalizeVisualLayerOrder(layerOrder, hatList) {
+function normalizeVisualLayerOrder(layerOrder, hatList, weaponDual = false) {
   if (!Array.isArray(layerOrder)) return null;
-  const allowed = new Set(['player', 'weapon', ...hatList.map((_, i) => `hat:${i}`)]);
+  const allowed = new Set(['player', 'weapon', 'weapon:right', 'weapon:left', ...hatList.map((_, i) => `hat:${i}`)]);
   const out = [];
   for (const raw of layerOrder) {
     const item = String(raw || '');
+    if (!weaponDual && (item === 'weapon:right' || item === 'weapon:left')) {
+      if (!out.includes('weapon')) out.push('weapon');
+      continue;
+    }
     if (allowed.has(item) && !out.includes(item)) out.push(item);
   }
   if (!out.includes('player')) out.push('player');
-  if (!out.includes('weapon')) out.push('weapon');
+  const hasCombinedWeapon = out.includes('weapon');
+  const hasSplitWeapon = out.includes('weapon:right') || out.includes('weapon:left');
+  if (!hasCombinedWeapon && !hasSplitWeapon) {
+    if (weaponDual) out.push('weapon:left', 'weapon:right');
+    else out.push('weapon');
+  } else if (weaponDual && !hasCombinedWeapon) {
+    if (!out.includes('weapon:left')) out.push('weapon:left');
+    if (!out.includes('weapon:right')) out.push('weapon:right');
+  } else if (!weaponDual && !hasCombinedWeapon) {
+    out.push('weapon');
+  }
   for (let i = 0; i < hatList.length; i++) {
     const item = `hat:${i}`;
     if (!out.includes(item)) out.push(item);
@@ -477,11 +510,11 @@ function drawHead(ctx, head, neck, r, color, accent, lineW, shape, accessory) {
 export function drawStickman(opts) {
   const { ctx, x, y, scale, facing = 1, color = '#cdd3da', accent = '#0d0a06',
     lineW = 3, pose, aimAngle = 0, weapon = 'sword', headShape = 'circle', accessory = 'none',
-    weaponImage = null, weaponImageSize = 2.0, weaponImageAnchors = null, weaponFlip = false, weaponFlipY = false, weaponDual = false,
+    weaponImage = null, weaponImageSize = 2.0, weaponImageAnchors = null, weaponFlip = false, weaponFlipY = false, weaponRightFlip = null, weaponRightFlipY = null, weaponLeftFlip = null, weaponLeftFlipY = null, weaponDual = false,
     offhandWeapon = null, offhandImage = null, offhandImageSize = 2.0, offhandImageAnchors = null, weaponHandSwapped = false, hatImage = null, hat = null, hatImages = null, hats = null, layerOrder = null,
     rawNearArm = false } = opts;
   const { joints, headR } = solveStickman(pose, scale, x, y, facing, { aimAngle, weapon, rawNearArm, offhandWeapon });
-  drawStickFromJoints(ctx, joints, headR, { color, accent, lineW, scale, weapon, aimAngle, headShape, accessory, weaponImage, weaponImageSize, weaponImageAnchors, weaponFlip, weaponFlipY, weaponDual, weaponHandSwapped, offhandWeapon, offhandImage, offhandImageSize, offhandImageAnchors, hatImage, hat, hatImages, hats, layerOrder });
+  drawStickFromJoints(ctx, joints, headR, { color, accent, lineW, scale, weapon, aimAngle, headShape, accessory, weaponImage, weaponImageSize, weaponImageAnchors, weaponFlip, weaponFlipY, weaponRightFlip, weaponRightFlipY, weaponLeftFlip, weaponLeftFlipY, weaponDual, weaponHandSwapped, offhandWeapon, offhandImage, offhandImageSize, offhandImageAnchors, hatImage, hat, hatImages, hats, layerOrder });
 }
 
 // A held weapon: a bar/blade from the hand to the (already-solved) tip.

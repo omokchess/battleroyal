@@ -20,7 +20,7 @@ import { resolveMotion, weaponSetId, sanitizeMotion, registerMotionSet, MOTION_L
 import { captureMotionFromWebcam } from './PoseCapture.js';
 import { drawProjectileShape, drawFxShape } from './ProjectileArt.js';
 import { equippedStickLook, saveStickLook } from './StickLook.js';
-import { clampWorkshopStats, statCost, enforceBudget, clampWorkshopWeapon, POINT_BUDGET, toWorkshopWeaponV2, clampWorkshopWeaponV2, COMBAT_PRESET_KINDS, NONCOMBAT_PRESET_KINDS, PRIMARY_PRESET_KEYS, PRESET_LABELS, ALL_PRESET_KINDS, FIXED_PRESET_DURATIONS, makeEmptyWeaponV2, makeEmptyPreset, statCostV2, baseStatsCost, combatCost, sanitizeCombat, sanitizeProjectile, sanitizeProjectileEvents, sanitizeTeleportEvents, sanitizeEffects, VALID_STATUS, sanitizeFlipKeys, sampleFlip } from './Workshop.js';
+import { clampWorkshopStats, statCost, enforceBudget, clampWorkshopWeapon, POINT_BUDGET, toWorkshopWeaponV2, clampWorkshopWeaponV2, COMBAT_PRESET_KINDS, PRESET_LABELS, AUTHORING_PRESET_KEYS, FIXED_PRESET_DURATIONS, makeEmptyWeaponV2, makeEmptyPreset, statCostV2, baseStatsCost, combatCost, sanitizeCombat, sanitizeCombatKeys, sampleCombatKeys, sanitizeProjectile, sanitizeProjectileEvents, sanitizeTeleportEvents, sanitizeEffects, VALID_STATUS, sanitizeFlipKeys, sampleFlip } from './Workshop.js';
 import { saveWorkshopWeaponLocal, equipWorkshopWeaponLocal, v2ToV1Runtime } from './WorkshopStore.js';
 import { invalidateWeaponImage, shrinkDataUrlToBudget, WEAPON_IMAGE_BUDGET } from './WeaponImages.js';
 // Local workshop storage + equip live in WorkshopStore now; re-export the
@@ -57,13 +57,13 @@ const DECORATION_LAYERS = [
 
 // Fixed motion-tag vocabulary (the bridge between authored motions and gameplay /
 // blockcoding). Keys are the engine slot names; labels are what users see.
-// attack/run/idle/jump auto-apply via the StickAnimator; dash/skill/hurt/kill are
+// attack/run/idle/jump auto-apply via the StickAnimator; dash/skill/hurt are
 // trigger tags fired by block programs (모션 재생 블록).
 export const MOTION_TAGS = [
   { key: 'attack', label: '공격' }, { key: 'run', label: '걷기' },
   { key: 'idle', label: '대기' }, { key: 'jump', label: '점프' },
   { key: 'dash', label: '대시' }, { key: 'skill', label: '스킬' },
-  { key: 'hurt', label: '피격' }, { key: 'kill', label: '처치' },
+  { key: 'hurt', label: '피격' },
 ];
 const TAG_LABEL = Object.fromEntries(MOTION_TAGS.map(t => [t.key, t.label]));
 
@@ -115,12 +115,12 @@ function normalizeCustomImageDataUrl(dataUrl, boxSize = CUSTOM_IMAGE_BOX_SIZE) {
 // highlights a target and auto-advances when the user performs the action.
 const ME_TUT_KEY = 'psd_ws_tut_done';
 const ME_TUT_STEPS = [
-  { target: 'mePresetBar', title: '① 프리셋 선택', text: '평타·강공격·스킬 1/2/3·대시·이동 모션을 프리셋별로 따로 만듭니다. 공격 프리셋만 대미지와 판정을 가집니다.', action: '상단 프리셋 버튼 중 아무거나 하나를 누르거나 ＋ 프리셋에서 새 프리셋을 고르세요.', auto: 'preset' },
+  { target: 'mePresetBar', title: '① 프리셋 선택', text: '평타·강공격·스킬 1/2/3·궁극기·대시·이동 모션은 처음부터 모두 준비됩니다. 공격 프리셋만 대미지와 판정을 가집니다.', action: '상단 프리셋 버튼 중 하나를 누르세요. 완성한 프리셋은 [해당 프리셋 완성] 버튼으로 표시합니다.', auto: 'preset' },
   { target: 'meCanvas', title: '② 포즈 만들기', text: '초록 관절점으로 몸을 움직이고, 주황 무기점을 돌려 무기 기울기를 만듭니다. 빨간 골반점 이동은 미리보기와 실전 위치 보정에 반영됩니다.', action: '미리보기 안의 초록 관절점 또는 주황 무기점을 드래그하세요.', auto: 'joint' },
   { target: 'meNewFrame', title: '③ 프레임 추가', text: '＋ 새 프레임은 현재 포즈를 이어받습니다. 최대 64프레임까지 만들 수 있고, 프레임 몰아보기에서 전체 포즈를 한눈에 확인합니다.', action: '＋ 새 프레임 버튼을 누르세요.', auto: 'newframe' },
   { target: 'meHitboxRow', title: '④ 프레임 판정', text: '공격 프리셋에서는 원하는 프레임에 히트박스를 추가하고, 빨간 상자를 끌어 위치·크기를 조절합니다. 비공격 프리셋에는 판정이 붙지 않습니다.', action: '판정 영역의 ＋ 현재 프레임 판정 버튼을 누르세요.', auto: 'hitbox' },
   { target: 'meEffectsBlock', title: '⑤ 이펙트/발사체/텔레포트', text: '공격 이펙트는 프레임 단위로 재생됩니다. 원거리 프리셋은 발사체 이미지와 히트박스를 직접 고르고, 최대 5개 발사/텔레포트 이벤트를 넣을 수 있습니다.', action: '이펙트 블록의 ＋ 이펙트 버튼을 누르세요.', auto: 'effect' },
-  { target: 'meFlipToggle', title: '⑥ 무기 반전', text: '좌우/상하 반전은 현재 프레임에 키를 찍고, 재생 도중 즉시 반영됩니다. 반전 기준은 기준점입니다.', action: '좌우 반전 버튼을 누르세요.', auto: 'flip' },
+  { target: 'meRightFlipToggle', title: '⑥ 무기 반전', text: '오른손/왼손 무기 반전을 따로 찍을 수 있습니다. 손 변경 후에도 버튼은 실제 오른손과 왼손에 든 무기를 기준으로 적용됩니다.', action: '오른손 좌우 버튼을 누르세요.', auto: 'flip' },
   { target: 'meStatsPanel', title: '⑦ 예산 설정', text: '무기 전역 예산은 체력·이동속도, 프리셋 예산은 대미지·쿨타임·넉백·상태이상에 쓰입니다. 예산 100을 넘기면 더 올릴 수 없습니다.', action: '무기 스탯 또는 프리셋 스탯 슬라이더를 하나 움직이세요.', auto: 'stat' },
   { target: 'meSave', title: '⑧ 저장과 업로드', text: '저장 + 장착은 내 무기고에 저장하고 바로 장착합니다. 업로드를 눌러야 워크샵에 공개됩니다. 워크샵 무기는 첫 1개 무료, 이후 추가는 100화폐입니다.', action: '저장 + 장착 버튼을 누르세요.', auto: 'save' },
 ];
@@ -230,7 +230,10 @@ export class MotionEditor {
     this.dragHitbox = null;     // 'move' | 'resize'
     this._selectedHitboxIndex = -1;
     this._selectedEffectIndex = -1;
+    this._flipKeys = [];
     this._flipYKeys = [];
+    this._leftFlipKeys = [];
+    this._leftFlipYKeys = [];
     this._handSwapKeys = [];
     this._previewZoom = clamp(Number(localStorage.getItem('psd_me_preview_zoom')) || 1, 0.35, 3);
     this._pinch = null;
@@ -255,6 +258,8 @@ export class MotionEditor {
     $('mePrevFrame')?.addEventListener('click', () => this._gotoFrame(-1));
     $('meNextFrame')?.addEventListener('click', () => this._gotoFrame(1));
     $('meNewFrame')?.addEventListener('click', () => this._newFrameCarry());
+    $('meCopyFrame')?.addEventListener('click', () => this._copyFrame());
+    $('mePasteFrame')?.addEventListener('click', () => this._pasteFrame());
     $('meOnion')?.addEventListener('click', () => { this.onion = !this.onion; this._syncOnionBtn(); this._renderPreview(); });
     this.root.addEventListener('input', (e) => this._captureUndoFromUiEvent(e), true);
     this.root.addEventListener('change', (e) => this._captureUndoFromUiEvent(e), true);
@@ -294,8 +299,12 @@ export class MotionEditor {
     $('meSave')?.addEventListener('click', () => this._save());
     $('meUpload')?.addEventListener('click', () => { if (this.mode === 'workshop') this._uploadWorkshop(); else this._setStatus('업로드는 공방 무기에서만 가능합니다.'); });
     $('meTutReplay')?.addEventListener('click', () => this._tutStart());
-    $('meFlipToggle')?.addEventListener('click', () => this._toggleFlipAt(this.scrubT));
-    $('meFlipYToggle')?.addEventListener('click', () => this._toggleFlipYAt(this.scrubT));
+    $('meFlipToggle')?.addEventListener('click', () => this._toggleFlipAt(this.scrubT, 'right', 'x'));
+    $('meFlipYToggle')?.addEventListener('click', () => this._toggleFlipAt(this.scrubT, 'right', 'y'));
+    $('meRightFlipToggle')?.addEventListener('click', () => this._toggleFlipAt(this.scrubT, 'right', 'x'));
+    $('meRightFlipYToggle')?.addEventListener('click', () => this._toggleFlipAt(this.scrubT, 'right', 'y'));
+    $('meLeftFlipToggle')?.addEventListener('click', () => this._toggleFlipAt(this.scrubT, 'left', 'x'));
+    $('meLeftFlipYToggle')?.addEventListener('click', () => this._toggleFlipAt(this.scrubT, 'left', 'y'));
     $('meHandSwapToggle')?.addEventListener('click', () => this._toggleHandSwapAt(this.scrubT));
     $('meFrameOverviewToggle')?.addEventListener('click', () => {
       this._frameOverviewOpen = !this._frameOverviewOpen;
@@ -377,23 +386,29 @@ export class MotionEditor {
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('text/plain', row.dataset.layerItem);
     });
+    $('meLayerBlock')?.addEventListener('dragend', () => {
+      document.querySelectorAll('.me-layer-hover-before,.me-layer-hover-after').forEach(n => n.classList.remove('me-layer-hover-before', 'me-layer-hover-after'));
+    });
     $('meLayerBlock')?.addEventListener('dragover', (e) => {
-      const drop = e.target.closest('[data-layer-drop]');
-      if (!drop) return;
+      const row = e.target.closest('[data-layer-item]');
+      if (!row) return;
       e.preventDefault();
-      document.querySelectorAll('[data-layer-drop].me-layer-hover').forEach(n => n.classList.remove('me-layer-hover'));
-      drop.classList.add('me-layer-hover');
+      document.querySelectorAll('.me-layer-hover-before,.me-layer-hover-after').forEach(n => n.classList.remove('me-layer-hover-before', 'me-layer-hover-after'));
+      const rect = row.getBoundingClientRect();
+      row.classList.add(e.clientY > rect.top + rect.height / 2 ? 'me-layer-hover-after' : 'me-layer-hover-before');
     });
     $('meLayerBlock')?.addEventListener('dragleave', (e) => {
-      const drop = e.target.closest('[data-layer-drop]');
-      if (drop) drop.classList.remove('me-layer-hover');
+      const row = e.target.closest('[data-layer-item]');
+      if (row) row.classList.remove('me-layer-hover-before', 'me-layer-hover-after');
     });
     $('meLayerBlock')?.addEventListener('drop', (e) => {
-      const target = e.target.closest('[data-layer-drop]');
+      const target = e.target.closest('[data-layer-item]');
       if (!target) return;
       e.preventDefault();
-      document.querySelectorAll('[data-layer-drop].me-layer-hover').forEach(n => n.classList.remove('me-layer-hover'));
-      this._moveLayerItem(e.dataTransfer.getData('text/plain'), Number(target.dataset.layerDrop));
+      document.querySelectorAll('.me-layer-hover-before,.me-layer-hover-after').forEach(n => n.classList.remove('me-layer-hover-before', 'me-layer-hover-after'));
+      const rect = target.getBoundingClientRect();
+      const dropIndex = Number(target.dataset.layerIndex) + (e.clientY > rect.top + rect.height / 2 ? 1 : 0);
+      this._moveLayerItem(e.dataTransfer.getData('text/plain'), dropIndex);
     });
     $('meHatX')?.addEventListener('input', (e) => this._updateHat('offsetX', parseFloat(e.target.value)));
     $('meHatY')?.addEventListener('input', (e) => this._updateHat('offsetY', parseFloat(e.target.value)));
@@ -437,6 +452,8 @@ export class MotionEditor {
     $('tp_distance')?.addEventListener('input', () => this._syncFrameEventLists());
     $('meCapture')?.addEventListener('click', () => this._capture());
     $('meAddHitbox')?.addEventListener('click', () => this._toggleHitbox());
+    $('meHitboxDamage')?.addEventListener('change', (e) => this._setHitboxDamage(e.target.value));
+    $('meHitboxDamage')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } });
     const dur = $('meDuration');
     dur?.addEventListener('input', () => this._setDuration(parseFloat(dur.value) || 0.5));
     $('meDurationText')?.addEventListener('change', (e) => this._setDuration(parseFloat(String(e.target.value).replace(/[^\d.]/g, '')) || this.motion?.duration || 0.5));
@@ -490,6 +507,7 @@ export class MotionEditor {
     $('ms_ultimateGain')?.addEventListener('input', (e) => this._updateStat('ultimateGain', parseFloat(e.target.value)));
     $('ms_airborneHeight')?.addEventListener('input', (e) => this._updateStat('airborneHeight', parseFloat(e.target.value)));
     $('ms_status')?.addEventListener('change', (e) => this._updateStat('status', e.target.value));
+    $('mePresetDisplayName')?.addEventListener('input', (e) => this._setPresetDisplayName(e.target.value));
     $('meColor')?.addEventListener('input', (e) => applyLook({ color: e.target.value }));
     $('meColorClear')?.addEventListener('click', () => applyLook({ color: null }));
     $('meLineW')?.addEventListener('input', (e) => applyLook({ lineW: parseInt(e.target.value, 10) }));
@@ -504,6 +522,7 @@ export class MotionEditor {
     this.canvas?.addEventListener('touchend', () => { this._pinch = null; });
     $('meZoomIn')?.addEventListener('click', () => this._setPreviewZoom(this._previewZoom * 1.15));
     $('meZoomOut')?.addEventListener('click', () => this._setPreviewZoom(this._previewZoom / 1.15));
+    $('mePresetComplete')?.addEventListener('click', () => { this._togglePresetComplete(this._activeKey); this._tutEvent('preset'); });
     window.addEventListener('pointermove', (e) => this._pointerMove(e));
     window.addEventListener('pointerup', () => this._pointerUp());
     // Timeline: scrub / select / drag keyframe / hitbox windows.
@@ -530,6 +549,8 @@ export class MotionEditor {
       blocks: this._cloneState(this.blocks),
       flipKeys: this._cloneState(this._flipKeys || []) || [],
       flipYKeys: this._cloneState(this._flipYKeys || []) || [],
+      leftFlipKeys: this._cloneState(this._leftFlipKeys || []) || [],
+      leftFlipYKeys: this._cloneState(this._leftFlipYKeys || []) || [],
       handSwapKeys: this._cloneState(this._handSwapKeys || []) || [],
       previewOffset: this._cloneState(this._previewOffset || { x: 0, y: 0 }) || { x: 0, y: 0 },
       look: this._cloneState(this.look) || equippedStickLook(),
@@ -555,7 +576,7 @@ export class MotionEditor {
   }
   _captureUndoFromUiEvent(e) {
     if (!this.root || this.root.classList.contains('hidden') || this._restoringUndo) return;
-    const el = e.target?.closest?.('button,input,select,textarea,[data-hat-field],[data-layer-item],[data-layer-drop]');
+    const el = e.target?.closest?.('button,input,select,textarea,[data-hat-field],[data-layer-item]');
     if (!el) return;
     const id = el.id || '';
     if (/^(meSave|meUpload|meClose|mePlay|meTut|mePrevFrame|meNextFrame|meFrameOverview|meAnchorCancel)$/.test(id)) return;
@@ -578,6 +599,8 @@ export class MotionEditor {
     this.blocks = s.blocks || null;
     this._flipKeys = Array.isArray(s.flipKeys) ? s.flipKeys : [];
     this._flipYKeys = Array.isArray(s.flipYKeys) ? s.flipYKeys : [];
+    this._leftFlipKeys = Array.isArray(s.leftFlipKeys) ? s.leftFlipKeys : [];
+    this._leftFlipYKeys = Array.isArray(s.leftFlipYKeys) ? s.leftFlipYKeys : [];
     this._handSwapKeys = Array.isArray(s.handSwapKeys) ? s.handSwapKeys : [];
     this._previewOffset = s.previewOffset || { x: 0, y: 0 };
     this.look = s.look || equippedStickLook();
@@ -592,7 +615,7 @@ export class MotionEditor {
     this._syncWeaponUI();
     this._syncBaseSliders();
     const p = this._activePreset();
-    if (p && COMBAT_PRESET_KINDS.has(this._activeKey)) { this._syncCombatSliders(p.combat); this._syncProjectilePanel(p); }
+    if (p && COMBAT_PRESET_KINDS.has(this._activeKey)) { this._syncCombatSliders(this._combatForCurrentFrame(p)); this._syncProjectilePanel(p); }
     this._renderPresetBar();
     this._renderEffectList();
     this._syncFrameEventLists();
@@ -626,10 +649,11 @@ export class MotionEditor {
     .me-cat-collapsed>.me-cat-head>.me-cat-title{display:block}
     .me-cat-collapsed>.me-cat-head>.me-cat-toggle{color:#7df09a}
     .me-cat-collapsed>.me-cat-body{display:none}
-    [data-layer-drop].me-layer-hover{height:16px;border-color:#7df09a;background:rgba(125,240,154,.18);transition:height .12s,background .12s,border-color .12s}
+    [data-layer-item].me-layer-hover-before{box-shadow:inset 0 2px 0 #7df09a}
+    [data-layer-item].me-layer-hover-after{box-shadow:inset 0 -2px 0 #7df09a}
     #meTutScrim{position:absolute;inset:0;z-index:94;pointer-events:none}
-    #meTutScrim .tut-block{position:absolute;background:rgba(0,0,0,.72);pointer-events:auto;transition:left .22s ease,top .22s ease,width .22s ease,height .22s ease,opacity .18s ease}
-    #meTutScrim .tut-ring{position:absolute;z-index:1;pointer-events:none;box-sizing:border-box;border:4px solid #ffd24a;border-radius:10px;box-shadow:0 0 24px rgba(255,210,74,.82),inset 0 0 0 1px rgba(255,210,74,.45);transition:left .22s ease,top .22s ease,width .22s ease,height .22s ease,opacity .14s ease;opacity:0}
+    #meTutScrim .tut-block{position:absolute;background:rgba(0,0,0,.72);pointer-events:auto;transition:opacity .12s ease}
+    #meTutScrim .tut-ring{position:absolute;z-index:1;pointer-events:none;box-sizing:border-box;border:4px solid #ffd24a;border-radius:10px;box-shadow:0 0 24px rgba(255,210,74,.82),inset 0 0 0 1px rgba(255,210,74,.45);transition:opacity .12s ease;opacity:0}
     #meTutCard{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:98;width:min(540px,92%);background:#1a1410;border:2px solid #ffd24a;border-radius:8px;padding:12px 16px;box-shadow:0 6px 24px rgba(0,0,0,.65);font-family:monospace;transition:left .24s ease,top .24s ease,bottom .18s ease,transform .24s ease,opacity .18s ease}
     .me-tut-hi{position:relative !important;z-index:97 !important;border-radius:8px}
     .me-tut-title{color:#ffd24a;font-size:13px;font-weight:800}
@@ -774,7 +798,7 @@ export class MotionEditor {
       current?.classList.add('me-tut-hi');
       this._setTutSpotlight(current || target || null);
     };
-    [120, 320, 560, 860].forEach((delay) => setTimeout(sync, delay));
+    requestAnimationFrame(() => requestAnimationFrame(sync));
   }
 
   _tutStart() {
@@ -880,10 +904,10 @@ export class MotionEditor {
 
   _initCategoryToggles() {
     const cols = [document.getElementById('meColLeft'), document.getElementById('meColRight')].filter(Boolean);
-    cols.flatMap(col => Array.from(col.children)).forEach((box, i) => {
+    cols.forEach((col) => Array.from(col.children).forEach((box, i) => {
       if (!box || box.classList.contains('me-expand-rail') || box.querySelector(':scope > .me-cat-head')) return;
       if (!box.className || !String(box.className).includes('border')) return;
-      const titleText = this._categoryTitleForBox(box, i);
+      const titleText = this._categoryTitleForBox(box, i, col.id);
       const head = document.createElement('div');
       head.className = 'me-cat-head';
       const title = document.createElement('span');
@@ -906,10 +930,10 @@ export class MotionEditor {
       head.appendChild(btn);
       box.appendChild(head);
       box.appendChild(body);
-    });
+    }));
   }
 
-  _categoryTitleForBox(box, index = 0) {
+  _categoryTitleForBox(box, index = 0, colId = '') {
     const directTitle = Array.from(box.children).find((el) => {
       if (!el || el.nodeType !== 1) return false;
       const tag = String(el.tagName || '').toLowerCase();
@@ -932,7 +956,22 @@ export class MotionEditor {
       meBlockHitboxes: '히트박스',
       meBlockGimmick: '기믹 코딩',
     };
-    return idMap[box.id] || box.getAttribute('data-title') || `카테고리 ${index + 1}`;
+    const sequenceMap = {
+      meColLeft: [
+        '프레임 조작',
+        '타임라인 / 판정',
+        '순간이동 이벤트',
+        '공격 이펙트',
+        '모션 클립',
+        '외형 설정',
+      ],
+      meColRight: [
+        '무기 이미지 / 장식',
+        '무기 스탯 / 전투 설정',
+        '저장 / 업로드',
+      ],
+    };
+    return idMap[box.id] || box.getAttribute('data-title') || sequenceMap[colId]?.[index] || '편집 설정';
   }
 
   /** Live width during a splitter drag; below the threshold the block folds. */
@@ -1032,10 +1071,12 @@ export class MotionEditor {
       // V2-native: edit a whole weapon (baseStats + per-preset). openWorkshopV2
       // sets _pendingV2; the plain path creates a fresh empty weapon.
       this._editingV2 = this._pendingV2 || makeEmptyWeaponV2({});
+      this._ensureAuthoringPresets();
       this._editingId = this._editingV2.id;
       this._activeKey = this._editingV2.presets[this._editingV2.equippedPresetKey]
         ? this._editingV2.equippedPresetKey : Object.keys(this._editingV2.presets)[0];
       const nm = $('meName'); if (nm) nm.value = this._editingV2.name;
+      const desc = $('meDesc'); if (desc) desc.value = this._editingV2.desc || '';
       if (this._editingV2.color) { this.look = { ...this.look, color: this._editingV2.color }; if ($('meColor')) $('meColor').value = this.look.color; }
       const vis = this._editingV2.weaponVisual;
       this.weapon = (vis && vis.imageId && this._customWeapon(vis.imageId)) ? vis.imageId : 'sword';
@@ -1064,44 +1105,45 @@ export class MotionEditor {
   }
 
   // ── V2 preset tabs + per-preset load/commit ────────────────────────────────
+  _ensureAuthoringPresets() {
+    const w = this._editingV2;
+    if (!w) return;
+    if (!w.presets || typeof w.presets !== 'object') w.presets = {};
+    for (const key of Object.keys(w.presets)) {
+      if (!AUTHORING_PRESET_KEYS.includes(key)) delete w.presets[key];
+    }
+    for (const key of AUTHORING_PRESET_KEYS) {
+      if (!w.presets[key]) w.presets[key] = makeEmptyPreset(key);
+    }
+    if (!w.presets[w.equippedPresetKey]) w.equippedPresetKey = 'basic';
+    if (!w.presets[this._activeKey]) this._activeKey = w.equippedPresetKey;
+  }
   _presetOrder() {
     const w = this._editingV2; if (!w) return [];
-    const primary = PRIMARY_PRESET_KEYS.filter(k => w.presets[k]);
-    const noncombat = [...NONCOMBAT_PRESET_KINDS].filter(k => w.presets[k]);
-    return [...primary, ...noncombat];
+    return AUTHORING_PRESET_KEYS.filter(k => w.presets[k]);
   }
   _renderPresetBar() {
     const bar = document.getElementById('mePresetBar'); const w = this._editingV2;
     if (!bar || !w) return;
+    this._ensureAuthoringPresets();
     bar.innerHTML = '';
-    for (const key of this._presetOrder()) {
-      const wrap = document.createElement('span'); wrap.style.cssText = 'display:inline-flex;align-items:center';
+    const order = this._presetOrder();
+    for (const key of order) {
+      const wrap = document.createElement('span'); wrap.style.cssText = 'display:inline-flex;align-items:center;gap:2px;flex:0 0 auto';
       const b = document.createElement('button');
       const active = key === this._activeKey;
-      b.className = 'text-[10px] px-2 py-1 rounded cursor-pointer active:scale-95 ' + (active ? 'bg-[#1c6b33] text-white border border-[#7df09a]' : 'bg-[#14100b] text-gray-300 border border-gray-700 hover:border-gray-500');
+      b.className = 'min-w-[74px] text-[10px] px-3 py-1 rounded cursor-pointer active:scale-95 ' + (active ? 'bg-[#1c6b33] text-white border border-[#7df09a]' : 'bg-[#14100b] text-gray-300 border border-gray-700 hover:border-gray-500');
       const star = w.equippedPresetKey === key ? '★ ' : '';
-      b.textContent = star + (PRESET_LABELS[key] || key);
-      b.title = COMBAT_PRESET_KINDS.has(key) ? '공격 프리셋' : (key === 'dash' ? '대시' : '비공격(코스메틱) 프리셋');
+      const done = !!w.presets[key]?.complete;
+      const presetName = w.presets[key]?.displayName || PRESET_LABELS[key] || key;
+      b.textContent = star + presetName + (done ? ' ✓' : '');
+      b.title = `${PRESET_LABELS[key] || key}${w.presets[key]?.displayName ? ` · 표시명: ${w.presets[key].displayName}` : ''}`;
+      b.title += COMBAT_PRESET_KINDS.has(key) ? ' · 공격 프리셋' : (key === 'dash' ? ' · 대시' : ' · 비공격(코스메틱) 프리셋');
       b.addEventListener('click', () => { this._switchPreset(key); this._tutEvent('preset'); });
       wrap.appendChild(b);
-      if (this._presetOrder().length > 1) {
-        const del = document.createElement('button'); del.textContent = '✕';
-        del.className = 'text-[9px] text-gray-600 hover:text-red-400 px-0.5 cursor-pointer';
-        del.title = '프리셋 삭제';
-        del.addEventListener('click', (e) => { e.stopPropagation(); this._deletePreset(key); });
-        wrap.appendChild(del);
-      }
       bar.appendChild(wrap);
     }
-    // ＋ add-preset menu (kinds not yet present)
-    const missing = [...PRIMARY_PRESET_KEYS, ...NONCOMBAT_PRESET_KINDS].filter(k => !w.presets[k]);
-    if (missing.length) {
-      const add = document.createElement('select');
-      add.className = 'text-[10px] bg-[#14100b] text-[#7df09a] border border-[#7df09a] rounded px-1 py-1 cursor-pointer';
-      add.innerHTML = '<option value="">＋ 프리셋</option>' + missing.map(k => `<option value="${k}">${PRESET_LABELS[k] || k}</option>`).join('');
-      add.addEventListener('change', () => { if (add.value) { this._addPresetKind(add.value); this._tutEvent('preset'); } });
-      bar.appendChild(add);
-    }
+    this._syncPresetCompleteButton();
   }
   _switchPreset(key) {
     if (!this._editingV2 || key === this._activeKey) return;
@@ -1111,13 +1153,34 @@ export class MotionEditor {
     this._renderPresetBar();
   }
   _addPresetKind(kind) {
-    const w = this._editingV2; if (!w || !ALL_PRESET_KINDS.has(kind) || w.presets[kind]) return;
+    const w = this._editingV2; if (!w || !AUTHORING_PRESET_KEYS.includes(kind) || w.presets[kind]) return;
     this._commitActivePreset();
     w.presets[kind] = makeEmptyPreset(kind);
     this._activeKey = kind;
     this._loadActivePreset();
     this._renderPresetBar();
     this._setStatus(`"${PRESET_LABELS[kind] || kind}" 프리셋을 추가했습니다.`);
+  }
+  _togglePresetComplete(key) {
+    const w = this._editingV2; if (!w || !w.presets[key]) return;
+    if (key === this._activeKey) this._commitActivePreset();
+    const p = w.presets[key];
+    p.complete = !p.complete;
+    this._renderPresetBar();
+    this._syncPresetCompleteButton();
+    this._setStatus(`${p.displayName || PRESET_LABELS[key] || key} 프리셋을 ${p.complete ? '완성 표시' : '미완성으로 되돌림'}했습니다. 수정은 계속 가능합니다.`);
+  }
+  _syncPresetCompleteButton() {
+    const btn = document.getElementById('mePresetComplete');
+    const p = this._editingV2?.presets?.[this._activeKey];
+    if (!btn) return;
+    const done = !!p?.complete;
+    btn.disabled = !p;
+    btn.textContent = done ? '현재 프리셋 완성됨 ✓' : '현재 프리셋 완성';
+    btn.className = 'border text-[10px] px-2 py-1 hover:border-white active:scale-95 disabled:opacity-40 ' + (done
+      ? 'border-[#7df09a] bg-[#16351f] text-[#7df09a]'
+      : 'border-[#ffd24a] bg-[#24180c] text-[#ffd24a]');
+    btn.title = done ? '다시 누르면 미완성으로 되돌립니다.' : '현재 선택한 프리셋을 완성 표시합니다.';
   }
   _deletePreset(key) {
     const w = this._editingV2; if (!w || this._presetOrder().length <= 1) return;
@@ -1133,10 +1196,18 @@ export class MotionEditor {
     if (!p) return;
     this._applyFixedPresetDuration();
     p.motion = this.motion;
-    p.weaponTimeline = { flipXKeys: sanitizeFlipKeys(this._flipKeys || []), flipYKeys: sanitizeFlipKeys(this._flipYKeys || []), handSwapKeys: sanitizeFlipKeys(this._handSwapKeys || []) };
+    p.weaponTimeline = {
+      flipXKeys: sanitizeFlipKeys(this._flipKeys || []),
+      flipYKeys: sanitizeFlipKeys(this._flipYKeys || []),
+      leftFlipXKeys: sanitizeFlipKeys(this._leftFlipKeys || []),
+      leftFlipYKeys: sanitizeFlipKeys(this._leftFlipYKeys || []),
+      handSwapKeys: sanitizeFlipKeys(this._handSwapKeys || [])
+    };
     p.previewOffset = this._previewOffset || { x: 0, y: 0 };
     if (COMBAT_PRESET_KINDS.has(key)) {
+      p.displayName = this._presetDisplayNameValue();
       p.hitboxes = Array.isArray(this.motion.hitboxes) ? this.motion.hitboxes : [];
+      p.combatKeys = sanitizeCombatKeys(p.combatKeys || [], p.combat);
       p.projectileEvents = sanitizeProjectileEvents(p.projectileEvents || []);
       p.teleportEvents = sanitizeTeleportEvents(p.teleportEvents || []);
       p.blocks = this.blocks;
@@ -1154,6 +1225,8 @@ export class MotionEditor {
     this.blocks = (isCombat || isDash) ? (p.blocks || null) : null;
     this._flipKeys = (p.weaponTimeline && Array.isArray(p.weaponTimeline.flipXKeys)) ? p.weaponTimeline.flipXKeys.map(k => ({ ...k })) : [];
     this._flipYKeys = (p.weaponTimeline && Array.isArray(p.weaponTimeline.flipYKeys)) ? p.weaponTimeline.flipYKeys.map(k => ({ ...k })) : [];
+    this._leftFlipKeys = (p.weaponTimeline && Array.isArray(p.weaponTimeline.leftFlipXKeys)) ? p.weaponTimeline.leftFlipXKeys.map(k => ({ ...k })) : [];
+    this._leftFlipYKeys = (p.weaponTimeline && Array.isArray(p.weaponTimeline.leftFlipYKeys)) ? p.weaponTimeline.leftFlipYKeys.map(k => ({ ...k })) : [];
     this._handSwapKeys = (p.weaponTimeline && Array.isArray(p.weaponTimeline.handSwapKeys)) ? p.weaponTimeline.handSwapKeys.map(k => ({ ...k })) : [];
     this._previewOffset = p.previewOffset ? { ...p.previewOffset } : { x: 0, y: 0 };
     this.selKf = 0; this.scrubT = this.motion.keyframes[0]?.t || 0; this.playing = false;
@@ -1161,7 +1234,7 @@ export class MotionEditor {
     this._selectHitboxForTime(this.scrubT);
     this._syncDurationControls();
     this._syncBaseSliders();
-    if (isCombat) { this._syncCombatSliders(p.combat); this._syncProjectilePanel(p); }
+    if (isCombat) { this._syncCombatSliders(this._combatForCurrentFrame(p)); this._syncProjectilePanel(p); }
     else {
       document.getElementById('meProjectilePanel')?.classList.add('hidden');
       document.getElementById('meTeleportPanel')?.classList.add('hidden');
@@ -1173,8 +1246,25 @@ export class MotionEditor {
     $('meHitboxRow')?.classList.toggle('hidden', !isCombat);   // hitboxes = combat only
     this._syncHeavyStats(isCombat ? p : null);
     const cn = $('meCombatPresetName'); if (cn) cn.textContent = PRESET_LABELS[key] || key;
+    this._syncPresetDisplayName(p, isCombat);
     this._syncFrameEventLists();
     this._renderBudget(); this._updateBlockCount(); this._renderAll();
+  }
+  _presetDisplayNameValue() {
+    return String(document.getElementById('mePresetDisplayName')?.value || '').trim().slice(0, 24);
+  }
+  _syncPresetDisplayName(p, enabled = true) {
+    const input = document.getElementById('mePresetDisplayName');
+    if (!input) return;
+    input.disabled = !enabled;
+    input.value = enabled ? String(p?.displayName || '') : '';
+    input.placeholder = enabled ? (PRESET_LABELS[this._activeKey] || '기본 프리셋 이름 사용') : '비전투 프리셋';
+  }
+  _setPresetDisplayName(value) {
+    const p = this._activeCombatPreset();
+    if (!p) return;
+    p.displayName = String(value || '').trim().slice(0, 24);
+    this._renderPresetBar();
   }
   // ── Ranged / projectile (per combat preset) ────────────────────────────────
   _activeCombatPreset() { const p = this._editingV2 && this._editingV2.presets[this._activeKey]; return (p && COMBAT_PRESET_KINDS.has(p.kind)) ? p : null; }
@@ -1605,30 +1695,35 @@ export class MotionEditor {
   }
 
   /** Current weapon-flip value shown in the preview (sampled at the scrub time). */
-  _currentFlip() { return sampleFlip(this._flipKeys || [], this.playing ? this.scrubT : (this.motion.keyframes[this.selKf]?.t ?? this.scrubT)); }
-  _currentFlipY() { return sampleFlip(this._flipYKeys || [], this.playing ? this.scrubT : (this.motion.keyframes[this.selKf]?.t ?? this.scrubT)); }
+  _currentTimeForFlip() { return this.playing ? this.scrubT : (this.motion.keyframes[this.selKf]?.t ?? this.scrubT); }
+  _currentFlip() { return this._currentHandFlip('right', 'x'); }
+  _currentFlipY() { return this._currentHandFlip('right', 'y'); }
+  _currentHandFlip(hand = 'right', axis = 'x') {
+    const keys = hand === 'left'
+      ? (axis === 'y' ? this._leftFlipYKeys : this._leftFlipKeys)
+      : (axis === 'y' ? this._flipYKeys : this._flipKeys);
+    return sampleFlip(keys || [], this._currentTimeForFlip());
+  }
   _currentHandSwap() { return sampleFlip(this._handSwapKeys || [], this.playing ? this.scrubT : (this.motion.keyframes[this.selKf]?.t ?? this.scrubT)); }
   /** Toggle the weapon flip at time t: upsert a key with the opposite value. */
-  _toggleFlipAt(t) {
+  _toggleFlipAt(t, hand = 'right', axis = 'x') {
     if (!this._editingV2) return;
     const tt = Math.round(Math.max(0, Math.min(1, t)) * 1000) / 1000;
-    const cur = sampleFlip(this._flipKeys || [], tt);
-    const keys = (this._flipKeys || []).filter(k => Math.abs(k.time - tt) > 0.001);
+    const prop = hand === 'left'
+      ? (axis === 'y' ? '_leftFlipYKeys' : '_leftFlipKeys')
+      : (axis === 'y' ? '_flipYKeys' : '_flipKeys');
+    const cur = sampleFlip(this[prop] || [], tt);
+    const keys = (this[prop] || []).filter(k => Math.abs(k.time - tt) > 0.001);
     keys.push({ time: tt, value: !cur });
-    this._flipKeys = sanitizeFlipKeys(keys);
-    this._setStatus(`무기 반전 ${!cur ? '켬' : '끔'} @ ${this._frameLabelForTime(tt)}.`);
+    this[prop] = sanitizeFlipKeys(keys);
+    const handLabel = hand === 'left' ? '왼손' : '오른손';
+    const axisLabel = axis === 'y' ? '상하' : '좌우';
+    this._setStatus(`${handLabel} 무기 ${axisLabel} 반전 ${!cur ? '켬' : '끔'} @ ${this._frameLabelForTime(tt)}.`);
     this._renderPreview(); this._renderTimeline();
     this._tutEvent('flip');
   }
   _toggleFlipYAt(t) {
-    if (!this._editingV2) return;
-    const tt = Math.round(Math.max(0, Math.min(1, t)) * 1000) / 1000;
-    const cur = sampleFlip(this._flipYKeys || [], tt);
-    const keys = (this._flipYKeys || []).filter(k => Math.abs(k.time - tt) > 0.001);
-    keys.push({ time: tt, value: !cur });
-    this._flipYKeys = sanitizeFlipKeys(keys);
-    this._setStatus(`무기 상하 반전 ${!cur ? '켬' : '끔'} @ ${this._frameLabelForTime(tt)}.`);
-    this._renderPreview(); this._renderTimeline();
+    this._toggleFlipAt(t, 'right', 'y');
   }
   _toggleHandSwapAt(t) {
     if (!this._editingV2) return;
@@ -1787,6 +1882,10 @@ export class MotionEditor {
       weaponImageAnchors: wrec?.anchors || null,
       weaponFlip: sampleFlip(this._flipKeys || [], t),
       weaponFlipY: sampleFlip(this._flipYKeys || [], t),
+      weaponRightFlip: sampleFlip(this._flipKeys || [], t),
+      weaponRightFlipY: sampleFlip(this._flipYKeys || [], t),
+      weaponLeftFlip: sampleFlip(this._leftFlipKeys || [], t),
+      weaponLeftFlipY: sampleFlip(this._leftFlipYKeys || [], t),
       weaponDual: !!(this._editingV2?.weaponVisual?.dual),
       weaponHandSwapped: sampleFlip(this._handSwapKeys || [], t),
       offhandWeapon: offId,
@@ -1813,6 +1912,75 @@ export class MotionEditor {
     if ($('ms_status')) $('ms_status').value = c.status;
     $('ms_airborneHeightRow')?.classList.toggle('hidden', c.status !== 'airborne');
     $('meUltimateGainRow')?.classList.toggle('hidden', !['skill1', 'skill2', 'skill3'].includes(this._activeKey));
+  }
+
+  _currentFrameTime() {
+    return clamp(Number(this.motion?.keyframes?.[this.selKf]?.t ?? this.scrubT ?? 0) || 0, 0, 1);
+  }
+
+  _combatForCurrentFrame(p = this._activeCombatPreset()) {
+    if (!p) return null;
+    return sampleCombatKeys(p.combatKeys, p.combat, this._currentFrameTime());
+  }
+
+  _upsertCombatKey(p, combat, time = this._currentFrameTime()) {
+    if (!p) return;
+    const tt = Math.round(clamp(Number(time) || 0, 0, 1) * 1000) / 1000;
+    const keys = sanitizeCombatKeys(p.combatKeys || [], p.combat).map(k => ({ time: k.time, combat: { ...k.combat } }));
+    let key = keys.find(k => Math.abs(k.time - tt) < 0.001);
+    if (!key) {
+      key = { time: tt, combat: this._combatForCurrentFrame(p) || sanitizeCombat(p.combat) };
+      keys.push(key);
+    }
+    key.combat = sanitizeCombat(combat);
+    keys.sort((a, b) => a.time - b.time);
+    p.combatKeys = keys.slice(0, 64);
+    if (tt <= 0.001) p.combat = sanitizeCombat(combat);
+  }
+
+  _syncFrameScopedControls() {
+    const p = this._activeCombatPreset();
+    if (p) this._syncCombatSliders(this._combatForCurrentFrame(p));
+    this._syncHitboxDamageControl();
+    const dash = this._editingV2?.presets?.[this._activeKey];
+    if (dash?.kind === 'dash' && document.getElementById('ms_dashDistance')) {
+      document.getElementById('ms_dashDistance').value = String(dash.dashDistance || 120);
+      const out = document.getElementById('ms_dashDistance_v');
+      if (out) out.textContent = String(dash.dashDistance || 120);
+    }
+  }
+
+  _syncHitboxDamageControl() {
+    const input = document.getElementById('meHitboxDamage');
+    if (!input) return;
+    const hb = this._hb();
+    const enabled = !!(hb && COMBAT_PRESET_KINDS.has(this._activeKey));
+    input.disabled = !enabled;
+    if (!enabled) {
+      input.value = '';
+      input.placeholder = '자동';
+      return;
+    }
+    input.value = Number.isFinite(Number(hb.damage)) ? String(Math.round(Number(hb.damage))) : '';
+    const total = this._combatForCurrentFrame()?.damage;
+    const hbs = this._hitboxes();
+    const fallback = (Number.isFinite(Number(total)) ? Number(total) : 0) / Math.max(1, hbs.length || 1);
+    input.placeholder = `자동 ${Math.round(fallback)}`;
+  }
+
+  _setHitboxDamage(raw) {
+    const hb = this._hb();
+    if (!hb) { this._setStatus('대미지를 지정할 히트박스가 없습니다.'); this._syncHitboxDamageControl(); return; }
+    const text = String(raw ?? '').trim();
+    if (!text) {
+      delete hb.damage;
+      this._setStatus('현재 프레임 대미지를 자동 분배로 되돌렸습니다.');
+    } else {
+      hb.damage = Math.round(clamp(Number(text) || 0, 0, 60));
+      this._setStatus(`현재 프레임 대미지를 ${hb.damage}로 설정했습니다.`);
+    }
+    this._syncHitboxDamageControl();
+    this._renderPreview();
   }
 
   _syncHeavyStats(p) {
@@ -1851,13 +2019,18 @@ export class MotionEditor {
       if (p) { p.dashDistance = Math.round(Math.max(0, Math.min(320, value))); if ($('ms_dashDistance')) $('ms_dashDistance').value = String(p.dashDistance); if ($('ms_dashDistance_v')) $('ms_dashDistance_v').textContent = p.dashDistance; }
     } else {
       const p = w.presets[this._activeKey]; if (!p || !p.combat) return;
-      const prev = { ...p.combat };
-      const next = { ...p.combat };
+      const prevCombat = { ...p.combat };
+      const prevKeys = Array.isArray(p.combatKeys) ? p.combatKeys.map(k => ({ time: k.time, combat: { ...k.combat } })) : [];
+      const next = { ...(this._combatForCurrentFrame(p) || p.combat) };
       if (key === 'status') next.status = value;
       else next[key] = value;
-      p.combat = sanitizeCombat(next);
-      if (combatCost(p.combat) > POINT_BUDGET) { p.combat = sanitizeCombat(prev); this._budgetBlocked(); }
-      this._syncCombatSliders(p.combat);
+      this._upsertCombatKey(p, next);
+      if (combatCost(this._combatForCurrentFrame(p)) > POINT_BUDGET || statCostV2(w) > POINT_BUDGET) {
+        p.combat = sanitizeCombat(prevCombat);
+        p.combatKeys = prevKeys;
+        this._budgetBlocked();
+      }
+      this._syncCombatSliders(this._combatForCurrentFrame(p));
     }
     this._tutEvent('stat');
     this._renderBudget();
@@ -1877,7 +2050,7 @@ export class MotionEditor {
     let cost = 0;
     if (this._editingV2) {
       const p = this._editingV2.presets?.[this._activeKey];
-      cost = p && p.combat ? combatCost(p.combat) : baseStatsCost(this._editingV2.baseStats);
+      cost = p && p.combat ? combatCost(this._combatForCurrentFrame(p) || p.combat) : baseStatsCost(this._editingV2.baseStats);
     }
     const bar = document.getElementById('meBudgetBar');
     const val = document.getElementById('meBudgetVal');
@@ -2187,25 +2360,36 @@ export class MotionEditor {
       layerBlock.classList.remove('hidden');
       layerBlock.innerHTML = `
         <div class="text-[#ffd24a] font-bold mb-1">레이어</div>
-        <div class="flex flex-col gap-1">${this._layerRowsHtml(hats)}</div>
+        <div class="flex flex-col gap-0">${this._layerRowsHtml(hats)}</div>
         <div class="text-[8px] text-gray-500 mt-1">장식·플레이어·무기를 잡고 드래그하세요. 아래에 있을수록 뒤에, 위에 있을수록 앞에 그려집니다.</div>`;
     }
   }
   _defaultLayerOrder(hats = this._hatList()) {
     const behind = [], middle = [], front = [];
+    const weapons = this._editingV2?.weaponVisual?.dual ? ['weapon:left', 'weapon:right'] : ['weapon'];
     hats.forEach((h, i) => {
       if (h.layer === 'behindPlayer') behind.push(`hat:${i}`);
       else if (h.layer === 'overWeapon') front.push(`hat:${i}`);
       else middle.push(`hat:${i}`);
     });
-    return [...behind, 'player', ...middle, 'weapon', ...front];
+    return [...behind, 'player', ...middle, ...weapons, ...front];
   }
   _normalizeLayerOrder(hats = this._hatList(), raw = this._editingV2?.weaponVisual?.layerOrder) {
-    const allowed = new Set(['player', 'weapon', ...hats.map((_, i) => `hat:${i}`)]);
+    const dual = !!this._editingV2?.weaponVisual?.dual;
+    const weapons = dual ? ['weapon:left', 'weapon:right'] : ['weapon'];
+    const allowed = new Set(['player', ...weapons, ...hats.map((_, i) => `hat:${i}`)]);
     const out = [];
     if (Array.isArray(raw)) {
       for (const item of raw) {
         const key = String(item || '');
+        if (dual && key === 'weapon') {
+          for (const w of weapons) if (!out.includes(w)) out.push(w);
+          continue;
+        }
+        if (!dual && (key === 'weapon:left' || key === 'weapon:right')) {
+          if (!out.includes('weapon')) out.push('weapon');
+          continue;
+        }
         if (allowed.has(key) && !out.includes(key)) out.push(key);
       }
     }
@@ -2216,41 +2400,41 @@ export class MotionEditor {
   }
   _hatsWithLayersFromOrder(hats, order = this._normalizeLayerOrder(hats)) {
     const playerPos = order.indexOf('player');
-    const weaponPos = order.indexOf('weapon');
+    const weaponPositions = ['weapon', 'weapon:left', 'weapon:right'].map(item => order.indexOf(item)).filter(pos => pos >= 0);
+    const frontWeaponPos = weaponPositions.length ? Math.max(...weaponPositions) : -1;
     return hats.map((h, i) => {
       const pos = order.indexOf(`hat:${i}`);
       let layer = 'overPlayer';
       if (pos >= 0 && playerPos >= 0 && pos < playerPos) layer = 'behindPlayer';
-      else if (pos >= 0 && weaponPos >= 0 && pos > weaponPos) layer = 'overWeapon';
+      else if (pos >= 0 && frontWeaponPos >= 0 && pos > frontWeaponPos) layer = 'overWeapon';
       return { ...h, layer };
     });
   }
   _layerRowsHtml(hats) {
     const rows = [];
     const order = this._normalizeLayerOrder(hats);
-    const pushDrop = (slot) => rows.push(`<div data-layer-drop="${slot}" class="h-2 border border-dashed border-gray-800 rounded"></div>`);
-    const row = (item) => {
+    const row = (item, orderIndex) => {
       if (item === 'player') {
-        return `<div draggable="true" data-layer-item="player" class="cursor-grab active:cursor-grabbing flex items-center gap-2 bg-[#101820] border border-[#3b6b82] px-2 py-1">
+        return `<div draggable="true" data-layer-item="player" data-layer-index="${orderIndex}" class="cursor-grab active:cursor-grabbing flex items-center gap-2 bg-[#101820] border border-[#3b6b82] px-2 py-1">
           <span class="text-[#ffd24a]">☰</span><span class="truncate flex-1">플레이어</span><span class="text-gray-500">몸체</span>
         </div>`;
       }
-      if (item === 'weapon') {
-        return `<div draggable="true" data-layer-item="weapon" class="cursor-grab active:cursor-grabbing flex items-center gap-2 bg-[#201810] border border-[#7a5a24] px-2 py-1">
-          <span class="text-[#ffd24a]">☰</span><span class="truncate flex-1">무기</span><span class="text-gray-500">${this._editingV2?.weaponVisual?.dual ? '오른손 / 왼손' : '오른손'}</span>
+      if (item === 'weapon' || item === 'weapon:right' || item === 'weapon:left') {
+        const label = item === 'weapon:left' ? '왼손 무기' : (item === 'weapon:right' ? '오른손 무기' : '무기');
+        const hint = item === 'weapon:left' ? '검집/보조' : (item === 'weapon:right' ? '주무기' : (this._editingV2?.weaponVisual?.dual ? '오른손 / 왼손' : '오른손'));
+        return `<div draggable="true" data-layer-item="${item}" data-layer-index="${orderIndex}" class="cursor-grab active:cursor-grabbing flex items-center gap-2 bg-[#201810] border border-[#7a5a24] px-2 py-1">
+          <span class="text-[#ffd24a]">☰</span><span class="truncate flex-1">${label}</span><span class="text-gray-500">${hint}</span>
         </div>`;
       }
       const i = Number(item.replace('hat:', ''));
       const h = hats[i];
       if (!h) return '';
-      return `<div draggable="true" data-layer-item="hat:${i}" class="cursor-grab active:cursor-grabbing flex items-center gap-2 bg-[#14100b] border border-gray-700 px-2 py-1">
+      return `<div draggable="true" data-layer-item="hat:${i}" data-layer-index="${orderIndex}" class="cursor-grab active:cursor-grabbing flex items-center gap-2 bg-[#14100b] border border-gray-700 px-2 py-1">
       <span class="text-[#ffd24a]">☰</span><span class="truncate flex-1">${escOpt(h.name || `장식 ${i + 1}`)}</span><span class="text-gray-500">장식</span>
     </div>`;
     };
-    pushDrop(0);
     order.forEach((item, i) => {
-      rows.push(row(item));
-      pushDrop(i + 1);
+      rows.push(row(item, i));
     });
     return rows.join('');
   }
@@ -2769,6 +2953,19 @@ export class MotionEditor {
     if (d > 4 && this._pinch.dist > 4) this._setPreviewZoom(this._pinch.zoom * (d / this._pinch.dist));
     e.preventDefault();
   }
+  _previewPelvisTarget(W, H, W2E, root = { x: 0, y: 0 }, tp = { x: 0, y: 0 }) {
+    return {
+      x: W / 2 + ((root.x || 0) + (tp.x || 0)) * W2E,
+      y: H * 0.58 + ((root.y || 0) + (tp.y || 0)) * W2E
+    };
+  }
+  _previewOriginForPelvis(pose, scale, pelvis) {
+    const probe = solveStickman(pose, scale, 0, 0, 1, { rawNearArm: true, weapon: this.weapon, offhandWeapon: this._offhandId() });
+    return {
+      x: pelvis.x,
+      y: pelvis.y - (probe?.joints?.pelvis?.y || 0)
+    };
+  }
   _renderPreview() {
     const ctx = this.ctx; if (!ctx) return;
     const W = this.canvas.width, H = this.canvas.height;
@@ -2776,9 +2973,6 @@ export class MotionEditor {
     if (zoomEl) zoomEl.textContent = `${Math.round((this._previewZoom || 1) * 100)}%`;
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = '#14100b'; ctx.fillRect(0, 0, W, H);
-    // ground line
-    ctx.strokeStyle = '#3b3a44'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(0, H - 30); ctx.lineTo(W, H - 30); ctx.stroke();
 
     const scale = Math.round(H * 0.1 * (this._previewZoom || 1));                  // wider preview: leave room for weapon arcs/root offsets
     const handleScale = this._previewHandleScale();
@@ -2787,14 +2981,19 @@ export class MotionEditor {
     const tNow = this._currentMotionTime();
     const root = this._currentRootOffset(tNow);
     const tp = this._teleportPreviewOffset(tNow);
-    const cx = W / 2 + (root.x + tp.x) * W2E;
-    const cyCenter = H - 30 - scale * 1.28 + (root.y + tp.y) * W2E; // body centre so feet sit on the ground line
+    const pose = this._displayPose();
+    const pelvisTarget = this._previewPelvisTarget(W, H, W2E, root, tp);
+    const currentOrigin = this._previewOriginForPelvis(pose, scale, pelvisTarget);
+    const cx = currentOrigin.x;
+    const cyCenter = currentOrigin.y;
     const wrec = this._customWeapon(this.weapon);             // custom weapon record (or null)
     const wimg = this._weaponImage();                         // its image (or null)
     const wsize = wrec?.size ?? 2.0;
     const wanch = wrec?.anchors || null;                      // grip/tip anchors
     const wflip = this._currentFlip();                        // weapon flip at the current time
     const wflipY = this._currentFlipY();
+    const leftFlip = this._currentHandFlip('left', 'x');
+    const leftFlipY = this._currentHandFlip('left', 'y');
     const handSwapped = this._currentHandSwap();
     const wdual = !!(this._editingV2 && this._editingV2.weaponVisual && this._editingV2.weaponVisual.dual);
     const offId = this._offhandId();
@@ -2812,21 +3011,24 @@ export class MotionEditor {
       if (prev) {
         const prevRoot = sampleRootOffset(this.motion, prev.t);
         const prevTp = this._teleportPreviewOffset(prev.t);
-        const pcx = W / 2 + (prevRoot.x + prevTp.x) * W2E;
-        const pcy = H - 30 - scale * 1.28 + (prevRoot.y + prevTp.y) * W2E;
-        const pj = solveStickman({ ...STICK_NEUTRAL, ...prev.pose }, scale, pcx, pcy, 1, { rawNearArm: true, weapon: this.weapon, offhandWeapon: offId });
+        const prevPose = { ...STICK_NEUTRAL, ...prev.pose };
+        const prevPelvis = this._previewPelvisTarget(W, H, W2E, prevRoot, prevTp);
+        const prevOrigin = this._previewOriginForPelvis(prevPose, scale, prevPelvis);
+        const pj = solveStickman(prevPose, scale, prevOrigin.x, prevOrigin.y, 1, { rawNearArm: true, weapon: this.weapon, offhandWeapon: offId });
         const prevHats = this._hatListAt(prev.t);
         const prevHatImages = prevHats.map(h => h?.imageId ? this._imageById(h.imageId) : null);
         ctx.save(); ctx.globalAlpha = 0.3;
-        drawStickFromJoints(ctx, pj.joints, pj.headR, { color: '#6f8cff', accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory, weaponImage: wimg, weaponImageSize: wsize, weaponImageAnchors: wanch, weaponFlip: wflip, weaponFlipY: wflipY, weaponDual: wdual, weaponHandSwapped: sampleFlip(this._handSwapKeys || [], prev.t), offhandWeapon: offId, offhandImage: offImg, offhandImageSize: offSize, offhandImageAnchors: offAnch, hatImages: prevHatImages, hats: prevHats, layerOrder: this._normalizeLayerOrder(prevHats, this._editingV2?.weaponVisual?.layerOrder) });
+        drawStickFromJoints(ctx, pj.joints, pj.headR, { color: '#6f8cff', accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory, weaponImage: wimg, weaponImageSize: wsize, weaponImageAnchors: wanch, weaponFlip: sampleFlip(this._flipKeys || [], prev.t), weaponFlipY: sampleFlip(this._flipYKeys || [], prev.t), weaponRightFlip: sampleFlip(this._flipKeys || [], prev.t), weaponRightFlipY: sampleFlip(this._flipYKeys || [], prev.t), weaponLeftFlip: sampleFlip(this._leftFlipKeys || [], prev.t), weaponLeftFlipY: sampleFlip(this._leftFlipYKeys || [], prev.t), weaponDual: wdual, weaponHandSwapped: sampleFlip(this._handSwapKeys || [], prev.t), offhandWeapon: offId, offhandImage: offImg, offhandImageSize: offSize, offhandImageAnchors: offAnch, hatImages: prevHatImages, hats: prevHats, layerOrder: this._normalizeLayerOrder(prevHats, this._editingV2?.weaponVisual?.layerOrder) });
         ctx.restore();
       }
     }
 
-    const pose = this._displayPose();
     const { joints, headR } = solveStickman(pose, scale, cx, cyCenter, 1, { rawNearArm: true, weapon: this.weapon, offhandWeapon: offId });
+    const groundY = Math.max(joints.footN?.y || pelvisTarget.y, joints.footF?.y || pelvisTarget.y);
+    ctx.strokeStyle = '#3b3a44'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, groundY); ctx.lineTo(W, groundY); ctx.stroke();
     const color = this.look.color || WEAPON_STICK_COLOR[this.weapon] || '#cdd3da';
-    drawStickFromJoints(ctx, joints, headR, { color, accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory, weaponImage: wimg, weaponImageSize: wsize, weaponImageAnchors: wanch, weaponFlip: wflip, weaponFlipY: wflipY, weaponDual: wdual, weaponHandSwapped: handSwapped, offhandWeapon: offId, offhandImage: offImg, offhandImageSize: offSize, offhandImageAnchors: offAnch, hatImages, hats, layerOrder: this._normalizeLayerOrder(hats, this._editingV2?.weaponVisual?.layerOrder) });
+    drawStickFromJoints(ctx, joints, headR, { color, accent: '#0d0a06', lineW: this.look.lineW, scale, weapon: this.weapon, drawWeapon: true, aimAngle: 0, headShape: this.look.head, accessory: this.look.accessory, weaponImage: wimg, weaponImageSize: wsize, weaponImageAnchors: wanch, weaponFlip: wflip, weaponFlipY: wflipY, weaponRightFlip: wflip, weaponRightFlipY: wflipY, weaponLeftFlip: leftFlip, weaponLeftFlipY: leftFlipY, weaponDual: wdual, weaponHandSwapped: handSwapped, offhandWeapon: offId, offhandImage: offImg, offhandImageSize: offSize, offhandImageAnchors: offAnch, hatImages, hats, layerOrder: this._normalizeLayerOrder(hats, this._editingV2?.weaponVisual?.layerOrder) });
     if (this.mode === 'workshop') {
       this._drawEffects(ctx, joints, scale);   // cosmetic frame FX
       this._drawProjectileEvents(ctx, joints, scale);
@@ -2852,29 +3054,35 @@ export class MotionEditor {
       }
     }
 
-    // Hitbox overlay (admin gameplay). World px → editor px by scale/14, anchored
-    // at the body centre. Brighter while the playhead is inside its active window.
-    const hb = this._hb();
-    if (hb) {
-      const W2E = scale / 14;
+    // Hitbox overlay (gameplay). During playback draw every hitbox attached to
+    // the current authored frame; while editing draw the selected box with drag
+    // handles. This keeps the blink visible on every preview loop.
+    this._hbScreen = null;
+    const selectedHb = this.playing ? null : this._hb();
+    const currentFrame = this._nearestFrameIndexForTime(this._currentMotionTime());
+    const hitboxesToDraw = this.playing
+      ? this._hitboxes().filter(hb => this._hitboxFrameIndex(hb) === currentFrame)
+      : (selectedHb ? [selectedHb] : []);
+    for (const hb of hitboxesToDraw) {
       const hcx = cx + hb.ox * W2E, hcy = cyCenter + hb.oy * W2E;
       const hw = hb.w * W2E, hh = hb.h * W2E;
-      const active = this.scrubT >= hb.activeStart && this.scrubT <= hb.activeEnd;
+      const selected = hb === selectedHb;
+      const active = this.playing || this._hitboxFrameIndex(hb) === currentFrame;
       ctx.fillStyle = active ? 'rgba(255,90,60,0.34)' : 'rgba(255,90,60,0.14)';
       ctx.strokeStyle = active ? '#ff7a5a' : 'rgba(255,122,90,0.6)';
-      ctx.lineWidth = 2;
+      ctx.lineWidth = selected ? 2.5 : 2;
       ctx.fillRect(hcx - hw / 2, hcy - hh / 2, hw, hh);
       ctx.strokeRect(hcx - hw / 2, hcy - hh / 2, hw, hh);
-      // Move handle (centre) + resize handle (bottom-right corner).
-      ctx.fillStyle = this.dragHitbox === 'move' ? '#ffd24a' : '#ff7a5a';
-      ctx.beginPath(); ctx.arc(hcx, hcy, 5 * handleScale, 0, Math.PI * 2); ctx.fill();
-      const rx = hcx + hw / 2, ry = hcy + hh / 2;
-      ctx.fillStyle = this.dragHitbox === 'resize' ? '#ffd24a' : '#ffb070';
-      const resizeHalf = 5 * handleScale;
-      ctx.fillRect(rx - resizeHalf, ry - resizeHalf, resizeHalf * 2, resizeHalf * 2);
-      this._hbScreen = { hcx, hcy, hw, hh, rx, ry, W2E, cx, cyCenter, handleScale };
-    } else {
-      this._hbScreen = null;
+      if (!this.playing && selected) {
+        // Move handle (centre) + resize handle (bottom-right corner).
+        ctx.fillStyle = this.dragHitbox === 'move' ? '#ffd24a' : '#ff7a5a';
+        ctx.beginPath(); ctx.arc(hcx, hcy, 5 * handleScale, 0, Math.PI * 2); ctx.fill();
+        const rx = hcx + hw / 2, ry = hcy + hh / 2;
+        ctx.fillStyle = this.dragHitbox === 'resize' ? '#ffd24a' : '#ffb070';
+        const resizeHalf = 5 * handleScale;
+        ctx.fillRect(rx - resizeHalf, ry - resizeHalf, resizeHalf * 2, resizeHalf * 2);
+        this._hbScreen = { hcx, hcy, hw, hh, rx, ry, W2E, cx, cyCenter, handleScale };
+      }
     }
     this._jointCache = joints;
   }
@@ -3059,27 +3267,22 @@ export class MotionEditor {
     const tx = (t) => x0 + t * span;
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = '#0d0a06'; ctx.fillRect(0, 0, W, H);
-    // Weapon-flip band (purple) — segments where the weapon is flipped.
-    const fks = this._flipKeys || [];
-    if (fks.length) {
-      ctx.fillStyle = 'rgba(197,108,255,0.30)';
-      for (let i = 0; i < fks.length; i++) {
-        if (!fks[i].value) continue;
-        const segEnd = (i + 1 < fks.length) ? fks[i + 1].time : 1;
-        ctx.fillRect(tx(fks[i].time), H - 10, tx(segEnd) - tx(fks[i].time), 6);
+    // Weapon-flip bands. Top pair = right hand, lower pair = left hand.
+    const drawFlipBand = (keys, y, h, fill, marker) => {
+      const arr = keys || [];
+      if (!arr.length) return;
+      ctx.fillStyle = fill;
+      for (let i = 0; i < arr.length; i++) {
+        if (!arr[i].value) continue;
+        const segEnd = (i + 1 < arr.length) ? arr[i + 1].time : 1;
+        ctx.fillRect(tx(arr[i].time), y, tx(segEnd) - tx(arr[i].time), h);
       }
-      for (const k of fks) { const x = tx(k.time); ctx.fillStyle = '#c56cff'; ctx.fillRect(x - 1, H - 12, 2, 10); }
-    }
-    const fyks = this._flipYKeys || [];
-    if (fyks.length) {
-      ctx.fillStyle = 'rgba(111,140,255,0.28)';
-      for (let i = 0; i < fyks.length; i++) {
-        if (!fyks[i].value) continue;
-        const segEnd = (i + 1 < fyks.length) ? fyks[i + 1].time : 1;
-        ctx.fillRect(tx(fyks[i].time), H - 17, tx(segEnd) - tx(fyks[i].time), 5);
-      }
-      for (const k of fyks) { const x = tx(k.time); ctx.fillStyle = '#6f8cff'; ctx.fillRect(x - 1, H - 19, 2, 9); }
-    }
+      for (const k of arr) { const x = tx(k.time); ctx.fillStyle = marker; ctx.fillRect(x - 1, y - 2, 2, h + 4); }
+    };
+    drawFlipBand(this._flipKeys, H - 10, 5, 'rgba(197,108,255,0.30)', '#c56cff');
+    drawFlipBand(this._flipYKeys, H - 17, 5, 'rgba(111,140,255,0.28)', '#6f8cff');
+    drawFlipBand(this._leftFlipKeys, H - 24, 5, 'rgba(217,140,255,0.26)', '#d98cff');
+    drawFlipBand(this._leftFlipYKeys, H - 31, 5, 'rgba(143,183,255,0.24)', '#8fb7ff');
     const hsks = this._handSwapKeys || [];
     if (hsks.length) {
       ctx.fillStyle = 'rgba(125,240,154,0.25)';
@@ -3336,8 +3539,10 @@ export class MotionEditor {
    *  the active preset first, applies name/color/image, then double-clamps. */
   _buildWorkshopV2() {
     const w = this._editingV2 || makeEmptyWeaponV2({});
+    this._ensureAuthoringPresets();
     this._commitActivePreset();
     w.name = (document.getElementById('meName')?.value || '').trim() || w.name || '새 무기';
+    w.desc = (document.getElementById('meDesc')?.value || '').trim();
     w.color = this.look.color || null;
     // Capture the equipped custom weapon IMAGE (keeping the dual flag).
     if (this.weapon && this.weapon.startsWith('custom:')) {
@@ -3348,6 +3553,11 @@ export class MotionEditor {
     const clamped = clampWorkshopWeaponV2(w);   // double-clamp (budget bleed if needed)
     this._editingV2 = clamped; this._editingId = clamped.id;
     return { w: clamped, overBudget: before > POINT_BUDGET, stats: clamped.baseStats };
+  }
+
+  _incompleteWorkshopPresets(w = this._editingV2) {
+    if (!w?.presets) return AUTHORING_PRESET_KEYS;
+    return AUTHORING_PRESET_KEYS.filter(key => !w.presets[key]?.complete);
   }
 
   /** Tier-2 저장 + 장착: LOCAL only — save to the device store + equip.
@@ -3361,7 +3571,9 @@ export class MotionEditor {
     this._loadActivePreset();
     if (!ok) { this._setStatus('저장에 실패했습니다 (저장공간 문제일 수 있어요). 잠시 후 다시 시도하세요.'); return; }
     const note = overBudget ? ' (예산 초과분은 자동 차감됨)' : '';
-    this._setStatus(`"${w.name}" 저장 + 장착 완료${note}. 다른 유저와 공유하려면 [⬆ 업로드]를 누르세요.`);
+    const incomplete = this._incompleteWorkshopPresets(w).length;
+    const completionNote = incomplete ? ` 업로드 전 ${incomplete}개 프리셋을 완성 표시해야 합니다.` : ' 모든 프리셋이 완성 표시되어 업로드할 수 있습니다.';
+    this._setStatus(`"${w.name}" 저장 + 장착 완료${note}.${completionNote}`);
     this._tutEvent('save');
     try { this.onWorkshopSaved?.(w); } catch {}
   }
@@ -3373,6 +3585,11 @@ export class MotionEditor {
     this._saveWorkshop();
     const w = this._lastSaved;
     if (!w) { this._setStatus('업로드하려면 먼저 저장이 성공해야 합니다.'); return; }
+    const incomplete = this._incompleteWorkshopPresets(w);
+    if (incomplete.length) {
+      this._setStatus(`업로드 불가: ${incomplete.map(k => PRESET_LABELS[k] || k).join(', ')} 프리셋을 먼저 [해당 프리셋 완성]으로 표시하세요.`);
+      return;
+    }
     if (!this.onUploadWorkshop) { this._setStatus('업로드 기능을 사용할 수 없습니다.'); return; }
     this._setStatus(`"${w.name}" 업로드 중...`);
     try {
@@ -3449,6 +3666,8 @@ export class MotionEditor {
     const btn = document.getElementById('meAddHitbox');
     if (btn) btn.textContent = this._activeHitboxIndexAt(this._currentMotionTime()) >= 0 ? '－ 현재 판정 제거' : '＋ 현재 프레임 판정';
     this._updateFrameLabel();
+    this._syncFrameScopedControls();
+    this._renderBudget();
     this._renderFrameOverview();
     this._renderPreview(); this._renderTimeline();
   }

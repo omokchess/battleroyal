@@ -14,12 +14,15 @@ import { isMobileDevice } from './Device.js';
 import { MsgType, Protocol } from '../multiplayer/Protocol.js';
 import { normalizeRoomConfig, arenaDimensions, HEAL_RATES } from './RoomConfig.js';
 import { Sound } from './Sound.js';
+import { BrowserFx } from './BrowserFx.js';
+import { NULL_FX } from './sim/Fx.js';
 import { generateCover, resolveCover, coverBlocksSegment, coverRayDistance, coverClearOfPoint, coverBlocksCircle } from './Cover.js';
 import { generateWater, emptyWater } from './Water.js';
 import { buildLevel, PHYS } from './Level.js';
 import { BotBrain, BOT_DIFFICULTY } from './Bot.js';
 import { resolveMotion, weaponSetId, sanitizeMotionSetId, canonicalWeaponMotion, canonicalWeaponsSnapshot, setCanonicalWeapon } from './Motion.js';
 import { STATUS } from './Status.js';
+import { sampleCombatKeys } from './Workshop.js';
 
 // Time a dead player waits before respawning. Keep the combat tempo fast, but
 // avoid the "blink and die again" loop from a 0.5s death turn.
@@ -34,6 +37,11 @@ function escapeHudHtml(value) {
     '"': '&quot;',
     "'": '&#39;'
   }[ch]));
+}
+
+function clampSkillLabel(value, fallback = '스킬') {
+  const text = String(value || '').trim().replace(/\s+/g, ' ').slice(0, 24);
+  return text || fallback;
 }
 
 export class Game {
@@ -130,6 +138,7 @@ export class Game {
     this.renderer = new Renderer(canvas);
     this.camera = new Camera();
     this.input = new Input();
+    this.input.reloadKeybinds?.();
     this.controlSettings = this._loadControlSettings();
 
     // Game state entities
@@ -152,6 +161,11 @@ export class Game {
     this.isRunning = false;
     this.localPlayerId = null;
     this.remainingPlayersCount = 0;
+
+    // Presentation sink for the SIMULATION half of this class (see sim/Fx.js).
+    // Simulation code must route juice through this instead of touching Sound /
+    // camera / document, so the same code can run headless on the game server.
+    this.fx = new BrowserFx(this);
 
     this.lastFrameTime = 0;
     this.animationFrameId = null;
@@ -280,6 +294,8 @@ export class Game {
     // Trigger frame animations
     this._resizeCanvas();
     this._setupVisualSettingsPanel();
+    setTimeout(() => { if (this.isRunning) this._updateHUD(); }, 0);
+    setTimeout(() => { if (this.isRunning) this._updateHUD(); }, 120);
     this.animationFrameId = requestAnimationFrame((t) => this._gameLoop(t));
 
     window.addEventListener('resize', this._resizeBound);
@@ -726,17 +742,17 @@ export class Game {
         if (proj.isDead || target.isInvincible()) return;
 
         if (Collision.checkProjectileHit(proj, target)) {
-          // Juice: a landed projectile from the local player gives a small
-          // hitstop, matching the melee feel (the kill blow adds a bigger one).
-          if (proj.ownerId === this.localPlayerId && !target.isInvincible?.()) {
-            this._triggerHitstop(now, 34);
-          }
+          // Juice: a landed projectile from its owner gives a small hitstop,
+          // matching the melee feel (the kill blow adds a bigger one). The sink
+          // decides whether the owner is the local player.
+          if (!target.isInvincible?.()) this.fx.hitstop(34, proj.ownerId);
           if (proj.kind === 'wsranged') {
             // A workshop ranged basic attack: weapon-damage direct hit + status.
             const owner = this.players[proj.ownerId];
             const died = target.takeDamage(proj.damage || 0, owner ? owner.nickname : '');
             if (owner) this._awardUltimateGauge(owner, proj.wsUltimateGain ?? 10);
-            if (owner) this._applyWorkshopStatus(owner, target, now);
+            if (proj.wsStatus && proj.wsStatus !== 'none') this._applyStatusEffect(target, proj.ownerId, proj.wsStatus, proj.wsStatusMs || 0, now, proj.wsAirborneHeight);
+            else if (owner) this._applyWorkshopStatus(owner, target, now);
             if (died) this._creditKill(proj.ownerId, target);
             if (!proj.piercing) proj.isDead = true;
             return;
@@ -1009,11 +1025,13 @@ export class Game {
   /** Fire a workshop ranged preset's projectile (direction from its config). */
   _fireWorkshopProjectile(player, now) {
     const pj = player.workshopWeapon.projectile; if (!pj) return;
+    const motion = player.workshopWeapon?.motionSet?.attack;
+    const combat = sampleCombatKeys(motion?.combatKeys, player.workshopWeapon?.stats || {}, 0);
     player.lastAttackTime = now; player.swingDirection *= -1;
     player.attackMotionTag = 'attack';
     player.lastAttackMotionTag = 'attack';
-    this._lockPlayerMotion(player, now, player.workshopWeapon?.motionSet?.attack);
-    this._spawnWorkshopProjectile(player, pj, player.workshopWeapon?.stats || {}, now, 'basic');
+    this._lockPlayerMotion(player, now, motion);
+    this._spawnWorkshopProjectile(player, pj, combat, now, 'basic');
   }
 
   _projectileAngle(player, pj = {}) {
@@ -1047,7 +1065,7 @@ export class Game {
       ? 10
       : Math.max(10, Math.min(35, Math.round((Number(combat.ultimateGain) || 10) / 5) * 5));
     this.projectiles.push(proj);
-    if (player.id === this.localPlayerId) Sound.play('shoot');
+    this.fx.sfx('shoot', player.id);
   }
   /** Apply the workshop weapon's status effect to a target (shared by melee/ranged). */
   _applyWorkshopStatus(owner, target, now) {
@@ -1108,12 +1126,15 @@ export class Game {
    *  weapon is equipped) so legacy per-weapon skills keep working unequipped. */
   _activateWorkshopSkill(player, slot, now) {
     const ws = player && player.workshopWeapon;
-    const combat = ws && ws.presetCombat && ws.presetCombat[slot];
-    if (!combat) return false;
+    const baseCombat = ws && ws.presetCombat && ws.presetCombat[slot];
+    if (!baseCombat) return false;
+    const combatKeys = ws && ws.presetCombatKeys && ws.presetCombatKeys[slot];
+    const combat = sampleCombatKeys(combatKeys, baseCombat, 0);
     if (this._isMotionLocked(player, now)) return true;
     if (!player.wsSkillCd) player.wsSkillCd = {};
     if ((player.wsSkillCd[slot] || 0) > 0) return true;   // on cooldown — button consumed, nothing fires
     player.wsSkillCd[slot] = (Number.isFinite(combat.cooldownMs) ? combat.cooldownMs : 1000) / 1000;
+    this._showSkillCallout(player, slot, slot === 'ultimate' ? '궁극기' : '스킬', now);
     const motion = ws.motionSet && ws.motionSet[slot];
     const hasTimelineEvents = !!(motion && ((motion.projectileEvents && motion.projectileEvents.length) || (motion.teleportEvents && motion.teleportEvents.length)));
     const ranged = ws.presetRanged && ws.presetRanged[slot];
@@ -1127,6 +1148,8 @@ export class Game {
         projectile: ranged || null,
         motionTag: slot,
         ultimateGain: combat.ultimateGain,
+        combat,
+        combatKeys,
       });
     }
     return true;   // slot is authored (motion + cooldown apply) even with no hitbox/projectile yet
@@ -1154,13 +1177,15 @@ export class Game {
       knockback: Number.isFinite(opts.knockback) ? opts.knockback : (motion.knockback || 0),
       damage: Number.isFinite(opts.damage) ? opts.damage : null,   // override (e.g. heavy/skill preset)
       damageDivisor: Math.max(1, Array.isArray(motion.hitboxes) ? motion.hitboxes.length : 0),
+      combat: opts.combat || null,
+      combatKeys: Array.isArray(opts.combatKeys) ? opts.combatKeys : (Array.isArray(motion.combatKeys) ? motion.combatKeys : []),
       status: opts.status && opts.status !== 'none' ? opts.status : null,
       statusMs: opts.statusMs || 0,
       airborneHeight: opts.airborneHeight || 120,
       ultimateGain: Number.isFinite(Number(opts.ultimateGain)) ? Number(opts.ultimateGain) : null,
       hit: new Set(),
     };
-    if (player.id === this.localPlayerId) Sound.play(Sound.attackSoundFor(getEffectiveWeapon(player.weapon, player.buffType)));
+    this.fx.attackSfx(getEffectiveWeapon(player.weapon, player.buffType), player.id);
   }
 
   _lockPlayerMotion(player, now, motion = null) {
@@ -1194,8 +1219,16 @@ export class Game {
 
       const facing = Math.cos(p.angle || 0) >= 0 ? 1 : -1;
       const wcfg = getEffectiveWeapon(p.weapon, p.buffType);
+      const phaseCombat = sampleCombatKeys(sw.combatKeys, sw.combat || {
+        damage: Number.isFinite(sw.damage) ? sw.damage : (p.workshopWeapon?.stats?.damage || wcfg.damage || 10),
+        knockback: sw.knockback || 0,
+        status: sw.status || 'none',
+        statusDurationMs: sw.statusMs || 0,
+        airborneHeight: sw.airborneHeight || 120,
+        ultimateGain: Number.isFinite(Number(sw.ultimateGain)) ? sw.ultimateGain : 10,
+      }, phase);
       // Swing-specific override (heavy finisher) → workshop damage → base weapon.
-      const dmg = (Number.isFinite(sw.damage) ? sw.damage : (p.workshopWeapon?.stats?.damage)) || wcfg.damage || 10;
+      const dmg = (Number.isFinite(phaseCombat.damage) ? phaseCombat.damage : (Number.isFinite(sw.damage) ? sw.damage : (p.workshopWeapon?.stats?.damage))) || wcfg.damage || 10;
       const perHitDamage = dmg / Math.max(1, Number(sw.damageDivisor) || hitboxDamageDivisor(sw.hitboxes));
 
       this._runWorkshopSwingEvents(p, sw, phase, now);
@@ -1218,12 +1251,16 @@ export class Game {
           if (br <= t.x - tr || bl >= t.x + tr || bb <= t.y - tr || bt >= t.y + tr) continue;
           if (this._terrainBlocksSegment(p.x, p.y, t.x, t.y)) continue;  // walls block
           sw.hit.add(hitKey);
-          if (sw.knockback) this._displace(t, facing * sw.knockback, 0);
-          const died = t.takeDamage(perHitDamage, p.nickname);
-          this._awardUltimateGauge(p, Number.isFinite(Number(sw.ultimateGain)) ? sw.ultimateGain : 10);
-          if (sw.status) this._applyStatusEffect(t, p.id, sw.status, sw.statusMs, now, sw.airborneHeight);
+          const kb = Number.isFinite(phaseCombat.knockback) ? phaseCombat.knockback : sw.knockback;
+          if (kb) this._displace(t, facing * kb, 0);
+          const hbDamage = Number.isFinite(Number(hb.damage)) ? Math.max(0, Number(hb.damage)) : perHitDamage;
+          const died = t.takeDamage(hbDamage, p.nickname);
+          this._awardUltimateGauge(p, Number.isFinite(Number(phaseCombat.ultimateGain)) ? phaseCombat.ultimateGain : 10);
+          const status = phaseCombat.status && phaseCombat.status !== 'none' ? phaseCombat.status : sw.status;
+          const statusMs = Number.isFinite(phaseCombat.statusDurationMs) ? phaseCombat.statusDurationMs : sw.statusMs;
+          if (status) this._applyStatusEffect(t, p.id, status, statusMs, now, phaseCombat.airborneHeight || sw.airborneHeight);
           if (died) this._creditKill(p.id, t);
-          if (p.id === this.localPlayerId) this._triggerHitstop(now, 42);
+          this.fx.hitstop(42, p.id);
         }
       }
     }
@@ -1240,13 +1277,13 @@ export class Game {
   }
 
   _runWorkshopSwingEvents(player, sw, phase, now) {
-    const combat = {
+    const combat = sampleCombatKeys(sw.combatKeys, {
       damage: Number.isFinite(sw.damage) ? sw.damage : (player.workshopWeapon?.stats?.damage || 12),
       status: sw.status || 'none',
       statusDurationMs: sw.statusMs || 0,
       airborneHeight: sw.airborneHeight || 120,
       ultimateGain: Number.isFinite(Number(sw.ultimateGain)) ? sw.ultimateGain : 10,
-    };
+    }, phase);
     for (let i = 0; i < (sw.projectileEvents || []).length; i++) {
       if (sw.firedProjectileEvents.has(i)) continue;
       const ev = sw.projectileEvents[i];
@@ -1378,7 +1415,7 @@ export class Game {
     if (!(dmg > 0)) return false;
     attacker._lastDealt = dmg;
     const died = target.takeDamage(dmg, attacker.nickname);
-    if (attacker.id === this.localPlayerId) this._triggerHitstop(now, 40);
+    this.fx.hitstop(40, attacker.id);
     this._runBlockEvent(attacker, 'onHit', now, { damage: dmg });
     if (died) { this._creditKill(attacker.id, target); this._runBlockEvent(attacker, 'onKill', now); }
     return true;
@@ -1461,8 +1498,8 @@ export class Game {
       // 모션 재생 [태그] — cosmetic: broadcast a trigger; every client resolves the
       // tag from the player's synced weapon def and plays the pose overlay.
       playMotion: ({ tag }) => this.effects.push({ attackerId: player.id, x: player.x, y: player.y, weapon: '', type: 'stick_motion', tag, progress: 0, timestamp: now, lifetime: 700 }),
-      sfx: (id) => { if (player.id === this.localPlayerId) Sound.play(String(id)); },
-      shake: (level) => { if (this.camera?.startShake) this.camera.startShake(level === 'strong' ? 14 : 7, 220); },
+      sfx: (id) => this.fx.sfx(String(id), player.id),
+      shake: (level) => this.fx.shake(level === 'strong' ? 14 : 7, 220),
       cooldownGate: () => { /* the weapon's clamped cooldownMs already floors fire rate */ },
     };
   }
@@ -1667,7 +1704,7 @@ export class Game {
       this._lockPlayerMotion(player, now, player.workshopWeapon?.motionSet?.attack);
       player.swingDirection *= -1;
       this._runBlockEvent(player, 'basicAttack', now);
-      if (player.id === this.localPlayerId) Sound.play(Sound.attackSoundFor(weaponConfig));
+      this.fx.attackSfx(weaponConfig, player.id);
       return true;
     }
     const basicMotion = player.workshopWeapon?.motionSet?.attack;
@@ -1702,6 +1739,8 @@ export class Game {
             projectile: ws.presetRanged?.heavy || null,
             motionTag: 'heavy',
             ultimateGain: 10,
+            combat: heavyCombat,
+            combatKeys: ws.presetCombatKeys?.heavy || [],
           });
           return true;
         }
@@ -1934,11 +1973,9 @@ export class Game {
     });
 
     // Landing a hit on someone gives the local attacker a tiny hitstop (juice).
-    // Host-authoritative, so this fires for the host player; guests still get
-    // the synced damage numbers / kill feed.
-    if (hitCount > 0 && attacker.id === this.localPlayerId) {
-      this._triggerHitstop(now, 42);
-    }
+    // Tagged with the attacker; guests still get the synced damage numbers /
+    // kill feed. The sink no-ops for anyone who isn't the local player.
+    if (hitCount > 0) this.fx.hitstop(42, attacker.id);
 
     return hitCount;
   }
@@ -2710,15 +2747,13 @@ export class Game {
       const via = viaLabel ? `${viaLabel} ` : '';
       this._announce(`${killer.nickname}님이 ${via}${target.nickname}님을 처치했습니다!`);
 
-      // Kill juice for the local slayer: a heavier hitstop + a strong shake make
-      // the finishing blow land. Local render-only (never touches the sim).
-      if (killer.id === this.localPlayerId) {
-        const t = Date.now();
-        this._triggerHitstop(t, 65);
-        if (this.camera?.startShake) this.camera.startShake(14, 340, performance.now());
-        this._vibrateDevice([40, 25, 55]);
-        Sound.play('kill');
-      }
+      // Kill juice for the slayer: a heavier hitstop + a strong shake make the
+      // finishing blow land. Tagged with the killer — the sink decides whether
+      // that is the local player (headless server: no-op).
+      this.fx.hitstop(65, killer.id);
+      this.fx.shake(14, 340, killer.id);
+      this.fx.vibrate([40, 25, 55], killer.id);
+      this.fx.sfx('kill', killer.id);
 
       // Kill feed: broadcast so every peer shows it, and add locally (host).
       const evt = Protocol.killEvent(
@@ -2727,7 +2762,7 @@ export class Game {
         killer.title || null, target.title || null
       );
       if (this.networkManager?.isHost) this.networkManager.broadcast(evt);
-      this._pushKillFeed(evt);
+      this.fx.killFeed(evt);
 
       // Cosmetic kill effect at the victim (equipped kill-fx), synced to all.
       const kfx = killer.killFx;
@@ -3156,7 +3191,7 @@ export class Game {
     if (player.daggerQte) return;
     if (player.startDash(dirX, dirY)) {
       this._triggerStickMotion(player, 'dash', Date.now());
-      if (player.id === this.localPlayerId) Sound.play('dash');
+      this.fx.sfx('dash', player.id);
     }
   }
 
@@ -3238,7 +3273,7 @@ export class Game {
   _handleUltimatePressed(player, now) {
     if (!player || player.isDead || player.stunTimeLeft > 0) return;
     if ((Number(player.ultimateGauge) || 0) < 100) return;
-    const hasUltimate = Boolean(player.workshopWeapon?.presetCombat?.skill3);
+    const hasUltimate = Boolean(player.workshopWeapon?.presetCombat?.ultimate);
     if (!hasUltimate) {
       if (player.id === this.localPlayerId) this._announce('궁극기 스킬이 없습니다');
       return;
@@ -3246,8 +3281,8 @@ export class Game {
     if (this._isMotionLocked(player, now)) return;
     player.ultimateGauge = 0;
     if (!player.wsSkillCd) player.wsSkillCd = {};
-    player.wsSkillCd.skill3 = 0;
-    this._activateWorkshopSkill(player, 'skill3', now);
+    player.wsSkillCd.ultimate = 0;
+    this._activateWorkshopSkill(player, 'ultimate', now);
   }
 
   _handleAltSkillPressed(player, now) {
@@ -5843,6 +5878,11 @@ export class Game {
 
     const local = this.players[this.localPlayerId];
     if (!local) return;
+    const hudNow = Date.now();
+    if (!this._lastKeybindHudReloadAt || hudNow - this._lastKeybindHudReloadAt > 500) {
+      this.input?.reloadKeybinds?.();
+      this._lastKeybindHudReloadAt = hudNow;
+    }
     this.input?.setLocalWeapon?.(local.weapon);
 
     // Subtle chime when the main skill cooldown finishes (transition >0 → 0).
@@ -5998,6 +6038,26 @@ export class Game {
     };
   }
 
+  _workshopSkillName(player, slot, fallback = '스킬') {
+    return clampSkillLabel(player?.workshopWeapon?.presetNames?.[slot], fallback);
+  }
+
+  _showSkillCallout(player, slot, fallback = '스킬', now = Date.now()) {
+    if (!player) return;
+    const text = this._workshopSkillName(player, slot, fallback);
+    this.effects.push({
+      attackerId: player.id,
+      x: player.x,
+      y: player.y,
+      weapon: player.weapon || '',
+      type: 'skill_callout',
+      text,
+      progress: 0,
+      timestamp: now,
+      lifetime: 760
+    });
+  }
+
   _keyLabel(action) {
     return formatKeyCode(this.input?.keybinds?.[action]);
   }
@@ -6007,7 +6067,7 @@ export class Game {
   }
 
   _setRowLabel(row, html) {
-    const label = row?.querySelector?.('span');
+    const label = row?.querySelector?.('[data-hud-label]') || row?.querySelector?.('span');
     if (label) label.innerHTML = html;
   }
 
@@ -6022,7 +6082,7 @@ export class Game {
     const skillBar = document.getElementById('hudSkillBar');
     const hasFSkill = this._playerHasVisibleFSkill(local);
     if (skillRow) skillRow.classList.toggle('hidden', !hasFSkill);
-    if (skillRow) this._setRowLabel(skillRow, `${this._keyStrong('skill1', 'text-[#c9a227]')} 스킬`);
+    if (skillRow) this._setRowLabel(skillRow, `${this._keyStrong('skill1', 'text-[#c9a227]')} ${escapeHudHtml(this._workshopSkillName(local, 'skill', '스킬'))}`);
     if (skillState && skillBar && hasFSkill) {
       const sk = SkillConfig[local.weapon];
       const wsSkill = this._workshopSkillCooldownInfo(local, 'skill');
@@ -6108,9 +6168,9 @@ export class Game {
     const ultimateState = document.getElementById('hudUltimateState');
     const ultimateBar = document.getElementById('hudUltimateBar');
     const ultimateRow = document.getElementById('hudUltimateRow');
-    const hasUltimate = this._playerHasWorkshopSkill(local, 'skill3');
+    const hasUltimate = this._playerHasWorkshopSkill(local, 'ultimate');
     if (ultimateRow) ultimateRow.classList.toggle('hidden', !hasUltimate);
-    if (ultimateRow) this._setRowLabel(ultimateRow, `${this._keyStrong('ultimate', 'text-[#facc15]')} 궁극기`);
+    if (ultimateRow) this._setRowLabel(ultimateRow, `${this._keyStrong('ultimate', 'text-[#facc15]')} ${escapeHudHtml(this._workshopSkillName(local, 'ultimate', '궁극기'))}`);
     if (ultimateState && ultimateBar && hasUltimate) {
       const gauge = Math.max(0, Math.min(100, Math.round(Number(local.ultimateGauge) || 0)));
       ultimateState.textContent = gauge >= 100 ? '준비!' : `${gauge}/100`;
@@ -6156,7 +6216,7 @@ export class Game {
         teleportRow.classList.remove('hidden');
         const label = teleportRow.querySelector('span');
         if (label) {
-          if (wsSkill2) label.innerHTML = `${this._keyStrong('skill2', 'text-[#22c55e]')} 스킬`;
+          if (wsSkill2) label.innerHTML = `${this._keyStrong('skill2', 'text-[#22c55e]')} ${escapeHudHtml(this._workshopSkillName(local, 'skill2', '스킬'))}`;
           else if (local.weapon === 'magicstaff') label.innerHTML = `${this._keyStrong('skill2', 'text-[#a855f7]')} HEAL`;
           else if (local.weapon === 'katana') label.innerHTML = `${this._keyStrong('skill2', 'text-[#f43f5e]')} IAI`;
           else {
@@ -6224,7 +6284,7 @@ export class Game {
         if (label) {
           const tLabel = AuxSkillConfig[local.weapon]?.target?.label || '스킬';
           label.innerHTML = wsSkill3
-            ? `${this._keyStrong('skill3', 'text-[#93c5fd]')} 스킬`
+            ? `${this._keyStrong('skill3', 'text-[#93c5fd]')} ${escapeHudHtml(this._workshopSkillName(local, 'skill3', '스킬'))}`
             : local.weapon === 'magicstaff'
             ? `${this._keyStrong('skill3', 'text-[#93c5fd]')} ICE`
             : `${this._keyStrong('skill3', 'text-[#93c5fd]')} ${escapeHudHtml(tLabel)}`;
@@ -6255,17 +6315,10 @@ export class Game {
   /**
    * Display floating text notifications
    */
+  /** Banner text. Routed through the presentation sink so simulation code that
+   *  announces (respawns, countdown, kills) stays free of the DOM. */
   _announce(text) {
-    const textEl = document.getElementById('announcementText');
-    if (!textEl) return;
-
-    // Reset Animation class triggers
-    textEl.classList.remove('animate-announcement');
-    // Force DOM flow repaint
-    void textEl.offsetWidth;
-
-    textEl.textContent = text;
-    textEl.classList.add('animate-announcement');
+    this.fx.announce(text);
   }
 
   /**
@@ -6866,7 +6919,8 @@ function deserializeWorkshopCooldowns(cooldowns = {}) {
   return {
     skill: Math.max(0, (cooldowns.skill || 0) / 1000),
     skill2: Math.max(0, (cooldowns.skill2 || 0) / 1000),
-    skill3: Math.max(0, (cooldowns.skill3 || 0) / 1000)
+    skill3: Math.max(0, (cooldowns.skill3 || 0) / 1000),
+    ultimate: Math.max(0, (cooldowns.ultimate || 0) / 1000)
   };
 }
 
@@ -6933,3 +6987,8 @@ function damageTier(amount) {
   if (amount >= 38) return 'big';    // skills, heavy hits
   return 'normal';
 }
+
+// Default presentation sink: headless. The browser shell replaces it with a
+// BrowserFx in the constructor; a server (or a test that builds an instance
+// straight off the prototype) inherits this no-op and stays DOM-free.
+Game.prototype.fx = NULL_FX;

@@ -428,13 +428,19 @@ export class StickAnimator {
       if (motion.loop) s.phase %= 1; else s.phase = Math.min(0.999, s.phase);
     }
 
+    const rightFlip = sampleFlipAt(motion.flipXKeys, s.phase);
+    const rightFlipY = sampleFlipAt(motion.flipYKeys, s.phase);
     return {
       pose: samplePose(motion, s.phase),
       rootOffset: sampleRootOffset(motion, s.phase),
       motionName,
       phase: s.phase,
-      weaponFlip: sampleFlipAt(motion.flipXKeys, s.phase),
-      weaponFlipY: sampleFlipAt(motion.flipYKeys, s.phase),
+      weaponFlip: rightFlip,
+      weaponFlipY: rightFlipY,
+      weaponRightFlip: rightFlip,
+      weaponRightFlipY: rightFlipY,
+      weaponLeftFlip: sampleFlipAt(motion.leftFlipXKeys, s.phase),
+      weaponLeftFlipY: sampleFlipAt(motion.leftFlipYKeys, s.phase),
       handSwapped: sampleFlipAt(motion.handSwapKeys, s.phase)
     };
   }
@@ -459,6 +465,8 @@ function cloneMotion(m) {
   if (m.previewOffset) c.previewOffset = { ...m.previewOffset };
   if (Array.isArray(m.flipXKeys)) c.flipXKeys = m.flipXKeys.map(k => ({ ...k }));
   if (Array.isArray(m.flipYKeys)) c.flipYKeys = m.flipYKeys.map(k => ({ ...k }));
+  if (Array.isArray(m.leftFlipXKeys)) c.leftFlipXKeys = m.leftFlipXKeys.map(k => ({ ...k }));
+  if (Array.isArray(m.leftFlipYKeys)) c.leftFlipYKeys = m.leftFlipYKeys.map(k => ({ ...k }));
   if (Array.isArray(m.handSwapKeys)) c.handSwapKeys = m.handSwapKeys.map(k => ({ ...k }));
   // Preserve admin-canonical gameplay fields when present (already sanitized).
   if (Array.isArray(m.hitboxes)) c.hitboxes = m.hitboxes.map(h => ({ ...h }));

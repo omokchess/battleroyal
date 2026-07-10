@@ -308,7 +308,7 @@
                   class="w-full bg-[#14100b] border-2 border-gray-600 focus:border-[#c9a227] text-white px-3 py-2 font-mono text-xs focus:outline-none uppercase mb-4" />
               </div>
 
-              <div class="mb-3 hidden" data-config-group="botCount" id="botCountRow">
+              <div class="mb-3 hidden" data-config-group="botCount" data-tutorial="quickplay-bots" id="botCountRow">
                 <div class="font-mono text-[10px] text-gray-300 uppercase mb-1">AI 수</div>
                 <div class="grid grid-cols-4 gap-1">
                   <button type="button" class="cfg-opt" data-value="1">1</button>
@@ -318,7 +318,7 @@
                 </div>
               </div>
 
-              <div class="mb-3" data-config-group="platforms">
+              <div class="mb-3" data-config-group="platforms" data-tutorial="quickplay-platforms">
                 <div class="font-mono text-[10px] text-gray-300 uppercase mb-1">플랫폼</div>
                 <div class="grid grid-cols-4 gap-1">
                   <button type="button" class="cfg-opt" data-value="none">없음</button>
@@ -328,7 +328,7 @@
                 </div>
               </div>
 
-              <div class="mb-3" data-config-group="platformShape">
+              <div class="mb-3" data-config-group="platformShape" data-tutorial="quickplay-platform-shape">
                 <div class="font-mono text-[10px] text-gray-300 uppercase mb-1">플랫폼 모양</div>
                 <div class="grid grid-cols-3 gap-1">
                   <button type="button" class="cfg-opt selected" data-value="balanced">균형형</button>
@@ -337,7 +337,7 @@
                 </div>
               </div>
 
-              <div class="mb-3" data-config-group="biome">
+              <div class="mb-3" data-config-group="biome" data-tutorial="quickplay-biome">
                 <div class="font-mono text-[10px] text-gray-300 uppercase mb-1">지형</div>
                 <div class="grid grid-cols-5 gap-1">
                   <button type="button" class="cfg-opt selected" data-value="day">낮</button>
@@ -348,7 +348,7 @@
                 </div>
               </div>
 
-              <div class="mb-3" data-config-group="cover">
+              <div class="mb-3" data-config-group="cover" data-tutorial="quickplay-cover">
                 <div class="font-mono text-[10px] text-gray-300 uppercase mb-1">엄폐물</div>
                 <div class="grid grid-cols-4 gap-1">
                   <button type="button" class="cfg-opt selected" data-value="none">없음</button>
@@ -358,15 +358,7 @@
                 </div>
               </div>
 
-              <div class="mb-3" data-config-group="water">
-                <div class="font-mono text-[10px] text-gray-300 uppercase mb-1">물 (특수 장애물)</div>
-                <div class="grid grid-cols-2 gap-1">
-                  <button type="button" class="cfg-opt" data-value="off">OFF</button>
-                  <button type="button" class="cfg-opt selected" data-value="on">ON</button>
-                </div>
-              </div>
-
-              <div class="mb-3" data-config-group="healing">
+              <div class="mb-3" data-config-group="healing" data-tutorial="quickplay-healing">
                 <div class="font-mono text-[10px] text-gray-300 uppercase mb-1">회복 아이템</div>
                 <div class="grid grid-cols-2 gap-1">
                   <button type="button" class="cfg-opt selected" data-value="off">OFF</button>
@@ -617,7 +609,7 @@
       <div id="abilityHud" class="absolute bottom-4 left-4 z-20 bg-[#2c2016] bg-opacity-80 p-3 border-2 border-[#c9a227] font-mono pointer-events-none select-none w-44 drop-shadow-md">
         <div id="hudSkillRow">
           <div class="flex justify-between items-center text-[10px] text-gray-300 mb-1">
-            <span><strong class="text-[#c9a227]">F</strong> 스킬</span>
+            <span data-hud-label><strong class="text-[#c9a227]">F</strong> 스킬</span>
             <span id="hudSkillState" class="text-white">준비!</span>
           </div>
           <div class="w-full bg-[#14100b] h-2 border border-gray-600 overflow-hidden mb-2">
@@ -625,7 +617,7 @@
           </div>
         </div>
         <div class="flex justify-between items-center text-[10px] text-gray-300 mb-1">
-          <span><strong class="text-[#22d3ee]">SHIFT</strong> 대시</span>
+          <span data-hud-label><strong class="text-[#22d3ee]">SHIFT</strong> 대시</span>
           <span id="hudDashState" class="text-white">준비!</span>
         </div>
         <div class="w-full bg-[#14100b] h-2 border border-gray-600 overflow-hidden">
@@ -633,7 +625,7 @@
         </div>
         <div id="hudUltimateRow">
           <div class="flex justify-between items-center text-[10px] text-gray-300 mb-1 mt-2">
-            <span><strong class="text-[#facc15]">Y</strong> 궁극기</span>
+            <span data-hud-label><strong class="text-[#facc15]">Y</strong> 궁극기</span>
             <span id="hudUltimateState" class="text-white">0/100</span>
           </div>
           <div class="w-full bg-[#14100b] h-2 border border-gray-600 overflow-hidden">
@@ -642,7 +634,7 @@
         </div>
         <div id="hudTeleportRow" class="hidden">
           <div class="flex justify-between items-center text-[10px] text-gray-300 mb-1 mt-2">
-            <span><strong class="text-[#22c55e]">E</strong> 순간이동</span>
+            <span data-hud-label><strong class="text-[#22c55e]">E</strong> 순간이동</span>
             <span id="hudTeleportState" class="text-white">준비!</span>
           </div>
           <div class="w-full bg-[#14100b] h-2 border border-gray-600 overflow-hidden">
@@ -651,7 +643,7 @@
         </div>
         <div id="hudClickSkillRow" class="hidden">
           <div class="flex justify-between items-center text-[10px] text-gray-300 mb-1 mt-2">
-            <span><strong class="text-[#93c5fd]">E</strong> ICE</span>
+            <span data-hud-label><strong class="text-[#93c5fd]">R</strong> ICE</span>
             <span id="hudClickSkillState" class="text-white">READY</span>
           </div>
           <div class="w-full bg-[#14100b] h-2 border border-gray-600 overflow-hidden">
@@ -769,6 +761,10 @@
                 <button id="meOnion" class="bg-[#14100b] hover:bg-gray-800 border border-[#6f8cff] text-[#9fb0ff] text-[10px] py-1.5 cursor-pointer active:scale-95" title="이전 프레임 잔상(오니언스킨)">🧅 잔상</button>
                 <button id="meCapture" class="bg-[#14100b] hover:bg-gray-800 border border-[#45f3ff] text-[#45f3ff] text-[10px] py-1.5 cursor-pointer active:scale-95">📷 웹캠</button>
               </div>
+              <div class="grid grid-cols-2 gap-1.5">
+                <button id="meCopyFrame" class="bg-[#14100b] hover:bg-gray-800 border border-[#e8d5a3] text-[#e8d5a3] text-[10px] py-1.5 cursor-pointer active:scale-95" title="현재 프레임 복사 (Ctrl+C)">복사</button>
+                <button id="mePasteFrame" class="bg-[#14100b] hover:bg-gray-800 border border-[#e8d5a3] text-[#e8d5a3] text-[10px] py-1.5 cursor-pointer active:scale-95" title="복사한 프레임 붙여넣기 (Ctrl+V)">붙여넣기</button>
+              </div>
               <video id="meVideo" class="hidden" width="160" height="120" playsinline muted></video>
               <div class="text-[9px] text-gray-500 leading-tight">◀ ▶ (←/→키)로 넘기고, <b class="text-[#7df09a]">＋새 프레임</b>은 지금 포즈를 이어받습니다. <b class="text-[#9fb0ff]">파란 잔상</b>=이전 프레임.</div>
             </div>
@@ -787,11 +783,16 @@
                   <span class="px-1.5 text-[10px] text-gray-500 flex items-center">s</span>
                 </div>
               </div>
-              <div class="flex items-center gap-2 mt-1">
-                <button id="meFlipToggle" class="bg-[#14100b] hover:bg-gray-800 border border-[#c56cff] text-[#c56cff] text-[10px] px-2 py-1 cursor-pointer active:scale-95" title="현재 시점에서 무기 좌우 반전을 켜고 끕니다 (키 추가)">🔄 무기 반전 (현재 시점)</button>
-                <button id="meFlipYToggle" class="bg-[#14100b] hover:bg-gray-800 border border-[#6f8cff] text-[#9fb0ff] text-[10px] px-2 py-1 cursor-pointer active:scale-95" title="현재 시점에서 무기 상하 반전을 켜고 끕니다 (키 추가)">↕ 상하 반전</button>
-                <button id="meHandSwapToggle" class="bg-[#14100b] hover:bg-gray-800 border border-[#7df09a] text-[#7df09a] text-[10px] px-2 py-1 cursor-pointer active:scale-95" title="현재 시점부터 무기를 드는 손을 바꿉니다">⇄ 손 변경</button>
-                <span class="text-[9px] text-gray-500 flex-1 leading-tight">◀▶/재생 중 현 시점 반전값이 즉시 미리보기·게임에 적용</span>
+              <div class="mt-1 space-y-1">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <button id="meRightFlipToggle" class="bg-[#14100b] hover:bg-gray-800 border border-[#c56cff] text-[#c56cff] text-[10px] px-2 py-1 cursor-pointer active:scale-95" title="현재 시점에서 오른손에 든 무기의 좌우 반전을 켜고 끕니다">오른손 좌우 반전</button>
+                  <button id="meRightFlipYToggle" class="bg-[#14100b] hover:bg-gray-800 border border-[#6f8cff] text-[#9fb0ff] text-[10px] px-2 py-1 cursor-pointer active:scale-95" title="현재 시점에서 오른손에 든 무기의 상하 반전을 켜고 끕니다">오른손 상하 반전</button>
+                </div>
+                <div class="flex items-center gap-2 flex-wrap">
+                  <button id="meLeftFlipToggle" class="bg-[#14100b] hover:bg-gray-800 border border-[#d98cff] text-[#d98cff] text-[10px] px-2 py-1 cursor-pointer active:scale-95" title="현재 시점에서 왼손에 든 무기의 좌우 반전을 켜고 끕니다">왼손 좌우 반전</button>
+                  <button id="meLeftFlipYToggle" class="bg-[#14100b] hover:bg-gray-800 border border-[#8fb7ff] text-[#bcd0ff] text-[10px] px-2 py-1 cursor-pointer active:scale-95" title="현재 시점에서 왼손에 든 무기의 상하 반전을 켜고 끕니다">왼손 상하 반전</button>
+                  <button id="meHandSwapToggle" class="bg-[#14100b] hover:bg-gray-800 border border-[#7df09a] text-[#7df09a] text-[10px] px-2 py-1 cursor-pointer active:scale-95" title="현재 시점부터 무기를 드는 손을 바꿉니다">⇄ 손 변경</button>
+                </div>
               </div>
               <div class="mt-1 border-t border-gray-800 pt-1">
                 <div class="flex items-center gap-2">
@@ -813,6 +814,9 @@
               <div id="meHitboxRow" class="flex items-center justify-between mt-1 border-t border-gray-800 pt-1">
                 <span class="text-[10px] text-[#ff7a5a] uppercase font-bold">⚔ 프레임 히트박스</span>
                 <span class="text-[9px] text-gray-500 flex-1 px-2 leading-tight">현재 프레임에 판정 추가 · 빨간 상자=타격 범위 · 빨간 프레임=판정 발생</span>
+                <label class="flex items-center gap-1 text-[9px] text-gray-300 mr-1 whitespace-nowrap" title="비우면 총 대미지를 히트박스 수로 자동 분배합니다.">프레임 대미지
+                  <input id="meHitboxDamage" type="number" min="0" max="60" step="1" placeholder="자동" class="w-16 bg-[#14100b] border border-[#ff7a5a]/60 text-white px-1 py-1 text-[10px] disabled:opacity-40" />
+                </label>
                 <button id="meAddHitbox" class="bg-[#14100b] hover:bg-gray-800 border border-[#ff7a5a] text-[#ff7a5a] text-[10px] px-2 py-1 cursor-pointer active:scale-95">＋ 현재 프레임 판정</button>
               </div>
             </div>
@@ -864,7 +868,7 @@
                 <button id="mePresetSave" class="bg-[#14100b] hover:bg-gray-800 border border-[#ffd24a] text-[#ffd24a] text-[10px] px-2 py-0.5 cursor-pointer active:scale-95" title="지금 만든 모션을 이 태그의 프리셋으로 저장">💾 프리셋 저장</button>
               </div>
               <div id="mePresets" class="flex flex-wrap gap-1 max-h-20 overflow-y-auto"></div>
-              <div class="text-[9px] text-gray-500 mt-1 leading-tight">★=장착 · 클릭=불러와 수정 · 공격/걷기/대기/점프=자동 적용, 대시/스킬/피격/처치=블록 <b class="text-[#45f3ff]">모션 재생</b>으로 발동</div>
+              <div class="text-[9px] text-gray-500 mt-1 leading-tight">★=장착 · 클릭=불러와 수정 · 공격/걷기/대기/점프=자동 적용, 대시/스킬/피격=블록 <b class="text-[#45f3ff]">모션 재생</b>으로 발동</div>
             </div>
 
             <!-- ④ 외형 (컴팩트) -->
@@ -897,12 +901,15 @@
 
           <!-- CENTER: preset tabs + the stickman -->
           <div class="flex-1 min-w-0 min-h-0 flex flex-col gap-2">
-            <div id="mePresetBar" class="hidden flex-none flex flex-wrap items-center gap-1 bg-[#0d0a06] border border-gray-700 rounded p-1.5"></div>
+            <div id="mePresetBar" class="hidden flex-none flex flex-nowrap items-center gap-1 bg-[#0d0a06] border border-gray-700 rounded p-1.5 overflow-x-auto whitespace-nowrap"></div>
             <div class="relative flex-1 min-h-0 flex items-center justify-center bg-[#14100b] border-2 border-gray-600 rounded overflow-hidden">
-              <div class="absolute right-2 top-2 z-10 flex items-center gap-1 bg-[#0d0a06]/85 border border-gray-700 px-1.5 py-1">
-                <button id="meZoomOut" type="button" class="w-7 h-7 border border-gray-700 bg-[#14100b] text-[#ffd24a] hover:border-[#ffd24a]">－</button>
-                <span id="meZoomVal" class="min-w-10 text-center text-[10px] text-gray-300">100%</span>
-                <button id="meZoomIn" type="button" class="w-7 h-7 border border-gray-700 bg-[#14100b] text-[#ffd24a] hover:border-[#ffd24a]">＋</button>
+              <div class="absolute right-2 top-2 z-10 flex flex-col gap-1 bg-[#0d0a06]/85 border border-gray-700 px-1.5 py-1">
+                <div class="flex items-center gap-1">
+                  <button id="meZoomOut" type="button" class="w-7 h-7 border border-gray-700 bg-[#14100b] text-[#ffd24a] hover:border-[#ffd24a]">－</button>
+                  <span id="meZoomVal" class="min-w-10 text-center text-[10px] text-gray-300">100%</span>
+                  <button id="meZoomIn" type="button" class="w-7 h-7 border border-gray-700 bg-[#14100b] text-[#ffd24a] hover:border-[#ffd24a]">＋</button>
+                </div>
+                <button id="mePresetComplete" type="button" class="border border-[#7df09a] bg-[#16351f] text-[#7df09a] text-[10px] px-2 py-1 hover:border-white active:scale-95">현재 프리셋 완성</button>
               </div>
               <canvas id="meCanvas" width="1600" height="900" class="max-h-full max-w-full touch-none"></canvas>
             </div>
@@ -981,6 +988,10 @@
               <!-- 전투 스탯 (선택한 공격 프리셋별) — 공격 프리셋일 때만 -->
               <div id="meCombatStats" class="hidden">
                 <div class="text-[9px] text-[#ff7a5a] uppercase font-bold mt-2">⚔ 이 프리셋 전투 (<span id="meCombatPresetName">평타</span>)</div>
+                <label class="block mt-1 mb-1 text-[10px] text-gray-300">
+                  <span class="flex justify-between"><span>스킬 이름</span><b class="text-[#e8d5a3] text-[9px]">전투 HUD 표시</b></span>
+                  <input id="mePresetDisplayName" type="text" maxlength="24" class="w-full bg-[#14100b] border border-[#ff7a5a]/50 text-white px-2 py-1 outline-none" placeholder="기본 프리셋 이름 사용" />
+                </label>
                 <div id="meHeavyStats" class="hidden mt-1 mb-1 border border-[#ff7a5a]/30 rounded p-1.5">
                   <label class="block text-[10px] text-gray-300"><span class="flex justify-between"><span>강공격 발동 평타 횟수</span><b id="ms_heavyAfter_v" class="text-[#e8d5a3]">3</b></span>
                     <input id="ms_heavyAfter" type="range" min="1" max="5" step="1" class="w-full"/></label>
@@ -1060,6 +1071,7 @@
                 <input id="meName" type="text" maxlength="24" placeholder="무기 이름" class="flex-1 min-w-0 bg-[#14100b] border border-gray-600 text-white text-xs px-2 py-1.5" />
                 <button id="meReset" class="bg-[#14100b] hover:bg-gray-800 border border-gray-500 text-gray-300 text-[10px] px-2.5 py-1.5 cursor-pointer active:scale-95 whitespace-nowrap">초기화</button>
               </div>
+              <textarea id="meDesc" maxlength="80" rows="2" placeholder="무기 설명" class="w-full resize-none bg-[#14100b] border border-gray-600 text-gray-200 text-[11px] px-2 py-1.5 leading-snug"></textarea>
               <div class="flex gap-1.5">
                 <button id="meSave" class="flex-1 bg-gradient-to-r from-[#3aa856] to-[#1c6b33] hover:from-[#4cc96b] hover:to-[#175a2a] border-2 border-[#7df09a] text-white text-xs px-3 py-2 uppercase tracking-wider cursor-pointer font-extrabold active:scale-95 transition-transform" title="이 기기에 저장하고 장착 (공유 안 함)">💾 저장 + 장착</button>
                 <button id="meUpload" class="bg-[#14100b] hover:bg-gray-800 border-2 border-[#ffb070] text-[#ffb070] text-xs px-3 py-2 uppercase cursor-pointer active:scale-95 whitespace-nowrap" title="워크샵에 업로드해 다른 유저와 공유">⬆ 업로드</button>

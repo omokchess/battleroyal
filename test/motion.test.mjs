@@ -138,7 +138,7 @@ test('StickAnimator starts remote workshop attack from last motion tag', () => {
   assert.equal(sample.motionName, 'skill1');
 });
 
-test('StickAnimator samples weapon hand-swap timeline', () => {
+test('StickAnimator samples weapon hand-swap and per-hand flip timelines', () => {
   const animator = new StickAnimator();
   const player = {
     id: 'hands',
@@ -152,6 +152,10 @@ test('StickAnimator samples weapon hand-swap timeline', () => {
       motionSet: {
         attack: {
           duration: 1,
+          flipXKeys: [{ time: 0, value: false }, { time: 0.2, value: true }],
+          flipYKeys: [{ time: 0, value: false }],
+          leftFlipXKeys: [{ time: 0, value: false }],
+          leftFlipYKeys: [{ time: 0, value: false }, { time: 0.2, value: true }],
           handSwapKeys: [{ time: 0, value: false }, { time: 0.2, value: true }],
           keyframes: [{ t: 0, pose: {} }, { t: 1, pose: {} }],
         },
@@ -161,4 +165,8 @@ test('StickAnimator samples weapon hand-swap timeline', () => {
   animator.sample(player, 1000);
   const sample = animator.sample(player, 1300);
   assert.equal(sample.handSwapped, true);
+  assert.equal(sample.weaponRightFlip, true);
+  assert.equal(sample.weaponRightFlipY, false);
+  assert.equal(sample.weaponLeftFlip, false);
+  assert.equal(sample.weaponLeftFlipY, true);
 });

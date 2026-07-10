@@ -136,7 +136,15 @@ test('v2ToV1Runtime preserves frame projectile/teleport events and visual id', (
     { imageId: 'custom:hat-b', name: '깃털', scale: 0.7, offsetX: -10, offsetY: -12, alpha: 0.5, rotation: -20, anchorX: 0.2, anchorY: 0.8, layer: 'behindPlayer', showHandles: false },
   ];
   const w = makeEmptyWeaponV2({ name: '이벤트검' });
-  w.weaponVisual = { imageId: id, scale: 2, dual: true, offhand: { imageId: offhandId, scale: 1.8, anchors: offhandAnchors }, hats, selectedHat: 1 };
+  w.weaponVisual = {
+    imageId: id,
+    scale: 2,
+    dual: true,
+    offhand: { imageId: offhandId, scale: 1.8, anchors: offhandAnchors },
+    hats,
+    selectedHat: 1,
+    layerOrder: ['player', 'hat:0', 'weapon:left', 'hat:1', 'weapon:right'],
+  };
   w.presets.basic.ranged = true;
   w.presets.basic.previewOffset = { x: 24, y: -12 };
   w.presets.basic.motion.keyframes[0].root = { x: 12, y: 8 };
@@ -155,6 +163,7 @@ test('v2ToV1Runtime preserves frame projectile/teleport events and visual id', (
   assert.deepEqual(rt.weaponVisual.hats[0].anchors, { gx: 0.4, gy: 0.6, tx: 0.9, ty: 0.4 });
   assert.equal(rt.weaponVisual.hats[1].showHandles, false);
   assert.equal(rt.weaponVisual.selectedHat, 1);
+  assert.deepEqual(rt.weaponVisual.layerOrder, ['player', 'hat:0', 'weapon:left', 'hat:1', 'weapon:right']);
   assert.equal(rt.motionSet.attack.projectileEvents.length, 1);
   assert.equal(rt.motionSet.attack.teleportEvents.length, 1);
   assert.deepEqual(rt.motionSet.attack.previewOffset, { x: 24, y: -12 });

@@ -116,6 +116,47 @@ test('workshop frame hitboxes split preset damage across authored hitboxes', () 
   assert.equal(target.hp, target.maxHp - 10, 'all authored hitboxes together preserve the preset damage');
 });
 
+test('workshop frame hitboxes can override damage per authored frame', () => {
+  const game = combatGame();
+  const attacker = new Player('atk', 'Maker', 'sword', 100, 100);
+  const target = new Player('tar', 'Target', 'sword', 130, 100);
+  attacker.angle = 0;
+  attacker.workshopWeapon = { stats: { damage: 60 } };
+  game.players[attacker.id] = attacker;
+  game.players[target.id] = target;
+
+  game._startHitboxSwing(attacker, {
+    duration: 1,
+    hitboxes: [
+      { ox: 30, oy: 0, w: 60, h: 40, frameTime: 0.2, damage: 3 },
+      { ox: 30, oy: 0, w: 60, h: 40, frameTime: 0.6, damage: 14 },
+    ],
+  }, 1000, { damage: 60 });
+
+  game._updateHitboxSwings(1200);
+  assert.equal(target.hp, target.maxHp - 3);
+  game._updateHitboxSwings(1600);
+  assert.equal(target.hp, target.maxHp - 17);
+});
+
+test('workshop skill activation shows the authored skill name beside the caster', () => {
+  const game = combatGame();
+  game._isMotionLocked = () => false;
+  const player = new Player('caster', 'Maker', 'sword', 100, 100);
+  player.workshopWeapon = {
+    name: '이름검',
+    presetCombat: { skill: { damage: 10, cooldownMs: 1000, knockback: 0, status: 'none' } },
+    presetNames: { skill: '번개 베기' },
+    motionSet: {}
+  };
+
+  assert.equal(game._activateWorkshopSkill(player, 'skill', 1000), true);
+  assert.equal(player.wsSkillCd.skill, 1);
+  assert.equal(game.effects.length, 1);
+  assert.equal(game.effects[0].type, 'skill_callout');
+  assert.equal(game.effects[0].text, '번개 베기');
+});
+
 test('sword skill releases timed swordwaves without a spin effect', () => {
   const game = combatGame();
   const player = new Player('p4', 'Blade', 'sword', 100, 100);

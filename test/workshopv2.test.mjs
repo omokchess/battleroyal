@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   clampWorkshopWeaponV2, migrateV1toV2, toWorkshopWeaponV2, makeEmptyWeaponV2, makeEmptyPreset,
-  statCostV2, combatCost, sanitizeCombat, sanitizeFlipKeys, sampleFlip, sanitizeProjectile, sanitizeProjectileEvents, sanitizeTeleportEvents, sanitizeEffects,
-  POINT_BUDGET, PROJECTILE_IMAGES, FIXED_PRESET_DURATIONS,
+  statCostV2, combatCost, sanitizeCombat, sanitizeCombatKeys, sampleCombatKeys, sanitizeFlipKeys, sampleFlip, sanitizeProjectile, sanitizeProjectileEvents, sanitizeTeleportEvents, sanitizeEffects,
+  POINT_BUDGET, PROJECTILE_IMAGES, FIXED_PRESET_DURATIONS, AUTHORING_PRESET_KEYS,
 } from '../game/Workshop.js';
 import { v2ToV1Runtime } from '../game/WorkshopStore.js';
 
@@ -51,6 +51,23 @@ test('toWorkshopWeaponV2 passes V2 through and migrates V1', () => {
   assert.equal(migrated.presets.basic.combat.damage, 20);
 });
 
+test('V2 weapons always expose every authoring preset and drop the removed kill preset', () => {
+  const fresh = makeEmptyWeaponV2({ name: '전체 프리셋' });
+  for (const key of AUTHORING_PRESET_KEYS) assert.ok(fresh.presets[key], `${key} preset exists`);
+  assert.equal(fresh.presets.kill, undefined);
+
+  const clamped = clampWorkshopWeaponV2({
+    schemaVersion: 2,
+    presets: {
+      basic: { ...makeEmptyPreset('basic'), complete: true },
+      kill: { kind: 'kill', motion: { keyframes: [{ t: 0, pose: {} }] }, complete: true },
+    },
+  });
+  for (const key of AUTHORING_PRESET_KEYS) assert.ok(clamped.presets[key], `${key} preset filled`);
+  assert.equal(clamped.presets.basic.complete, true);
+  assert.equal(clamped.presets.kill, undefined);
+});
+
 test('budget: cooldown is included and over-budget bleeds to ≤100 per section', () => {
   const w = makeEmptyWeaponV2({ firstPresetKind: 'basic' });
   const neutral = combatCost({ damage: 0, cooldownMs: 600, knockback: 60, status: 'none', ultimateGain: 10 });
@@ -63,10 +80,10 @@ test('budget: cooldown is included and over-budget bleeds to ≤100 per section'
   const fast = { ...w, presets: { basic: { ...w.presets.basic, combat: { ...w.presets.basic.combat, cooldownMs: 250 } } } };
   const slow = { ...w, presets: { basic: { ...w.presets.basic, combat: { ...w.presets.basic.combat, cooldownMs: 2500 } } } };
   assert.ok(statCostV2(fast) > statCostV2(slow), 'cooldown affects budget');
-  // Max everything across all 6 combat presets → over budget → clamped ≤100.
+  // Max everything across all combat presets → over budget → clamped ≤100.
   const maxed = clampWorkshopWeaponV2({
     schemaVersion: 2, baseStats: { maxHp: 160, moveSpeed: 1.35 },
-    presets: Object.fromEntries(['basic', 'heavy', 'skill1', 'skill2', 'skill3'].map((k) => [k,
+    presets: Object.fromEntries(['basic', 'heavy', 'skill1', 'skill2', 'skill3', 'ultimate'].map((k) => [k,
       { kind: k, motion: { keyframes: [{ t: 0, pose: {} }] }, combat: { damage: 60, cooldownMs: 250, knockback: 200, status: 'bleed', statusDurationMs: 3000 } }])),
   });
   assert.ok(statCostV2(maxed) <= POINT_BUDGET, `enforced ${statCostV2(maxed)} ≤ ${POINT_BUDGET}`);
@@ -98,7 +115,7 @@ test('flip keys sanitize: sorted, deduped (last wins), boolean, clamped', () => 
   assert.equal(sampleFlip([{ time: 0, value: false }, { time: 0.5, value: true }], 0.7), true);
 });
 
-test('airborne status and hand-swap timeline survive V2 clamp and runtime export', () => {
+test('airborne status and weapon hand timelines survive V2 clamp and runtime export', () => {
   const w = clampWorkshopWeaponV2({
     schemaVersion: 2,
     name: '에어본검',
@@ -106,19 +123,75 @@ test('airborne status and hand-swap timeline survive V2 clamp and runtime export
       skill3: {
         kind: 'skill3',
         motion: { duration: 0.8, keyframes: [{ t: 0, pose: {} }, { t: 1, pose: {} }] },
-        weaponTimeline: { handSwapKeys: [{ time: 0.25, value: true }, { time: 0.75, value: false }] },
+        weaponTimeline: {
+          flipXKeys: [{ time: 0.15, value: true }],
+          flipYKeys: [{ time: 0.2, value: true }],
+          leftFlipXKeys: [{ time: 0.25, value: true }],
+          leftFlipYKeys: [{ time: 0.3, value: true }],
+          handSwapKeys: [{ time: 0.25, value: true }, { time: 0.75, value: false }],
+        },
         combat: { damage: 10, cooldownMs: 10000, knockback: 60, status: 'airborne', statusDurationMs: 500, airborneHeight: 180 },
       },
     },
   });
-  assert.equal(w.presets.skill3.label, '궁극기');
+  assert.equal(w.presets.skill3.label, '스킬 3');
   assert.equal(w.presets.skill3.combat.status, 'airborne');
   assert.equal(w.presets.skill3.combat.airborneHeight, 180);
   assert.equal(w.presets.skill3.weaponTimeline.handSwapKeys.length, 2);
+  assert.equal(w.presets.skill3.weaponTimeline.leftFlipXKeys.length, 1);
+  assert.equal(w.presets.skill3.weaponTimeline.leftFlipYKeys.length, 1);
   const rt = v2ToV1Runtime(w);
   assert.equal(rt.presetCombat.skill3.status, 'airborne');
   assert.equal(rt.presetCombat.skill3.airborneHeight, 180);
+  assert.equal(rt.motionSet.skill3.flipXKeys.length, 1);
+  assert.equal(rt.motionSet.skill3.flipYKeys.length, 1);
+  assert.equal(rt.motionSet.skill3.leftFlipXKeys.length, 1);
+  assert.equal(rt.motionSet.skill3.leftFlipYKeys.length, 1);
   assert.equal(rt.motionSet.skill3.handSwapKeys.length, 2);
+});
+
+test('ultimate preset is separate from skill3 and exports to the ultimate runtime slot', () => {
+  const w = clampWorkshopWeaponV2({
+    schemaVersion: 2,
+    presets: {
+      skill3: { kind: 'skill3', displayName: '돌진 찌르기', motion: { keyframes: [{ t: 0, pose: {} }] }, combat: { damage: 12, cooldownMs: 900 } },
+      ultimate: { kind: 'ultimate', displayName: '천둥 참격', motion: { keyframes: [{ t: 0, pose: {} }] }, combat: { damage: 45, cooldownMs: 3000 } },
+    },
+  });
+  assert.equal(w.presets.skill3.label, '스킬 3');
+  assert.equal(w.presets.skill3.displayName, '돌진 찌르기');
+  assert.equal(w.presets.ultimate.label, '궁극기');
+  const rt = v2ToV1Runtime(w);
+  assert.ok(rt.presetCombat.skill3, 'R skill remains skill3');
+  assert.ok(rt.presetCombat.ultimate, 'Y ultimate uses its own slot');
+  assert.equal(rt.presetNames.skill3, '돌진 찌르기');
+  assert.equal(rt.presetNames.ultimate, '천둥 참격');
+  assert.ok(rt.motionSet.skill3, 'skill3 motion exported');
+  assert.ok(rt.motionSet.ultimate, 'ultimate motion exported');
+});
+
+test('combat preset controls can vary by authored frame and export to runtime', () => {
+  const w = clampWorkshopWeaponV2({
+    name: '프레임 조절 검',
+    presets: {
+      basic: {
+        kind: 'basic',
+        motion: { duration: 1, keyframes: [{ t: 0, pose: {} }, { t: 0.5, pose: {} }, { t: 1, pose: {} }] },
+        combat: { damage: 10, cooldownMs: 800, knockback: 20, status: 'none' },
+        combatKeys: [
+          { time: 0, combat: { damage: 10, cooldownMs: 800, knockback: 20, status: 'none' } },
+          { time: 0.5, combat: { damage: 32, cooldownMs: 800, knockback: 80, status: 'stun', statusDurationMs: 200 } },
+        ],
+      },
+    },
+  });
+  assert.equal(w.presets.basic.combatKeys.length, 2);
+  assert.equal(sampleCombatKeys(w.presets.basic.combatKeys, w.presets.basic.combat, 0.25).damage, 10);
+  assert.equal(sampleCombatKeys(w.presets.basic.combatKeys, w.presets.basic.combat, 0.5).damage, 32);
+  assert.equal(sampleCombatKeys(w.presets.basic.combatKeys, w.presets.basic.combat, 0.9).status, 'stun');
+  const rt = v2ToV1Runtime(w);
+  assert.equal(rt.motionSet.attack.combatKeys.length, 2);
+  assert.equal(sampleCombatKeys(rt.motionSet.attack.combatKeys, rt.stats, 0.5).knockback, 80);
 });
 
 test('projectile sanitize: valid imageId + hitbox clamped + direction source', () => {
@@ -206,6 +279,26 @@ test('heavy preset stores combo count and exports runtime heavyAfter', () => {
   assert.equal(rt.presetHitboxes.heavy[0].frameTime, 0.5);
 });
 
+test('hitbox frame damage survives V2 clamp and runtime export', () => {
+  const w = clampWorkshopWeaponV2({
+    schemaVersion: 2,
+    presets: {
+      basic: {
+        ...makeEmptyPreset('basic'),
+        combat: { damage: 60, cooldownMs: 1000, knockback: 60 },
+        hitboxes: [
+          { ox: 30, oy: 0, w: 40, h: 30, frameTime: 0.25, activeStart: 0.23, activeEnd: 0.27, damage: 3 },
+          { ox: 30, oy: 0, w: 40, h: 30, frameTime: 0.75, activeStart: 0.73, activeEnd: 0.77 },
+        ],
+      },
+    },
+  });
+  assert.equal(w.presets.basic.hitboxes[0].damage, 3);
+  assert.equal(w.presets.basic.hitboxes[1].damage, undefined);
+  const rt = v2ToV1Runtime(w);
+  assert.equal(rt.motionSet.attack.hitboxes[0].damage, 3);
+});
+
 test('effects sanitize: capped, followBone whitelisted, alpha 0..1', () => {
   const fx = sanitizeEffects([
     { time: 0.2, endTime: 0.4, assetId: 'custom:fx_abc', alpha: 5, followBone: 'weaponTip', flipX: true, flipY: true },
@@ -256,7 +349,15 @@ test('V2 weaponVisual keeps long custom image ids', () => {
   }));
   const w = clampWorkshopWeaponV2({
     schemaVersion: 2,
-    weaponVisual: { imageId: id, scale: 2, dual: true, offhand: { imageId: offhandId, scale: 2.5, anchors: offhandAnchors }, hats, selectedHat: 4 },
+    weaponVisual: {
+      imageId: id,
+      scale: 2,
+      dual: true,
+      offhand: { imageId: offhandId, scale: 2.5, anchors: offhandAnchors },
+      hats,
+      selectedHat: 4,
+      layerOrder: ['hat:0', 'player', 'weapon:left', 'hat:1', 'weapon:right', 'hat:2', 'hat:3', 'hat:4'],
+    },
     presets: { basic: makeEmptyPreset('basic') },
   });
   assert.equal(w.weaponVisual.imageId, id);
@@ -275,4 +376,5 @@ test('V2 weaponVisual keeps long custom image ids', () => {
   assert.equal(w.weaponVisual.hats[2].showHandles, false);
   assert.equal(w.weaponVisual.hats[4].keys[0].rotation, 34);
   assert.equal(w.weaponVisual.selectedHat, 4);
+  assert.deepEqual(w.weaponVisual.layerOrder, ['hat:0', 'player', 'weapon:left', 'hat:1', 'weapon:right', 'hat:2', 'hat:3', 'hat:4']);
 });

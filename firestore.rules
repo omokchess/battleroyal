@@ -93,6 +93,12 @@ service cloud.firestore {
         allow create: if isOwner(userId);
         allow update, delete: if false;
       }
+
+      match /private_workshop_weapons/{weaponId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId) && weaponImageWithinLimit(request.resource.data);
+        allow delete: if isOwner(userId);
+      }
     }
   }
 }

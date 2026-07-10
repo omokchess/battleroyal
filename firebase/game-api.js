@@ -455,6 +455,54 @@ export async function fetchMyWorkshopWeapons() {
   } catch (error) { console.error('[firebase] fetchMyWorkshopWeapons', error); return []; }
 }
 
+/** Save a private account copy of an authored weapon. This is NOT published to
+ *  the public workshop browser; it only lets the same account recover the weapon
+ *  on another device and lets equipped payloads carry their images. */
+export async function savePrivateWorkshopWeapon(def) {
+  const user = currentUser();
+  if (!firestore || !user) throw new Error('로그인 필요');
+  await ensureUserProfile(user);
+  const localId = String(def?.id || slugify(def?.name)).slice(0, 128) || 'weapon';
+  const ref = doc(firestore, 'profiles', user.uid, 'private_workshop_weapons', localId);
+  await setDoc(ref, {
+    owner_id: user.uid,
+    name: String(def?.name || '무기').slice(0, 24),
+    desc: String(def?.desc || '').slice(0, 80),
+    color: def?.color || null,
+    stats: cleanForFirestore(def?.stats) || {},
+    data: cleanForFirestore(def?.motionSet) || {},
+    blocks: cleanForFirestore(def?.blocks),
+    schemaVersion: def?.schemaVersion === 2 ? 2 : 1,
+    category: def?.category || null,
+    baseStats: cleanForFirestore(def?.baseStats),
+    presets: cleanForFirestore(def?.presets),
+    weaponVisual: cleanForFirestore(def?.weaponVisual),
+    weaponImage: cleanForFirestore(def?.weaponImage),
+    offhandImage: cleanForFirestore(def?.offhandImage),
+    hatImage: cleanForFirestore(def?.hatImage),
+    hatImages: cleanForFirestore(Array.isArray(def?.hatImages) ? def.hatImages.slice(0, 5) : []),
+    effectImages: cleanForFirestore(Array.isArray(def?.effectImages) ? def.effectImages.slice(0, 24) : []),
+    status: 'private',
+    updated_at: serverTimestamp(),
+    created_at: def?.created_at || serverTimestamp(),
+  }, { merge: true });
+  return localId;
+}
+
+export async function fetchPrivateWorkshopWeapons() {
+  const user = currentUser();
+  if (!firestore || !user) return [];
+  try {
+    const snap = await getDocs(collection(firestore, 'profiles', user.uid, 'private_workshop_weapons'));
+    return snap.docs.map(d => wsRow(d.id, {
+      ...d.data(),
+      author_id: user.uid,
+      author_name: '나',
+      status: 'private',
+    }));
+  } catch (error) { console.error('[firebase] fetchPrivateWorkshopWeapons', error); return []; }
+}
+
 /** Bump a counter field (likes / plays / reports) — any signed-in user. */
 async function bumpWorkshopCounter(id, field) {
   const user = currentUser();

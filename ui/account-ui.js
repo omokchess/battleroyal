@@ -34,6 +34,8 @@ import {
   publishWorkshopWeapon,
   fetchPublishedWorkshopWeapons,
   fetchMyWorkshopWeapons,
+  savePrivateWorkshopWeapon,
+  fetchPrivateWorkshopWeapons,
   likeWorkshopWeapon,
   reportWorkshopWeapon,
   setWorkshopWeaponStatus,
@@ -165,6 +167,8 @@ function clampFetched(w) {
 export function publishMyWorkshopWeapon(def) { return publishWorkshopWeapon(def, getUsername()); }
 export async function browseWorkshopWeapons(sort = 'likes', max = 40) { return (await fetchPublishedWorkshopWeapons(sort, max)).map(clampFetched); }
 export async function myWorkshopWeapons() { return (await fetchMyWorkshopWeapons()).map(clampFetched); }
+export async function saveMyPrivateWorkshopWeapon(def) { return savePrivateWorkshopWeapon(def); }
+export async function myPrivateWorkshopWeapons() { return (await fetchPrivateWorkshopWeapons()).map(clampFetched); }
 export function likeWorkshop(id) { return likeWorkshopWeapon(id); }
 export function reportWorkshop(id) { return reportWorkshopWeapon(id); }
 export function moderateWorkshop(id, status) { return setWorkshopWeaponStatus(id, status); }

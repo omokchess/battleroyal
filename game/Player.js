@@ -7,7 +7,7 @@ import { Weapons, getEffectiveWeapon, DashConfig } from './Weapons.js';
 import { STATUS } from './Status.js';
 import { PHYS } from './Level.js';
 import { Collision } from './Collision.js';
-import { clampWorkshopWeapon, sanitizeCombat, clampWorkshopHitboxes, sanitizeProjectile, sanitizeEffects } from './Workshop.js';
+import { clampWorkshopWeapon, sanitizeCombat, sanitizeCombatKeys, clampWorkshopHitboxes, sanitizeProjectile, sanitizeEffects } from './Workshop.js';
 import { BlockVM } from './BlockVM.js';
 import { BlockBudget, weaponBaseDps } from './BlockBudget.js';
 import { saveCustomWeaponRecord } from './WeaponImages.js';
@@ -208,7 +208,7 @@ export class Player {
         hat: hats[0] || null,
         hats,
         selectedHat: Math.max(0, Math.min(hats.length - 1, Math.floor(Number(def.weaponVisual.selectedHat) || 0))),
-        layerOrder: Array.isArray(def.weaponVisual.layerOrder) ? def.weaponVisual.layerOrder.map(x => String(x).slice(0, 16)).slice(0, 7) : null,
+        layerOrder: Array.isArray(def.weaponVisual.layerOrder) ? def.weaponVisual.layerOrder.map(x => String(x).slice(0, 16)).slice(0, 8) : null,
       };
     }
     if (def && def.weaponImage && def.weaponVisual?.imageId === def.weaponImage.id) {
@@ -291,6 +291,11 @@ export class Player {
       for (const k in def.presetCombat) pc[k] = sanitizeCombat(def.presetCombat[k]);
       safe.presetCombat = pc;
     }
+    if (def && def.presetCombatKeys && typeof def.presetCombatKeys === 'object') {
+      const pk = {};
+      for (const k in def.presetCombatKeys) pk[k] = sanitizeCombatKeys(def.presetCombatKeys[k], safe.presetCombat?.[k]);
+      safe.presetCombatKeys = pk;
+    }
     if (def && def.presetHitboxes && typeof def.presetHitboxes === 'object') {
       const ph = {};
       for (const k in def.presetHitboxes) ph[k] = clampWorkshopHitboxes(def.presetHitboxes[k]);
@@ -301,6 +306,14 @@ export class Player {
       for (const k in def.presetRanged) pr[k] = sanitizeProjectile(def.presetRanged[k]);
       safe.presetRanged = pr;
     }
+    if (def && def.presetNames && typeof def.presetNames === 'object') {
+      const pn = {};
+      for (const k in def.presetNames) {
+        const name = String(def.presetNames[k] || '').trim().replace(/\s+/g, ' ').slice(0, 24);
+        if (name) pn[k] = name;
+      }
+      if (Object.keys(pn).length) safe.presetNames = pn;
+    }
     if (def && Number.isFinite(Number(def.heavyAfter))) {
       safe.heavyAfter = Math.max(1, Math.min(5, Math.round(Number(def.heavyAfter))));
     }
@@ -309,6 +322,9 @@ export class Player {
         const rawMotion = def.motionSet[k];
         if (rawMotion && Array.isArray(rawMotion.effects)) {
           safe.motionSet[k].effects = sanitizeEffects(rawMotion.effects);
+        }
+        if (rawMotion && Array.isArray(rawMotion.combatKeys)) {
+          safe.motionSet[k].combatKeys = sanitizeCombatKeys(rawMotion.combatKeys, safe.stats);
         }
       }
     }
@@ -939,7 +955,8 @@ function serializeWorkshopCooldowns(cooldowns = {}) {
   return {
     skill: Math.max(0, Math.round((cooldowns.skill || 0) * 1000)),
     skill2: Math.max(0, Math.round((cooldowns.skill2 || 0) * 1000)),
-    skill3: Math.max(0, Math.round((cooldowns.skill3 || 0) * 1000))
+    skill3: Math.max(0, Math.round((cooldowns.skill3 || 0) * 1000)),
+    ultimate: Math.max(0, Math.round((cooldowns.ultimate || 0) * 1000))
   };
 }
 
@@ -947,6 +964,7 @@ function deserializeWorkshopCooldowns(cooldowns = {}) {
   return {
     skill: Math.max(0, (cooldowns.skill || 0) / 1000),
     skill2: Math.max(0, (cooldowns.skill2 || 0) / 1000),
-    skill3: Math.max(0, (cooldowns.skill3 || 0) / 1000)
+    skill3: Math.max(0, (cooldowns.skill3 || 0) / 1000),
+    ultimate: Math.max(0, (cooldowns.ultimate || 0) / 1000)
   };
 }

@@ -19,7 +19,7 @@
 import {
   clampWorkshopWeaponV2, toWorkshopWeaponV2, clampWorkshopWeapon,
   PRIMARY_PRESET_KEYS, COMBAT_PRESET_KINDS, NONCOMBAT_PRESET_KINDS,
-  sanitizeCombat, clampWorkshopHitboxes,
+  sanitizeCombat, sanitizeCombatKeys, clampWorkshopHitboxes,
 } from './Workshop.js';
 import { saveCustomWeaponRecord } from './WeaponImages.js';
 
@@ -174,20 +174,23 @@ export function v2ToV1Runtime(w) {
     previewOffset: p.previewOffset || null,
     flipXKeys: (p.weaponTimeline && p.weaponTimeline.flipXKeys) || [],
     flipYKeys: (p.weaponTimeline && p.weaponTimeline.flipYKeys) || [],
+    leftFlipXKeys: (p.weaponTimeline && p.weaponTimeline.leftFlipXKeys) || [],
+    leftFlipYKeys: (p.weaponTimeline && p.weaponTimeline.leftFlipYKeys) || [],
     handSwapKeys: (p.weaponTimeline && p.weaponTimeline.handSwapKeys) || [],
     effects: p.effects || [],
     projectileEvents: p.projectileEvents || [],
     teleportEvents: p.teleportEvents || [],
+    combatKeys: p.combatKeys || [],
   });
   const withFlip = (p) => withTimelineEvents(p);
   if (basic) motionSet.attack = { ...withTimelineEvents(basic), hitboxes: basic.hitboxes || [] };
   if (w.presets.dash) motionSet.dash = withFlip(w.presets.dash);
   for (const k of NONCOMBAT_PRESET_KINDS) if (w.presets[k]) motionSet[k] = withFlip(w.presets[k]);
   // Combat skill preset motions → the runtime slots the animator plays via synced
-  // stick_motion triggers (skill1=F->'skill', skill2=E->'skill2', skill3=R->'skill3').
+  // stick_motion triggers (skill1=F->'skill', skill2=E->'skill2', skill3=R->'skill3', ultimate=Y).
   // Each also keeps its OWN hitboxes (like heavy) so the actual ability can fire,
   // not just the cosmetic pose.
-  const SKILL_MOTION_SLOT = { skill1: 'skill', skill2: 'skill2', skill3: 'skill3' };
+  const SKILL_MOTION_SLOT = { skill1: 'skill', skill2: 'skill2', skill3: 'skill3', ultimate: 'ultimate' };
   for (const k of Object.keys(SKILL_MOTION_SLOT)) {
     if (!w.presets[k]) continue;
     const sp = w.presets[k];
@@ -203,6 +206,18 @@ export function v2ToV1Runtime(w) {
     airborneHeight: c.airborneHeight,
   };
   const rt = clampWorkshopWeapon({ name: w.name, color: w.color, stats, motionSet, blocks: basic ? basic.blocks : null });
+  for (const key of Object.keys(motionSet)) {
+    if (!Array.isArray(motionSet[key]?.combatKeys) || !motionSet[key].combatKeys.length) continue;
+    rt.motionSet = rt.motionSet || {};
+    rt.motionSet[key] = rt.motionSet[key] || {};
+    rt.motionSet[key].combatKeys = sanitizeCombatKeys(motionSet[key].combatKeys, key === 'attack' ? stats : null);
+  }
+  // V1's legacy clamp only knows skill/skill2/skill3. Preserve the new Y
+  // ultimate slot after clamping so the animator can play the authored motion.
+  if (motionSet.ultimate) {
+    rt.motionSet = rt.motionSet || {};
+    rt.motionSet.ultimate = motionSet.ultimate;
+  }
   // Carry the (small, id-only) custom weapon image for the in-game renderer.
   if (w.weaponVisual && (w.weaponVisual.imageId || w.weaponVisual.dual || w.weaponVisual.hat || (Array.isArray(w.weaponVisual.hats) && w.weaponVisual.hats.length) || Array.isArray(w.weaponVisual.layerOrder))) {
     const hats = Array.isArray(w.weaponVisual.hats) ? w.weaponVisual.hats.slice(0, 5) : (w.weaponVisual.hat ? [w.weaponVisual.hat] : []);
@@ -217,31 +232,37 @@ export function v2ToV1Runtime(w) {
       hat: w.weaponVisual.hat || hats[0] || null,
       hats,
       selectedHat: w.weaponVisual.selectedHat || 0,
-      layerOrder: Array.isArray(w.weaponVisual.layerOrder) ? w.weaponVisual.layerOrder.slice(0, 7) : null,
+      layerOrder: Array.isArray(w.weaponVisual.layerOrder) ? w.weaponVisual.layerOrder.slice(0, 8) : null,
     };
   }
   // The primary (basic) preset's ranged/projectile config drives the basic attack.
   if (basic && basic.ranged && basic.projectile) { rt.ranged = true; rt.projectile = basic.projectile; }
-  // Heavy (3rd-hit finisher) + skill1/2/3 each carry their OWN combat stats
+  // Heavy (3rd-hit finisher) + skill1/2/3/ultimate each carry their OWN combat stats
   // (damage/cooldown/knockback/status) + hitboxes/ranged-projectile so the game
   // can actually EXECUTE the authored ability, not just play its motion.
   // clampWorkshopWeapon (V1) only knows the legacy shape, so re-clamp + attach
   // these after it (mirrors ranged/weaponVisual above).
   const presetCombat = {};
+  const presetCombatKeys = {};
   const presetHitboxes = {};
   const presetRanged = {};
+  const presetNames = {};
   const abilitySlots = { heavy: 'heavy', ...SKILL_MOTION_SLOT };
   for (const presetKey of Object.keys(abilitySlots)) {
     const sp = w.presets[presetKey];
     if (!sp || !sp.combat) continue;
     const slot = abilitySlots[presetKey];
     presetCombat[slot] = sanitizeCombat(sp.combat);              // re-clamp defensively
+    presetCombatKeys[slot] = sanitizeCombatKeys(sp.combatKeys, sp.combat);
     presetHitboxes[slot] = clampWorkshopHitboxes(sp.hitboxes);   // re-clamp defensively
+    presetNames[slot] = String(sp.displayName || sp.label || '').slice(0, 24);
     if (sp.ranged && sp.projectile) presetRanged[slot] = sp.projectile;
   }
   if (Object.keys(presetCombat).length) rt.presetCombat = presetCombat;
+  if (Object.values(presetCombatKeys).some(v => Array.isArray(v) && v.length)) rt.presetCombatKeys = presetCombatKeys;
   if (Object.keys(presetHitboxes).length) rt.presetHitboxes = presetHitboxes;
   if (Object.keys(presetRanged).length) rt.presetRanged = presetRanged;
+  if (Object.keys(presetNames).length) rt.presetNames = presetNames;
   if (w.presets.heavy) rt.heavyAfter = Math.max(1, Math.min(5, Math.round(Number(w.presets.heavy.comboAfter) || 3)));
   rt.id = w.id || rt.id || null;
   return rt;

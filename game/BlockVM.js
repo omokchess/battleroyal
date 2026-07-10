@@ -66,7 +66,7 @@ const VALUE_OPS = new Set([
 export const ENTITY_EVENTS = new Set(['onSpawn', 'onEntityTick', 'onEntityHit', 'onWallHit', 'onExpire']);
 const STATUS_TYPES = new Set(['bleed', 'burn', 'slow', 'stun']);
 // The fixed motion-tag vocabulary (모션 재생 block) — must match Workshop's motionSet slots.
-const MOTION_TAG_KEYS = new Set(['attack', 'run', 'idle', 'jump', 'dash', 'skill', 'hurt', 'kill']);
+const MOTION_TAG_KEYS = new Set(['attack', 'run', 'idle', 'jump', 'dash', 'skill', 'hurt']);
 
 const clampNum = (v, lo, hi) => (Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : lo);
 

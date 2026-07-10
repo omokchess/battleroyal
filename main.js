@@ -20,7 +20,7 @@ import { MotionEditor, loadStoredMotionSets, equippedMotionSetId, equippedWorksh
 import { loadWorkshopWeaponsV2, saveWorkshopWeaponLocal, equipWorkshopWeaponLocal, equippedWorkshopWeaponId, unequipWorkshopWeapon, deleteWorkshopWeaponLocal, importWorkshopWeapon, v2ToV1Runtime } from './game/WorkshopStore.js';
 import { PRESET_LABELS, PRIMARY_PRESET_KEYS, COMBAT_PRESET_KINDS, makeEmptyWeaponV2, toWorkshopWeaponV2 } from './game/Workshop.js';
 import { equippedStickLook } from './game/StickLook.js';
-import { resolveWeaponImage, getCustomWeaponRecord } from './game/WeaponImages.js';
+import { resolveWeaponImage, getCustomWeaponRecord, shrinkDataUrlToBudget, WEAPON_IMAGE_BUDGET } from './game/WeaponImages.js';
 import { DEFAULT_KEYBINDS, formatKeyCode, normalizeKeybinds } from './game/Input.js';
 
 // Dom Elements
@@ -1072,6 +1072,9 @@ function hideError() {
  * Segmented option groups: clicking a button selects it within its group.
  */
 let roomCustomMode = 'host';
+function activeRoomConfigRoot() {
+  return document.querySelector('[data-room-config-root="active"]') || roomCustomModal;
+}
 function openRoomCustom(mode = 'host') {
   if (!roomCustomModal) return;
   // The modal is declared inside the legacy lobby panel, which can be hidden
@@ -1117,10 +1120,10 @@ if (roomCustomModal) roomCustomModal.addEventListener('click', (e) => {
 
 /** Read the currently selected room settings out of the modal. */
 function readRoomConfig() {
+  const root = activeRoomConfigRoot();
   const pick = (group, fallback) => {
-    const el = roomCustomModal
-      ? roomCustomModal.querySelector(`[data-config-group="${group}"] .cfg-opt.selected`)
-      : null;
+    const el = root?.querySelector(`[data-config-group="${group}"] .cfg-opt.selected`)
+      || root?.querySelector(`.create-pill.on[data-g="${group}"]`);
     return el ? el.dataset.value : fallback;
   };
   return normalizeRoomConfig({
@@ -1132,22 +1135,32 @@ function readRoomConfig() {
     healing: pick('healing', 'off') === 'on',
     healingRate: pick('healingRate', 'normal'),
     biome: pick('biome', 'day'),
-    water: pick('water', 'off') === 'on',
+    water: false,
     allowWorkshop: true,
   });
 }
 
 function readBotCount() {
-  const raw = roomCustomModal?.querySelector('[data-config-group="botCount"] .cfg-opt.selected')?.dataset.value;
+  const root = activeRoomConfigRoot();
+  const raw = root?.querySelector('[data-config-group="botCount"] .cfg-opt.selected')?.dataset.value
+    || root?.querySelector('.create-pill.on[data-g="botCount"]')?.dataset.value;
   const n = Number(raw);
   return Number.isFinite(n) ? Math.max(0, Math.min(8, Math.round(n))) : 3;
+}
+
+function readBotDifficulty() {
+  const root = activeRoomConfigRoot();
+  const raw = root?.querySelector('[data-config-group="botDifficulty"] .cfg-opt.selected')?.dataset.value
+    || root?.querySelector('.create-pill.on[data-g="botDifficulty"]')?.dataset.value
+    || 'normal';
+  return ['easy', 'normal', 'hard'].includes(raw) ? raw : 'normal';
 }
 
 // The local player's full appearance: equipped costume colors + the cosmetic
 // loadout (weapon skin / kill fx / dash trail / respawn fx / title). Passed to
 // Game and into JOIN_ROOM so everyone renders it.
-function localAppearance() {
-  const workshopWeapon = equippedWorkshopWeapon();
+function attachLocalWorkshopImagePayload(workshopWeapon) {
+  if (!workshopWeapon) return workshopWeapon;
   const imageId = workshopWeapon?.weaponVisual?.imageId;
   const weaponImage = getCustomWeaponRecord(imageId);
   if (workshopWeapon && weaponImage) workshopWeapon.weaponImage = weaponImage;
@@ -1166,8 +1179,44 @@ function localAppearance() {
       if (fx?.assetId && String(fx.assetId).startsWith('custom:fx_')) effectIds.add(fx.assetId);
     }
   }
+  for (const preset of Object.values(workshopWeapon?.presets || {})) {
+    for (const fx of (Array.isArray(preset?.effects) ? preset.effects : [])) {
+      if (fx?.assetId && String(fx.assetId).startsWith('custom:fx_')) effectIds.add(fx.assetId);
+    }
+  }
   const effectImages = [...effectIds].map(id => getCustomWeaponRecord(id)).filter(Boolean);
   if (workshopWeapon && effectImages.length) workshopWeapon.effectImages = effectImages;
+  return workshopWeapon;
+}
+
+async function workshopWeaponAccountPayload(raw) {
+  const payload = attachLocalWorkshopImagePayload(JSON.parse(JSON.stringify(raw || {})));
+  const shrinkField = async (field, budget) => {
+    if (!payload?.[field]?.src) return;
+    const src = await shrinkDataUrlToBudget(payload[field].src, budget);
+    payload[field] = { ...payload[field], src };
+  };
+  await shrinkField('weaponImage', WEAPON_IMAGE_BUDGET);
+  await shrinkField('offhandImage', WEAPON_IMAGE_BUDGET);
+  await shrinkField('hatImage', Math.floor(WEAPON_IMAGE_BUDGET / 5));
+  if (Array.isArray(payload.hatImages)) {
+    payload.hatImages = await Promise.all(payload.hatImages.slice(0, 5).map(async img => img?.src
+      ? { ...img, src: await shrinkDataUrlToBudget(img.src, Math.floor(WEAPON_IMAGE_BUDGET / 5)) }
+      : img));
+  }
+  if (Array.isArray(payload.effectImages)) {
+    payload.effectImages = await Promise.all(payload.effectImages.slice(0, 24).map(async img => img?.src
+      ? { ...img, src: await shrinkDataUrlToBudget(img.src, Math.floor(WEAPON_IMAGE_BUDGET / 5)) }
+      : img));
+  }
+  return payload;
+}
+
+// The local player's full appearance: equipped costume colors + the cosmetic
+// loadout (weapon skin / kill fx / dash trail / respawn fx / title). Passed to
+// Game and into JOIN_ROOM so everyone renders it.
+function localAppearance() {
+  const workshopWeapon = attachLocalWorkshopImagePayload(equippedWorkshopWeapon());
   return Object.assign({}, accountUI.getEquippedCostume() || {}, {
     cosmetics: accountUI.getEquippedCosmetics(),
     motionSetId: equippedMotionSetId(),   // equipped custom stickman motion (cosmetic, id only)
@@ -1316,6 +1365,7 @@ async function doBotMatch() {
     allowWorkshop: true   // practice/bot match → let players try their workshop weapons
   });
   const botCount = readBotCount();
+  const botDifficulty = readBotDifficulty();
   const botWorkshopWeapons = await loadBotWorkshopWeapons();
   if (!botWorkshopWeapons.length) {
     if (btn) { btn.disabled = false; btn.innerHTML = '▶ 바로 플레이 <span class="text-[#d6ffe2] normal-case font-bold">(봇전 · 즉시 시작)</span>'; }
@@ -1330,7 +1380,7 @@ async function doBotMatch() {
     if (startBtn) { startBtn.disabled = false; startBtn.textContent = '봇전 시작'; }
     enterGameScreen(true);
     activeGame = new Game(gameCanvas, netManager, localAppearance(), {
-      botMatch: true, botCount, botDifficulty: 'normal', botWorkshopWeapons, roomConfig: demoConfig,
+      botMatch: true, botCount, botDifficulty, botWorkshopWeapons, roomConfig: demoConfig,
       matchDurationMs: 120000, killTarget: 12,
       holdAtStart: true, // frozen behind the controls card; 시작하기 → 3·2·1 (P2)
       onMatchOver: (results) => showMatchResult(results)
@@ -1350,7 +1400,10 @@ async function doBotMatch() {
 }
 
 const quickPlayBtn = document.getElementById('quickPlayBtn');
-if (quickPlayBtn) quickPlayBtn.addEventListener('click', () => openRoomCustom('quickplay'));
+if (quickPlayBtn) quickPlayBtn.addEventListener('click', () => {
+  if (typeof window.openLobbyModule === 'function') window.openLobbyModule('quickplay');
+  else openRoomCustom('quickplay');
+});
 if (quickStartBtn) quickStartBtn.addEventListener('click', doBotMatch);
 
 // --- Stickman motion sets ------------------------------------------------------
@@ -1371,9 +1424,14 @@ function ensureMotionEditor() {
     return accountUI.publishMyWorkshopWeapon(def);
   };
   // Keep the workshop grid + armory in sync after a local save.
-  motionEditor.onWorkshopSaved = () => {
+  motionEditor.onWorkshopSaved = (weapon) => {
     if (_wsGridEl && !_wsGridEl.classList.contains('hidden')) renderWorkshopGrid();
     document.querySelector('#armoryBody')?._armoryRefresh?.();
+    if (weapon && accountUI.saveMyPrivateWorkshopWeapon) {
+      workshopWeaponAccountPayload(weapon)
+        .then(payload => accountUI.saveMyPrivateWorkshopWeapon(payload))
+        .catch(err => console.warn('[workshop] private account save failed', err));
+    }
   };
   return motionEditor;
 }
@@ -1489,7 +1547,7 @@ function showNewWeaponModal() {
         <label class="block text-[10px] text-gray-300 mb-1">첫 프리셋</label>
         <select id="wsnPreset" class="w-full bg-[#14100b] border border-gray-600 text-white text-xs px-2 py-1.5 mb-4">
           <option value="basic">평타</option><option value="heavy">강공격</option><option value="dash">대시</option>
-          <option value="skill1">스킬 1</option><option value="skill2">스킬 2</option><option value="skill3">스킬 3</option>
+          <option value="skill1">스킬 1</option><option value="skill2">스킬 2</option><option value="skill3">스킬 3</option><option value="ultimate">궁극기</option>
         </select>
         <div class="flex gap-2">
           <button id="wsnCreate" class="flex-1 bg-gradient-to-r from-[#3aa856] to-[#1c6b33] border-2 border-[#7df09a] text-white text-xs px-4 py-2 uppercase font-extrabold cursor-pointer active:scale-95">만들기</button>
@@ -1889,7 +1947,7 @@ function buildWeaponSwitchPanel() {
     if (!btn || !activeGame) return;
     if (btn.dataset.ws) {
       const w = loadWorkshopWeaponsV2().find(x => x.id === btn.dataset.ws);
-      if (w) activeGame.requestWeaponChange(`ws:${w.id}`, v2ToV1Runtime(w), w.name);
+      if (w) activeGame.requestWeaponChange(`ws:${w.id}`, attachLocalWorkshopImagePayload(v2ToV1Runtime(w)), w.name);
     } else {
       activeGame.requestWeaponChange(btn.dataset.weapon);
     }
@@ -2204,7 +2262,7 @@ function setupLobbyHub() {
     const fromLeft = LEFT_MODULES.has(mod);   // 무기고/방 제작/랭킹 enter from the left
     // Quick play (offline bot match) + weapon workshop reuse their existing
     // (hidden legacy-layout) buttons' handlers — the hub card forwards the click.
-    if (mod === 'quickplay') { openRoomCustom('quickplay'); emitLobbyTutorialEvent('module:quickplay'); return; }
+    if (mod === 'quickplay') { openShellModule('바로 플레이', 'QUICK PLAY', (body) => buildCreateInto(body, 'quickplay'), false); emitLobbyTutorialEvent('module:quickplay'); return; }
     if (mod === 'workshop') { document.getElementById('workshopBtn')?.click(); emitLobbyTutorialEvent('module:workshop'); return; }  // user weapon workshop (all users)
     if (mod === 'shop') { openShellMove('워크샵', 'WORKSHOP', 'shopModal', 'shopBtn', 'shopBody', fromLeft); emitLobbyTutorialEvent('module:shop'); return; }
     if (mod === 'rank') { openShellMove('랭킹', 'RANK', 'leaderboardModal', 'rankBtn', 'leaderboardBody', fromLeft); emitLobbyTutorialEvent('module:rank'); return; }
@@ -2262,58 +2320,67 @@ function markWsLiked(id) {
 const LOBBY_TUTORIAL_STEPS = [
   {
     title: '워크샵에서 첫 무기 얻기',
-    text: '워크샵은 다른 플레이어가 업로드한 공개 창작 무기를 둘러보고 내 무기고에 추가하는 공간입니다. 첫 무기는 무료이고, 그 이후 워크샵 무기는 100화폐가 필요합니다. 여기에서 받은 무기는 무기고와 전투에서 사용할 수 있습니다.',
+    text: '워크샵은 다른 플레이어가 업로드한 공개 창작 무기를 둘러보는 공간입니다.\n\n여기에서 무기를 추가하면 내 무기고에 들어가고, 전투에서 사용할 수 있습니다.\n\n첫 무기는 무료이고, 그 이후 워크샵 무기는 100화폐가 필요합니다.',
     target: '[data-module="shop"]',
     advanceOn: 'module:shop',
   },
   {
     title: '무기 하나 추가하기',
-    text: '무기 목록의 ＋ 추가 버튼은 해당 창작 무기를 내 계정의 무기고로 가져오는 기능입니다. 추가가 끝나야 장착과 전투 사용이 가능하며, 실제 저장이 확인되면 다음 안내로 넘어갑니다.',
+    text: '＋ 추가 버튼은 해당 창작 무기를 내 계정의 무기고로 가져오는 기능입니다.\n\n추가가 끝나야 장착과 전투 사용이 가능합니다.\n\n실제 저장이 확인되면 다음 안내로 넘어갑니다.',
     target: '#shopBody [data-act="add"]',
     auto: 'workshopWeaponAdded',
     waitForTarget: true,
   },
   {
     title: '로비로 돌아가기',
-    text: '무기를 하나 얻었다면, 왼쪽 위의 화살표로 게시판으로 돌아가세요.',
+    text: '무기를 하나 얻었다면 왼쪽 위의 화살표로 게시판으로 돌아가세요.',
     target: '#moduleBackBtn',
     advanceOn: 'hub',
+    progress: false,
   },
   {
     title: '랭킹 확인',
-    text: '랭킹은 누적 처치 순위와 내 전적을 확인하는 메뉴입니다. 전투 결과가 얼마나 쌓였는지 보고, 현재 계정의 진행 상황을 확인할 때 사용합니다.',
+    text: '랭킹은 누적 처치 순위와 내 전적을 확인하는 메뉴입니다.\n\n전투 결과가 얼마나 쌓였는지 보고, 현재 계정의 진행 상황을 확인할 때 사용합니다.',
     target: '[data-module="rank"]',
     advanceOn: 'module:rank',
+  },
+  {
+    title: '랭킹 목록',
+    text: '랭킹 목록에는 플레이어별 누적 기록이 표시됩니다.\n\n전투를 많이 하거나 처치 수가 높은 플레이어일수록 위쪽에 보입니다.\n\n목록 아무 곳이나 눌러 다음으로 넘어갑니다.',
+    target: '#leaderboardBody',
+    advanceOn: 'targetClick',
+    waitForTarget: true,
   },
   {
     title: '로비로 돌아가기',
     text: '랭킹 화면을 확인했다면 다시 게시판으로 돌아갑니다.',
     target: '#moduleBackBtn',
     advanceOn: 'hub',
+    progress: false,
   },
   {
     title: '설정 확인',
-    text: '설정은 계정, 그래픽, 음향, 조작, 키 설정을 한 곳에서 바꾸는 메뉴입니다. 모바일 조작이 불편하거나 PC 키가 맞지 않으면 전투 전에 여기에서 먼저 조정합니다.',
+    text: '설정은 계정, 그래픽, 음향, 조작, 키 설정을 한 곳에서 바꾸는 메뉴입니다.\n\n모바일 조작이 불편하거나 PC 키가 맞지 않으면 전투 전에 여기에서 먼저 조정합니다.',
     target: '[data-module="options"]',
     advanceOn: 'module:options',
   },
   {
     title: '계정과 그래픽 설정',
-    text: '이 블록은 닉네임과 구글 연동 같은 계정 기능, 그리고 성능 모드와 전투 가시성 옵션을 관리합니다. 적 공격 미리보기와 히트박스 표시는 판정 확인에 좋고, 이펙트 최소화는 화면이 복잡하거나 기기가 느릴 때 사용합니다. 블록 아무 곳이나 누르면 다음으로 넘어갑니다.',
+    text: '닉네임과 구글 연동 같은 계정 기능을 관리합니다.\n\n성능 모드, 적 공격 미리보기, 이펙트 최소화, 히트박스 표시 같은 전투 가시성 옵션도 여기 있습니다.\n\n이 블록 아무 곳이나 누르면 다음으로 넘어갑니다.',
     target: '[data-tutorial="options-account-graphics"]',
     advanceOn: 'targetClick',
     waitForTarget: true,
   },
   {
     title: '음향 설정',
-    text: '이 블록은 전체 음소거와 볼륨을 조절합니다. 전체 음소거는 모든 효과음을 즉시 끄고, 볼륨은 전투음과 UI 소리의 크기를 조절합니다. 블록 아무 곳이나 누르면 다음으로 넘어갑니다.',
+    text: '전체 음소거와 볼륨을 조절합니다.\n\n전체 음소거는 모든 효과음을 즉시 끄고, 볼륨은 전투음과 UI 소리의 크기를 조절합니다.\n\n이 블록 아무 곳이나 누르면 다음으로 넘어갑니다.',
     target: '[data-tutorial="options-sound"]',
     advanceOn: 'targetClick',
     waitForTarget: true,
   },
   {
     title: '조작과 키 설정',
-    text: '이 블록은 모바일 조이스틱, 자동 조준 보조, 자동 공격 보조, 키 설정을 바꿉니다. 키 설정 버튼을 누르면 점프, 대시, 스킬, 궁극기 키를 직접 지정할 수 있고, 모바일 보조 옵션은 터치 조작 난이도를 낮추는 용도입니다. 블록 아무 곳이나 누르면 다음으로 넘어갑니다.',
+    text: '모바일 조이스틱, 자동 조준 보조, 자동 공격 보조, 키 설정을 바꿉니다.\n\n키 설정 버튼을 누르면 점프, 대시, 스킬, 궁극기 키를 직접 지정할 수 있습니다.\n\n이 블록 아무 곳이나 누르면 다음으로 넘어갑니다.',
     target: '[data-tutorial="options-controls"]',
     advanceOn: 'targetClick',
     waitForTarget: true,
@@ -2323,70 +2390,132 @@ const LOBBY_TUTORIAL_STEPS = [
     text: '설정에서 키설정과 모바일 옵션을 확인했다면 다시 게시판으로 돌아갑니다.',
     target: '#moduleBackBtn',
     advanceOn: 'hub',
+    progress: false,
   },
   {
     title: '바로 플레이 확인',
-    text: '바로 플레이는 방을 만들거나 대기하지 않고 AI와 즉시 전투를 시작하는 봇전 진입 메뉴입니다. 전투 감각, 조작, 새로 받은 무기의 동작을 빠르게 확인할 때 사용합니다.',
+    text: '바로 플레이는 방을 만들거나 대기하지 않고 AI와 즉시 전투를 시작하는 봇전 진입 메뉴입니다.\n\n전투 감각, 조작, 새로 받은 무기의 동작을 빠르게 확인할 때 사용합니다.',
     target: '[data-module="quickplay"]',
     advanceOn: 'module:quickplay',
   },
   {
-    title: '바로 플레이 커스텀',
-    text: '바로 플레이에서도 AI 수, 플랫폼 존재 여부와 밀도, 플랫폼 모양, 엄폐물, 지형 같은 경기 조건을 조절할 수 있습니다. 실제 시작 전 설정만 확인하고 닫기 버튼으로 로비로 돌아갑니다.',
-    target: '#roomCustomClose',
-    advanceOn: 'roomCustomClosed',
+    title: '바로 플레이 규칙',
+    text: '바로 플레이는 방 제작과 같은 설정 UI를 사용합니다.\n\nAI 수와 AI 난이도는 바로 플레이에서만 쓰는 전용 설정입니다.\n\n플랫폼, 지형, 엄폐물, 회복 아이템도 봇전에 맞게 조절할 수 있습니다.',
+    target: '[data-tutorial="quickplay-rules"]',
+    advanceOn: 'targetClick',
     waitForTarget: true,
   },
   {
+    title: '봇전 요약과 시작',
+    text: '오른쪽 블록은 현재 봇전 설정을 요약하고 시작 버튼을 제공합니다.\n\n방 코드나 대기 없이 바로 전투에 들어갑니다.\n\n지금은 설정 확인만 하고 게시판으로 돌아갑니다.',
+    target: '[data-tutorial="quickplay-summary"]',
+    advanceOn: 'targetClick',
+    waitForTarget: true,
+  },
+  {
+    title: '바로 플레이에서 돌아가기',
+    text: '바로 플레이 설정을 확인했습니다.\n\n게시판으로 돌아가기 버튼을 눌러 로비로 돌아갑니다.',
+    target: '#createQuickBack',
+    advanceOn: 'hub',
+    waitForTarget: true,
+    progress: false,
+  },
+  {
     title: '무기고 확인',
-    text: '무기고는 워크샵에서 추가한 무기와 직접 만든 무기를 확인하고 장착하는 곳입니다. 전투에 들어갈 때 어떤 무기를 들고 시작할지 정하는 핵심 메뉴이며, 무기가 하나도 없으면 무기 공방이나 워크샵으로 이동해야 합니다.',
+    text: '무기고는 워크샵에서 추가한 무기와 직접 만든 무기를 확인하고 장착하는 곳입니다.\n\n전투에 들어갈 때 어떤 무기를 들고 시작할지 정하는 핵심 메뉴입니다.',
     target: '[data-module="armory"]',
     advanceOn: 'module:armory',
+  },
+  {
+    title: '무기 목록',
+    text: '왼쪽 목록에는 보유한 공방 무기들이 표시됩니다.\n\n근접, 원거리, 특수 필터로 원하는 무기 종류를 좁혀 볼 수 있습니다.\n\n이 블록을 눌러 다음으로 넘어갑니다.',
+    target: '[data-tutorial="armory-list"]',
+    advanceOn: 'targetClick',
+    waitForTarget: true,
+  },
+  {
+    title: '무기 상세',
+    text: '오른쪽 상세 블록에는 선택한 무기의 이미지, 설명, 프리셋, 장착 버튼이 표시됩니다.\n\n여기에서 실제 전투에 들고 갈 무기를 장착합니다.\n\n이 블록을 눌러 다음으로 넘어갑니다.',
+    target: '[data-tutorial="armory-detail"]',
+    advanceOn: 'targetClick',
+    waitForTarget: true,
   },
   {
     title: '로비로 돌아가기',
     text: '무기고 목록과 장착 위치를 확인했다면 다시 게시판으로 돌아갑니다.',
     target: '#moduleBackBtn',
     advanceOn: 'hub',
+    progress: false,
   },
   {
     title: '결투장 입장',
-    text: '결투장 입장은 다른 플레이어가 만든 방을 탐색하고 참가하는 메뉴입니다. 방 목록에서 상태와 설정을 확인하고, 방 코드가 있다면 직접 입력해서 들어갈 수도 있습니다.',
+    text: '결투장 입장은 다른 플레이어가 만든 방을 탐색하고 참가하는 메뉴입니다.\n\n방 목록에서 상태와 설정을 확인하고, 방 코드가 있다면 직접 입력해서 들어갈 수도 있습니다.',
     target: '[data-module="arena"]',
     advanceOn: 'module:arena',
+  },
+  {
+    title: '방 목록과 코드 입장',
+    text: '왼쪽 블록은 방 코드 입력, 새로고침, 열린 방 목록을 담당합니다.\n\n친구에게 받은 방 코드가 있으면 직접 입력하고, 공개 방은 목록에서 선택합니다.\n\n이 블록을 눌러 다음으로 넘어갑니다.',
+    target: '[data-tutorial="arena-list"]',
+    advanceOn: 'targetClick',
+    waitForTarget: true,
+  },
+  {
+    title: '방 상세 정보',
+    text: '오른쪽 블록은 선택한 방의 설정과 입장 버튼을 보여줍니다.\n\n플랫폼, 엄폐물, 지형, 회복 여부를 확인한 뒤 입장할 수 있습니다.\n\n이 블록을 눌러 다음으로 넘어갑니다.',
+    target: '[data-tutorial="arena-detail"]',
+    advanceOn: 'targetClick',
+    waitForTarget: true,
   },
   {
     title: '로비로 돌아가기',
     text: '결투장 입장 화면을 확인했다면 다시 게시판으로 돌아갑니다.',
     target: '#moduleBackBtn',
     advanceOn: 'hub',
+    progress: false,
   },
   {
     title: '방 제작',
-    text: '방 제작은 내가 호스트가 되어 경기장을 여는 메뉴입니다. 플랫폼 존재 여부, 플랫폼 밀도와 모양, 엄폐물, 지형, 회복 아이템 같은 경기 규칙을 직접 정하고 방을 만들 수 있습니다.',
+    text: '방 제작은 내가 호스트가 되어 경기장을 여는 메뉴입니다.\n\n플랫폼, 엄폐물, 지형, 회복 아이템 같은 경기 규칙을 직접 정하고 방을 만들 수 있습니다.',
     target: '[data-module="create"]',
     advanceOn: 'module:create',
+  },
+  {
+    title: '경기 규칙 블록',
+    text: '왼쪽 블록은 플랫폼, 플랫폼 모양, 지형, 엄폐물, 회복 아이템을 설정합니다.\n\n방을 만들기 전에 경기의 구조와 난이도를 정하는 곳입니다.\n\n이 블록을 눌러 다음으로 넘어갑니다.',
+    target: '[data-tutorial="create-rules"]',
+    advanceOn: 'targetClick',
+    waitForTarget: true,
+  },
+  {
+    title: '개설 요약 블록',
+    text: '오른쪽 블록은 현재 설정 요약, 방 코드, 방 개설 버튼을 보여줍니다.\n\n설정을 확인한 뒤 실제 방을 만들거나 더미방으로 연습할 수 있습니다.\n\n이 블록을 눌러 다음으로 넘어갑니다.',
+    target: '[data-tutorial="create-summary"]',
+    advanceOn: 'targetClick',
+    waitForTarget: true,
   },
   {
     title: '로비로 돌아가기',
     text: '방 제작을 확인했다면 게시판 버튼으로 다시 로비 메뉴로 돌아옵니다.',
     target: '#moduleBackBtn',
     advanceOn: 'hub',
+    progress: false,
   },
   {
     title: '무기 공방으로 이동',
-    text: '무기 공방은 직접 창작 무기를 만드는 편집기입니다. 프레임별 모션, 히트박스, 투사체, 텔레포트, 이펙트, 장식, 예산 스탯을 조정해서 나만의 무기를 만들고 저장하거나 업로드할 수 있습니다.',
+    text: '무기 공방은 직접 창작 무기를 만드는 편집기입니다.\n\n프레임별 모션, 히트박스, 투사체, 텔레포트, 이펙트, 장식, 예산 스탯을 조정해서 나만의 무기를 만들 수 있습니다.',
     target: '[data-module="workshop"]',
     advanceOn: 'module:workshop',
   },
   {
     title: '공방 튜토리얼 보기',
-    text: '무기 공방 화면의 튜토리얼 보기 버튼을 누르면 제작 편집기 안에서 프리셋, 관절점, 프레임, 판정, 이펙트, 저장 과정을 순서대로 배웁니다. 휴대폰에서는 세밀한 제작이 어려우니 PC 또는 태블릿을 권장합니다.',
+    text: '무기 공방 화면의 튜토리얼 보기 버튼을 누르면 제작 편집기 안에서 순서대로 배웁니다.\n\n프리셋, 관절점, 프레임, 판정, 이펙트, 저장 과정을 직접 따라갑니다.\n\n휴대폰에서는 세밀한 제작이 어려우니 PC 또는 태블릿을 권장합니다.',
     target: '#wsGridTutorialBtn',
     advanceOn: 'workshopTutorialStarted',
   },
 ];
 let lobbyTutorialState = null;
+let lobbyTutorialSpotlightToken = 0;
 
 function ensureLobbyTutorialStyles() {
   if (document.getElementById('lobbyTutorialStyles')) return;
@@ -2394,12 +2523,15 @@ function ensureLobbyTutorialStyles() {
   st.id = 'lobbyTutorialStyles';
   st.textContent = `
     #lobbyTutorialScrim{position:fixed;inset:0;z-index:94;pointer-events:none}
-    #lobbyTutorialScrim .tut-block{position:fixed;background:rgba(0,0,0,.72);pointer-events:auto;transition:left .22s ease,top .22s ease,width .22s ease,height .22s ease,opacity .18s ease}
-    #lobbyTutorialScrim .tut-ring{position:fixed;z-index:1;pointer-events:none;box-sizing:border-box;border:4px solid #ffd24a;border-radius:10px;box-shadow:0 0 24px rgba(255,210,74,.82),inset 0 0 0 1px rgba(255,210,74,.45);transition:left .22s ease,top .22s ease,width .22s ease,height .22s ease,opacity .14s ease;opacity:0}
-    #lobbyTutorialCard{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:98;width:min(660px,calc(100vw - 24px));background:#1a1410;border:2px solid #ffd24a;border-radius:8px;padding:14px 16px;box-shadow:0 10px 30px rgba(0,0,0,.7);font-family:monospace;transition:left .24s ease,top .24s ease,bottom .18s ease,transform .24s ease,opacity .18s ease}
+    #lobbyTutorialScrim .tut-block{position:fixed;background:rgba(0,0,0,.72);pointer-events:auto;transition:left .22s ease,top .22s ease,width .22s ease,height .22s ease,opacity .12s ease}
+    #lobbyTutorialScrim .tut-ring{position:fixed;z-index:1;pointer-events:none;box-sizing:border-box;border:4px solid #ffd24a;border-radius:10px;box-shadow:0 0 24px rgba(255,210,74,.82),inset 0 0 0 1px rgba(255,210,74,.45);transition:left .22s ease,top .22s ease,width .22s ease,height .22s ease,opacity .16s ease;opacity:0}
+    #lobbyTutorialCard{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:98;width:min(660px,calc(100vw - 24px));background:#1a1410;border:2px solid #ffd24a;border-radius:8px;padding:14px 16px;box-shadow:0 10px 30px rgba(0,0,0,.7);font-family:monospace;transition:left .22s ease,top .22s ease,bottom .18s ease,transform .22s ease,opacity .16s ease;opacity:0}
+    .lobby-tutorial-active :where(#hubModules.reveal > button,.med-list-item){animation:none!important;opacity:1!important;transform:none!important}
     .lobby-tut-hi{position:relative !important;z-index:97 !important;border-radius:8px}
     .tut-title{color:#ffd24a;font-size:13px;font-weight:800}
     .tut-text{color:#efe7d8;font-size:12px;line-height:1.62}
+    .tut-line{margin:0 0 7px 0}
+    .tut-line:last-child{margin-bottom:0}
     .tut-em{color:#ffe36a;background:rgba(255,210,74,.14);border:1px solid rgba(255,210,74,.28);border-radius:4px;padding:0 3px;font-weight:800}
     .tut-anim{animation:tutTextIn .24s ease both}
     @keyframes tutTextIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
@@ -2420,7 +2552,13 @@ function formatLobbyTutorialText(text) {
     '자동 조준 보조', '자동 공격 보조', '키 설정',
   ];
   const pattern = new RegExp(`(${terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')}|\\d+화폐)`, 'g');
-  return escapeHtml(text).replace(pattern, '<strong class="tut-em">$1</strong>');
+  return escapeHtml(text)
+    .replace(pattern, '<strong class="tut-em">$1</strong>')
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => `<p class="tut-line">${line}</p>`)
+    .join('');
 }
 
 function lobbyTutorialScrimParts() {
@@ -2450,8 +2588,10 @@ function setLobbyTutorialSpotlight(target) {
   if (!scrim) return;
   const { blocks, ring } = lobbyTutorialScrimParts();
   if (blocks.length !== 4) return;
+  const viewportW = window.innerWidth || document.documentElement.clientWidth || 0;
+  const viewportH = window.innerHeight || document.documentElement.clientHeight || 0;
   if (!target) {
-    Object.assign(blocks[0].style, { left: '0px', top: '0px', width: '100vw', height: '100vh' });
+    Object.assign(blocks[0].style, { left: '0px', top: '0px', width: `${viewportW}px`, height: `${viewportH}px` });
     for (let i = 1; i < 4; i++) Object.assign(blocks[i].style, { left: '0px', top: '0px', width: '0px', height: '0px' });
     if (ring) ring.style.opacity = '0';
     positionLobbyTutorialCard(null);
@@ -2465,17 +2605,43 @@ function setLobbyTutorialSpotlight(target) {
   const pad = 12;
   const left = Math.max(0, rect.left - pad);
   const top = Math.max(0, rect.top - pad);
-  const right = Math.min(window.innerWidth, rect.right + pad);
-  const bottom = Math.min(window.innerHeight, rect.bottom + pad);
+  const right = Math.min(viewportW, rect.right + pad);
+  const bottom = Math.min(viewportH, rect.bottom + pad);
   const holeW = Math.max(0, right - left);
   const holeH = Math.max(0, bottom - top);
-  Object.assign(blocks[0].style, { left: '0px', top: '0px', width: '100vw', height: `${top}px` });
-  Object.assign(blocks[1].style, { left: '0px', top: `${bottom}px`, width: '100vw', height: `${Math.max(0, window.innerHeight - bottom)}px` });
+  Object.assign(blocks[0].style, { left: '0px', top: '0px', width: `${viewportW}px`, height: `${top}px` });
+  Object.assign(blocks[1].style, { left: '0px', top: `${bottom}px`, width: `${viewportW}px`, height: `${Math.max(0, viewportH - bottom)}px` });
   Object.assign(blocks[2].style, { left: '0px', top: `${top}px`, width: `${left}px`, height: `${holeH}px` });
-  Object.assign(blocks[3].style, { left: `${right}px`, top: `${top}px`, width: `${Math.max(0, window.innerWidth - right)}px`, height: `${holeH}px` });
-  if (!holeW || !holeH) Object.assign(blocks[0].style, { left: '0px', top: '0px', width: '100vw', height: '100vh' });
+  Object.assign(blocks[3].style, { left: `${right}px`, top: `${top}px`, width: `${Math.max(0, viewportW - right)}px`, height: `${holeH}px` });
+  if (!holeW || !holeH) Object.assign(blocks[0].style, { left: '0px', top: '0px', width: `${viewportW}px`, height: `${viewportH}px` });
   if (ring) Object.assign(ring.style, { left: `${left}px`, top: `${top}px`, width: `${holeW}px`, height: `${holeH}px`, opacity: holeW && holeH ? '1' : '0' });
   positionLobbyTutorialCard({ left, top, right, bottom });
+  const card = document.getElementById('lobbyTutorialCard');
+  if (card) {
+    card.dataset.tutorialPlaced = '1';
+    requestAnimationFrame(() => { card.style.opacity = '1'; });
+  }
+}
+
+function prepareLobbyTutorialPendingOverlay() {
+  const scrim = document.getElementById('lobbyTutorialScrim');
+  if (!scrim) return;
+  const { blocks, ring } = lobbyTutorialScrimParts();
+  if (blocks.length !== 4) return;
+  const card = document.getElementById('lobbyTutorialCard');
+  const hasPlacedCard = card?.dataset.tutorialPlaced === '1';
+  const hasVisibleRing = ring && ring.style.opacity === '1';
+  if (hasPlacedCard || hasVisibleRing) return;
+  const viewportW = window.innerWidth || document.documentElement.clientWidth || 0;
+  const viewportH = window.innerHeight || document.documentElement.clientHeight || 0;
+  Object.assign(blocks[0].style, { left: '0px', top: '0px', width: `${viewportW}px`, height: `${viewportH}px` });
+  for (let i = 1; i < 4; i++) Object.assign(blocks[i].style, { left: '0px', top: '0px', width: '0px', height: '0px' });
+  if (ring) ring.style.opacity = '0';
+  if (card) card.style.opacity = '0';
+}
+
+function lobbyTutorialHost() {
+  return document.body;
 }
 
 function lobbyTutorialTargetRect(target) {
@@ -2509,13 +2675,16 @@ function positionLobbyTutorialCard(rect) {
   const gap = 16;
   const margin = 12;
   const cr = card.getBoundingClientRect();
-  const width = Math.min(cr.width || 560, window.innerWidth - margin * 2);
+  const viewportW = window.innerWidth || document.documentElement.clientWidth || 0;
+  const viewportTop = 0;
+  const viewportBottom = window.innerHeight || document.documentElement.clientHeight || 0;
+  const width = Math.min(cr.width || 560, viewportW - margin * 2);
   const height = cr.height || 120;
   let x = (rect.left + rect.right) / 2 - width / 2;
-  x = Math.max(margin, Math.min(window.innerWidth - width - margin, x));
+  x = Math.max(margin, Math.min(viewportW - width - margin, x));
   let y = rect.bottom + gap;
-  if (y + height > window.innerHeight - margin) y = rect.top - height - gap;
-  if (y < margin) y = Math.max(margin, window.innerHeight - height - margin);
+  if (y + height > viewportBottom - margin) y = rect.top - height - gap;
+  if (y < viewportTop + margin) y = Math.max(viewportTop + margin, viewportBottom - height - margin);
   Object.assign(card.style, { left: `${x}px`, top: `${y}px`, bottom: 'auto', transform: 'none' });
 }
 
@@ -2546,18 +2715,53 @@ function scrollLobbyTutorialTargetY(target) {
 
 function scheduleLobbyTutorialSpotlight(target, step) {
   const stepIndex = lobbyTutorialState?.step;
+  const token = ++lobbyTutorialSpotlightToken;
+  let lastRect = null;
+  let stableFrames = 0;
+  const startedAt = performance.now();
+  prepareLobbyTutorialPendingOverlay();
   const sync = () => {
-    if (!lobbyTutorialState || lobbyTutorialState.step !== stepIndex) return;
+    if (!lobbyTutorialState || lobbyTutorialState.step !== stepIndex || token !== lobbyTutorialSpotlightToken) return;
     document.querySelectorAll('.lobby-tut-hi').forEach((n) => n.classList.remove('lobby-tut-hi'));
     const activeStep = LOBBY_TUTORIAL_STEPS[lobbyTutorialState.step];
     if (step && activeStep !== step) return;
     const current = step?.target ? document.querySelector(step.target) : null;
     scrollLobbyTutorialTargetY(current || target);
     current?.classList.add('lobby-tut-hi');
-    setLobbyTutorialSpotlight(current || target || null);
+    const focus = current || target || null;
+    const rect = focus ? lobbyTutorialTargetRect(focus) : null;
+    const stable = rect && lastRect
+      && Math.abs(rect.left - lastRect.left) < 1
+      && Math.abs(rect.top - lastRect.top) < 1
+      && Math.abs(rect.right - lastRect.right) < 1
+      && Math.abs(rect.bottom - lastRect.bottom) < 1;
+    stableFrames = stable ? stableFrames + 1 : 0;
+    lastRect = rect;
+    const elapsed = performance.now() - startedAt;
+    if (!focus || (elapsed >= 48 && stableFrames >= 2) || elapsed > 620) {
+      setLobbyTutorialSpotlight(focus);
+      keepLobbyTutorialXStable();
+      return;
+    }
     keepLobbyTutorialXStable();
+    requestAnimationFrame(sync);
   };
-  [120, 320, 560, 860].forEach((delay) => setTimeout(sync, delay));
+  requestAnimationFrame(() => requestAnimationFrame(sync));
+}
+
+function lobbyTutorialProgressInfo(stepIndex) {
+  const visibleSteps = LOBBY_TUTORIAL_STEPS
+    .map((step, index) => ({ step, index }))
+    .filter(({ step }) => step.progress !== false);
+  const currentVisible = visibleSteps.findIndex(({ index }) => index === stepIndex);
+  const current = currentVisible >= 0
+    ? currentVisible
+    : visibleSteps.filter(({ index }) => index < stepIndex).length - 1;
+  return {
+    current: Math.max(0, current),
+    total: visibleSteps.length,
+    visibleSteps,
+  };
 }
 
 function handleLobbyTutorialEvent(ev) {
@@ -2567,12 +2771,18 @@ function handleLobbyTutorialEvent(ev) {
   const expected = step?.auto || step?.advanceOn;
   if (!expected || expected !== kind) return;
   lobbyTutorialState.step++;
+  if (lobbyTutorialState.step >= LOBBY_TUTORIAL_STEPS.length) {
+    finishLobbyTutorial(true);
+    return;
+  }
   setTimeout(renderLobbyTutorial, 180);
 }
 
 function finishLobbyTutorial(markSeen = true) {
   window.removeEventListener('pixelroyale:lobby-tutorial-event', handleLobbyTutorialEvent);
   lobbyTutorialState = null;
+  lobbyTutorialSpotlightToken++;
+  document.body.classList.remove('lobby-tutorial-active');
   document.getElementById('lobbyTutorialCard')?.remove();
   document.getElementById('lobbyTutorialScrim')?.remove();
   document.querySelectorAll('.lobby-tut-hi').forEach((n) => n.classList.remove('lobby-tut-hi'));
@@ -2591,24 +2801,37 @@ function renderLobbyTutorial() {
   if (!scrim) {
     scrim = document.createElement('div');
     scrim.id = 'lobbyTutorialScrim';
-    document.body.appendChild(scrim);
+    lobbyTutorialHost().appendChild(scrim);
+  } else if (scrim.parentElement !== lobbyTutorialHost()) {
+    lobbyTutorialHost().appendChild(scrim);
   }
   let card = document.getElementById('lobbyTutorialCard');
   if (!card) {
     card = document.createElement('div');
     card.id = 'lobbyTutorialCard';
-    document.body.appendChild(card);
+    lobbyTutorialHost().appendChild(card);
+  } else if (card.parentElement !== lobbyTutorialHost()) {
+    lobbyTutorialHost().appendChild(card);
   }
-  const dots = LOBBY_TUTORIAL_STEPS.map((_, i) => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;background:${i < lobbyTutorialState.step ? '#7df09a' : i === lobbyTutorialState.step ? '#ffd24a' : '#4b4237'}"></span>`).join('');
+  const progress = lobbyTutorialProgressInfo(lobbyTutorialState.step);
+  const dots = progress.visibleSteps.map(({ index }, i) => {
+    const color = index < lobbyTutorialState.step ? '#7df09a' : i === progress.current ? '#ffd24a' : '#4b4237';
+    return `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;background:${color}"></span>`;
+  }).join('');
+  const isWorkshopTutorialPrompt = step.advanceOn === 'workshopTutorialStarted';
+  const skipLabel = isWorkshopTutorialPrompt ? '무기 공방 튜토리얼 보지 않기' : '건너뛰기';
+  const skipClass = isWorkshopTutorialPrompt
+    ? 'flex-1 bg-[#2a0f12] hover:bg-[#4a151b] border border-[#ff5a5a] text-[#ffd6d6] text-[11px] px-3 py-2 cursor-pointer active:scale-95 transition-colors'
+    : 'flex-1 bg-[#14100b] border border-[#6b6156] text-[#8a8175] text-[11px] px-3 py-2 cursor-pointer active:scale-95';
   card.innerHTML = `
     <div class="flex items-center gap-2 mb-1 tut-anim">
       <span>${dots}</span>
       <b class="tut-title">${escapeHtml(step.title)}</b>
-      <span class="ml-auto text-[10px] text-[#8a8175]">${lobbyTutorialState.step + 1} / ${LOBBY_TUTORIAL_STEPS.length}</span>
+      <span class="ml-auto text-[10px] text-[#8a8175]">${progress.current + 1} / ${progress.total}</span>
     </div>
     <div class="tut-text tut-anim">${formatLobbyTutorialText(step.text)}</div>
     <div class="flex gap-2 mt-2">
-      <button id="lobbyTutSkip" class="flex-1 bg-[#14100b] border border-[#6b6156] text-[#8a8175] text-[11px] px-3 py-2 cursor-pointer active:scale-95">건너뛰기</button>
+      <button id="lobbyTutSkip" class="${skipClass}"><span class="tut-anim">${skipLabel}</span></button>
     </div>`;
   card.querySelector('#lobbyTutSkip')?.addEventListener('click', () => finishLobbyTutorial(true));
 
@@ -2622,11 +2845,15 @@ function renderLobbyTutorial() {
     scrollLobbyTutorialTargetY(target);
     scheduleLobbyTutorialSpotlight(target, step);
   } else {
-    setLobbyTutorialSpotlight(null);
     if (step.waitForTarget) {
+      prepareLobbyTutorialPendingOverlay();
+      const card = document.getElementById('lobbyTutorialCard');
+      if (card && card.dataset.tutorialPlaced !== '1') card.style.opacity = '0';
       setTimeout(() => {
         if (lobbyTutorialState && LOBBY_TUTORIAL_STEPS[lobbyTutorialState.step] === step) renderLobbyTutorial();
       }, 320);
+    } else {
+      setLobbyTutorialSpotlight(null);
     }
   }
 }
@@ -2640,6 +2867,7 @@ function startLobbyTutorial({ force = false } = {}) {
     showToast('휴대폰에서는 무기 공방 제작이 어렵습니다. 제작은 PC 또는 태블릿을 권장합니다.');
   }
   window.showLobbyHub?.();
+  document.body.classList.add('lobby-tutorial-active');
   lobbyTutorialState = { step: 0 };
   window.removeEventListener('pixelroyale:lobby-tutorial-event', handleLobbyTutorialEvent);
   window.addEventListener('pixelroyale:lobby-tutorial-event', handleLobbyTutorialEvent);
@@ -2775,7 +3003,7 @@ function buildArmoryInto(body) {
   body.innerHTML = `
     <div id="armoryBase">
       <div class="armory-grid">
-        <div class="med-parch relative p-3">
+        <div class="med-parch relative p-3" data-tutorial="armory-list">
           <div class="armory-filter" id="armoryFilter">
             <button class="on" data-cat="전체">전체</button><button data-cat="근접">근접</button>
             <button data-cat="원거리">원거리</button><button data-cat="특수">특수</button>
@@ -2783,7 +3011,7 @@ function buildArmoryInto(body) {
           <div class="armory-chips" id="armoryChips"></div>
           <div class="font-mono text-[10px] med-muted mt-2 text-center" id="armoryCount"></div>
         </div>
-        <div class="med-parch med-parch--hi med-ticks relative p-4" id="armoryDetail"></div>
+        <div class="med-parch med-parch--hi med-ticks relative p-4" id="armoryDetail" data-tutorial="armory-detail"></div>
       </div>
     </div>`;
 
@@ -3268,14 +3496,35 @@ function buildOptionsInto(body) {
 /* ===== [03] CREATE module — parchment room-setup form ===== */
 /* Drives the existing roomCustomModal cfg-opt groups (the source of truth that
    readRoomConfig reads) + hostBtn/dummyBtn, so room creation is untouched. */
-function buildCreateInto(body) {
+function buildCreateInto(body, mode = 'host') {
+  const isQuickplay = mode === 'quickplay';
+  document.querySelectorAll('[data-room-config-root="active"]').forEach(el => { delete el.dataset.roomConfigRoot; });
+  body.dataset.roomConfigRoot = 'active';
   const modal = document.getElementById('roomCustomModal');
   const groupEl = (g) => modal?.querySelector(`[data-config-group="${g}"]`);
-  const opts = (g) => [...(groupEl(g)?.querySelectorAll('.cfg-opt') || [])].map(b => ({ label: b.textContent.trim(), value: b.dataset.value, on: b.classList.contains('selected') }));
+  const manualOpts = {
+    botDifficulty: [
+      { label: '쉬움', value: 'easy', on: false },
+      { label: '보통', value: 'normal', on: true },
+      { label: '어려움', value: 'hard', on: false },
+    ],
+  };
+  const state = {};
+  const opts = (g) => {
+    const base = groupEl(g)
+      ? [...(groupEl(g)?.querySelectorAll('.cfg-opt') || [])].map(b => ({ label: b.textContent.trim(), value: b.dataset.value, on: b.classList.contains('selected') }))
+      : (manualOpts[g] || []);
+    return base.map((o, i) => ({ ...o, on: state[g] ? o.value === state[g] : (o.on || (!base.some(x => x.on) && i === 0)) }));
+  };
   const selectedOf = (g) => opts(g).find(o => o.on) || opts(g)[0];
-  const pickHidden = (g, value) => { [...(groupEl(g)?.querySelectorAll('.cfg-opt') || [])].find(b => b.dataset.value === value)?.click(); };
-  const GROUPS = [['platforms', '플랫폼'], ['platformShape', '플랫폼 모양'], ['biome', '지형'], ['cover', '엄폐물'], ['water', '물 (특수 장애물)'], ['healing', '회복 아이템']];
-  const ONOFF = new Set(['water', 'healing']);   // rendered as sliding switches
+  const pickHidden = (g, value) => {
+    state[g] = value;
+    [...(groupEl(g)?.querySelectorAll('.cfg-opt') || [])].find(b => b.dataset.value === value)?.click();
+  };
+  const GROUPS = isQuickplay
+    ? [['botCount', 'AI 수'], ['botDifficulty', 'AI 난이도'], ['platforms', '플랫폼'], ['platformShape', '플랫폼 모양'], ['biome', '지형'], ['cover', '엄폐물'], ['healing', '회복 아이템']]
+    : [['platforms', '플랫폼'], ['platformShape', '플랫폼 모양'], ['biome', '지형'], ['cover', '엄폐물'], ['healing', '회복 아이템']];
+  const ONOFF = new Set(['healing']);
   const healingOn = () => selectedOf('healing')?.value === 'on';
   const PLATFORM_COUNT = { none: 0, few: 2, some: 4, many: 6 };
   const PLATFORM_DESC = { none: '발판 없음', few: '발판 2개', some: '발판 4개', many: '발판 6개' };
@@ -3298,10 +3547,10 @@ function buildCreateInto(body) {
 
   body.innerHTML = `
     <div class="create-grid">
-      <div class="med-parch relative p-4">
+      <div class="med-parch relative p-4" data-tutorial="${isQuickplay ? 'quickplay-rules' : 'create-rules'}">
         ${GROUPS.map(([g, label]) => ONOFF.has(g)
           ? `<div class="mb-3.5 flex items-center justify-between" data-switch-group="${g}">
-               <span class="med-muted text-[12px]">${label}${g === 'water' ? ` <button type="button" class="cfg-help-btn" data-help="water" aria-label="물 설명">?</button>` : ''}</span>${switchMarkup(g)}
+               <span class="med-muted text-[12px]">${label}</span>${switchMarkup(g)}
              </div>`
           : `<div class="mb-3.5">
                <div class="med-muted text-[12px] mb-1.5">${label}</div>
@@ -3314,14 +3563,18 @@ function buildCreateInto(body) {
         </div>
       </div>
 
-      <div class="med-parch relative p-4 flex flex-col">
-        <div class="opt-head">개설 요약</div>
+      <div class="med-parch relative p-4 flex flex-col" data-tutorial="${isQuickplay ? 'quickplay-summary' : 'create-summary'}">
+        <div class="opt-head">${isQuickplay ? '봇전 요약' : '개설 요약'}</div>
         <div id="createSummary" class="space-y-1.5 mb-3"></div>
         <div style="height:1px;background:var(--med-gold-dk);opacity:.5;margin:6px 0 12px"></div>
-        <div class="med-muted text-[11px] mb-1.5">방 코드</div>
-        <input id="createCode" class="opt-input mb-3" maxlength="10" placeholder="3글자 이상" value="${(document.getElementById('hostRoomInput')?.value || '').replace(/"/g, '&quot;')}" />
-        <button id="createHost" class="med-btn med-btn--blood font-mono text-sm py-2.5 mb-2">방 개설</button>
-        <button id="createDummy" class="med-btn font-mono text-[12px] py-2" style="color:#7a3326;border-color:var(--med-blood)">더미방으로 연습</button>
+        ${isQuickplay
+          ? `<div class="med-muted text-[11px] leading-snug mb-3">방 코드와 대기 없이 즉시 봇전을 시작합니다. AI 수와 난이도는 바로 플레이 전용 설정입니다.</div>
+             <button id="createQuickStart" class="med-btn med-btn--blood font-mono text-sm py-2.5 mb-2">봇전 시작</button>
+             <button id="createQuickBack" class="med-btn font-mono text-[12px] py-2">게시판으로 돌아가기</button>`
+          : `<div class="med-muted text-[11px] mb-1.5">방 코드</div>
+             <input id="createCode" class="opt-input mb-3" maxlength="10" placeholder="3글자 이상" value="${(document.getElementById('hostRoomInput')?.value || '').replace(/"/g, '&quot;')}" />
+             <button id="createHost" class="med-btn med-btn--blood font-mono text-sm py-2.5 mb-2">방 개설</button>
+             <button id="createDummy" class="med-btn font-mono text-[12px] py-2" style="color:#7a3326;border-color:var(--med-blood)">더미방으로 연습</button>`}
       </div>
     </div>`;
 
@@ -3368,11 +3621,13 @@ function buildCreateInto(body) {
 
   const summaryEl = body.querySelector('#createSummary');
   function renderSummary() {
-    const rows = [['플랫폼', selectedOf('platforms')?.label], ['플랫폼 모양', selectedOf('platformShape')?.label],
+    const rows = [
+      ...(isQuickplay ? [['AI 수', selectedOf('botCount')?.label], ['AI 난이도', selectedOf('botDifficulty')?.label]] : []),
+      ['플랫폼', selectedOf('platforms')?.label], ['플랫폼 모양', selectedOf('platformShape')?.label],
       ['지형', selectedOf('biome')?.label],
       ['엄폐물', selectedOf('cover')?.label],
-      ['물', selectedOf('water')?.label],
-      ['회복', healingOn() ? `${selectedOf('healing')?.label}·${selectedOf('healingRate')?.label || '보통'}` : selectedOf('healing')?.label]];
+      ['회복', healingOn() ? `${selectedOf('healing')?.label}·${selectedOf('healingRate')?.label || '보통'}` : selectedOf('healing')?.label]
+    ];
     summaryEl.innerHTML = rows.map(([k, v]) => `<div class="flex justify-between text-[12px]"><span class="med-muted">${k}</span><span style="color:var(--med-ink)">${v || '-'}</span></div>`).join('');
   }
   // Move a segment's indicator over its selected pill. `instant` skips the
@@ -3406,33 +3661,7 @@ function buildCreateInto(body) {
     renderSummary();
   }
 
-  // Water explainer popup (the "?" beside the 물 toggle). A small dismissible
-  // overlay — click the backdrop, the ✕, or press Esc to close.
-  function showWaterHelp() {
-    document.getElementById('waterHelpPop')?.remove();
-    const pop = document.createElement('div');
-    pop.id = 'waterHelpPop';
-    pop.className = 'cfg-help-pop';
-    pop.innerHTML = `
-      <div class="cfg-help-card med-parch">
-        <div class="cfg-help-head">
-          <span>물 (특수 장애물)</span>
-          <button type="button" class="cfg-help-x" aria-label="닫기">&times;</button>
-        </div>
-        <p>호수가 맵 곳곳에 생깁니다. <b>플레이어는 물에 들어갈 수 없어</b> 길을 돌아가야 합니다.</p>
-        <p><b>총알·근접 공격은 물 위로 그대로 지나가므로</b>, 물을 사이에 두고 안전하게 견제할 수 있습니다.</p>
-        <p><b>눈 지형</b>에서는 물이 얼어붙어, 그 위를 자유롭게 걸어다닐 수 있습니다.</p>
-      </div>`;
-    const close = () => { pop.remove(); document.removeEventListener('keydown', onKey); };
-    const onKey = (ev) => { if (ev.key === 'Escape') close(); };
-    pop.addEventListener('click', (ev) => { if (ev.target === pop || ev.target.closest('.cfg-help-x')) close(); });
-    document.addEventListener('keydown', onKey);
-    document.body.appendChild(pop);
-  }
-
   body.addEventListener('click', (e) => {
-    const help = e.target.closest('.cfg-help-btn');
-    if (help) { if (help.dataset.help === 'water') showWaterHelp(); return; }
     const pill = e.target.closest('.create-pill');
     if (pill) { pickHidden(pill.dataset.g, pill.dataset.v); syncControls(false); return; }
     const sw = e.target.closest('.med-switch');
@@ -3451,6 +3680,8 @@ function buildCreateInto(body) {
   body.querySelector('#createCode')?.addEventListener('input', mirrorCode);
   body.querySelector('#createHost')?.addEventListener('click', () => { mirrorCode(); document.getElementById('hostBtn')?.click(); });
   body.querySelector('#createDummy')?.addEventListener('click', () => { mirrorCode(); document.getElementById('dummyBtn')?.click(); });
+  body.querySelector('#createQuickStart')?.addEventListener('click', () => document.getElementById('quickStartBtn')?.click());
+  body.querySelector('#createQuickBack')?.addEventListener('click', () => window.showLobbyHub?.());
   renderSummary();
 }
 
@@ -3464,7 +3695,7 @@ function buildArenaInto(body) {
   if (window.__clearArenaTimer) window.__clearArenaTimer();
   body.innerHTML = `
     <div class="arena-grid">
-      <div class="med-parch relative p-3">
+      <div class="med-parch relative p-3" data-tutorial="arena-list">
         <div class="flex gap-1.5 mb-2.5">
           <input id="arenaCode" class="opt-input flex-1" maxlength="10" placeholder="방 코드 입장" style="text-transform:uppercase" />
           <button id="arenaJoinCode" class="med-btn font-mono text-[11px] px-3">입장</button>
@@ -3474,7 +3705,7 @@ function buildArenaInto(body) {
           ${'<div class="med-skeleton" style="height:62px;margin-bottom:6px"></div>'.repeat(3)}
         </div>
       </div>
-      <div id="arenaDetail" class="med-parch med-parch--hi med-ticks relative p-4"></div>
+      <div id="arenaDetail" class="med-parch med-parch--hi med-ticks relative p-4" data-tutorial="arena-detail"></div>
     </div>`;
 
   const listEl = body.querySelector('#arenaList');
@@ -3516,7 +3747,6 @@ function buildArenaInto(body) {
     const rows = [['플랫폼', PLATFORM_KO[c.platforms] || c.platforms], ['플랫폼 모양', PLATFORM_SHAPE_KO[c.platformShape] || c.platformShape],
       ['지형', BIOME_KO[c.biome] || c.biome || '낮'],
       ['엄폐물', COVER_KO[c.cover] || c.cover],
-      ['물', c.water ? '켜짐' : '꺼짐'],
       ['회복', c.healing ? `켜짐 · ${RATE_KO[c.healingRate] || ''}` : '꺼짐']];
     detailEl.innerHTML = `
       <div class="flex justify-between items-start mb-1">
@@ -3607,6 +3837,25 @@ async function handleMatchEnd(stats) {
   }
 }
 
+async function syncPrivateWorkshopWeaponsFromAccount() {
+  if (!accountUI.myPrivateWorkshopWeapons) return;
+  try {
+    const items = await accountUI.myPrivateWorkshopWeapons();
+    let changed = false;
+    for (const item of items || []) {
+      const saved = importWorkshopWeapon(item);
+      if (saved) changed = true;
+    }
+    if (changed) {
+      if (_wsGridEl && !_wsGridEl.classList.contains('hidden')) renderWorkshopGrid();
+      document.querySelector('#armoryBody')?._armoryRefresh?.();
+      refreshWeaponCards();
+    }
+  } catch (e) {
+    console.warn('[workshop] private account sync failed', e);
+  }
+}
+
 // Run Setup on page launch
 // Touch devices (phones AND large tablets like the Galaxy Tab) must use the
 // mobile layout regardless of CSS width — pin it via a root class the stylesheet
@@ -3636,6 +3885,7 @@ accountUI.init({
       nicknameInput.value = profile.username || '';
     }
 
+    syncPrivateWorkshopWeaponsFromAccount();
     refreshWeaponCards();
     startLobbyBrowsing();
     setTimeout(() => startLobbyTutorial(), 500);

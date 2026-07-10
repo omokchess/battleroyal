@@ -62,7 +62,7 @@ const DEFS = {
   particle: { cat: 'act', op: 'particle', parts: ['파티클', s('id', 'sel', 'explosion', ['explosion', 'danger_pop'])] },
   sfx: { cat: 'act', op: 'sfx', parts: ['사운드', s('id', 'sel', 'shoot', ['shoot', 'hit', 'slash', 'slam', 'explosion'])] },
   shake: { cat: 'act', op: 'shake', parts: ['화면 흔들림', s('level', 'sel', 'weak', ['weak', 'strong'])] },
-  playMotion: { cat: 'act', op: 'playMotion', parts: ['모션 재생', s('tag', 'sel', 'skill', ['attack|공격', 'run|걷기', 'idle|대기', 'jump|점프', 'dash|대시', 'skill|스킬', 'hurt|피격', 'kill|처치'])] },
+  playMotion: { cat: 'act', op: 'playMotion', parts: ['모션 재생', s('tag', 'sel', 'skill', ['attack|공격', 'run|걷기', 'idle|대기', 'jump|점프', 'dash|대시', 'skill|스킬', 'hurt|피격'])] },
   // ── entity-scoped actions (scope 'entity') ──
   setVelocity: { cat: 'act', scope: 'entity', op: 'setVelocity', parts: ['속도 설정 각도', s('angle', 'num', 0), '속도', s('speed', 'num', 400)] },
   homing: { cat: 'act', scope: 'entity', op: 'homing', parts: ['유도 회전', s('turnDeg', 'num', 200), '°/s'] },

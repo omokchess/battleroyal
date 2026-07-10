@@ -560,7 +560,7 @@ export class Renderer {
     // Procedural stick-figure body. Authored workshop motions own the weapon arm
     // angle; aiming still drives combat direction, but no longer overrides the
     // visual weapon tilt that the player made in the motion editor.
-    const { pose, weaponFlip, weaponFlipY, handSwapped, rootOffset, phase } = this._stick.sample(p, now);
+    const { pose, weaponFlip, weaponFlipY, weaponRightFlip, weaponRightFlipY, weaponLeftFlip, weaponLeftFlipY, handSwapped, rootOffset, phase } = this._stick.sample(p, now);
     const rootAppliedToBody = (p.rootMotionMs > 0) || (p.motionRootUntil && now < p.motionRootUntil);
     const stickScr = {
       x: bodyScr.x + (rootAppliedToBody ? 0 : (rootOffset?.x || 0)) * z,
@@ -586,6 +586,10 @@ export class Renderer {
       weaponImageAnchors: wimg ? wimg.anchors : null,
       weaponFlip: !!weaponFlip,
       weaponFlipY: !!weaponFlipY,
+      weaponRightFlip: !!weaponRightFlip,
+      weaponRightFlipY: !!weaponRightFlipY,
+      weaponLeftFlip: !!weaponLeftFlip,
+      weaponLeftFlipY: !!weaponLeftFlipY,
       weaponDual: !!(wv && wv.dual),
       weaponHandSwapped: !!handSwapped,
       offhandWeapon: offhandId || p.weapon,
@@ -2725,7 +2729,9 @@ export class Renderer {
       ctx.shadowBlur = isMagicFx ? (this._glow * (minimized ? 4 : 14) * alpha) : 0;
       ctx.shadowColor = weapon.color;
 
-      if (e.type === 'melee_heavy_arc') {
+      if (e.type === 'skill_callout') {
+        this._drawSkillCallout(ctx, scr, e, alpha, zoom);
+      } else if (e.type === 'melee_heavy_arc') {
         this._drawHeavyCleave(ctx, scr, anchoredEffect, weapon, alpha);
       } else if (e.type === 'greatsword_charge') {
         this._drawGreatswordCharge(ctx, scr, anchoredEffect, weapon, alpha);
@@ -2815,6 +2821,31 @@ export class Renderer {
       }
     });
 
+    ctx.restore();
+  }
+
+  _drawSkillCallout(ctx, scr, e, alpha, zoom) {
+    const text = String(e.text || '스킬').trim().slice(0, 24);
+    if (!text) return;
+    const p = clamp01(e.progress || 0);
+    const y = scr.y - (48 + 18 * p) * zoom;
+    const x = scr.x + 30 * zoom;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.font = `${Math.max(10, 12 * zoom)}px "Galmuri11", monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const w = ctx.measureText(text).width + 12 * zoom;
+    const h = 18 * zoom;
+    ctx.fillStyle = 'rgba(12, 9, 6, 0.82)';
+    ctx.strokeStyle = '#ffd24a';
+    ctx.lineWidth = Math.max(1, zoom);
+    ctx.fillRect(x - w / 2, y - h / 2, w, h);
+    ctx.strokeRect(x - w / 2, y - h / 2, w, h);
+    ctx.fillStyle = '#ffe680';
+    ctx.shadowBlur = 4 * zoom;
+    ctx.shadowColor = '#ffd24a';
+    ctx.fillText(text, x, y + 0.5 * zoom);
     ctx.restore();
   }
 

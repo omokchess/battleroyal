@@ -11,6 +11,7 @@ import { clampWorkshopWeapon, sanitizeCombat, clampWorkshopHitboxes, sanitizePro
 import { BlockVM } from './BlockVM.js';
 import { BlockBudget, weaponBaseDps } from './BlockBudget.js';
 import { saveCustomWeaponRecord } from './WeaponImages.js';
+import { MOTION_LIMITS, sampleRootOffset } from './Motion.js';
 
 export class Player {
   constructor(id, nickname, weaponType, x = 0, y = 0, costume = null) {
@@ -45,7 +46,13 @@ export class Player {
 
     // Cool down tracker
     this.lastAttackTime = 0;
+    this.lastAttackMotionTag = 'attack';
     this.motionLockUntil = 0;
+    this.motionRootMotion = null;
+    this.motionRootStart = 0;
+    this.motionRootUntil = 0;
+    this.motionRootPrev = null;
+    this.motionRootStartedAirborne = false;
     this.swingDirection = -1;   // first triggerAttack flips this to +1 (downward first swing)
     this.gauntletPunchSide = -1;
     this.comboStep = 0;
@@ -110,6 +117,7 @@ export class Player {
     this.sniperTeleportTargetUntil = 0;
     this.altSkillCdLeft = 0;    // generic R skill cooldown (seconds)
     this.targetSkillCdLeft = 0; // generic LMB skill cooldown (seconds)
+    this.ultimateGauge = 0;     // 0..100, filled by landing workshop attacks/skills
     this.pendingWeapon = null; // queued weapon swap, applied on next respawn
     this.arrowStacks = 0;     // bow skill charges earned by landing arrows
     this.greatswordChargeStart = 0;
@@ -163,7 +171,25 @@ export class Player {
   _applyWorkshopWeapon(def) {
     const safe = clampWorkshopWeapon(def);
     // The V1 clamp drops weaponVisual; keep the small id-only visual for rendering.
-    if (def && def.weaponVisual && (def.weaponVisual.imageId || def.weaponVisual.dual)) {
+    if (def && def.weaponVisual && (def.weaponVisual.imageId || def.weaponVisual.dual || def.weaponVisual.hat || (Array.isArray(def.weaponVisual.hats) && def.weaponVisual.hats.length) || Array.isArray(def.weaponVisual.layerOrder))) {
+      const rawHats = Array.isArray(def.weaponVisual.hats) && def.weaponVisual.hats.length
+        ? def.weaponVisual.hats
+        : (def.weaponVisual.hat ? [def.weaponVisual.hat] : []);
+      const hats = rawHats.slice(0, 5).map(h => h && typeof h === 'object' ? {
+        imageId: h.imageId ? String(h.imageId).slice(0, 128) : null,
+        name: h.name ? String(h.name).slice(0, 24) : null,
+        scale: Number(h.scale) || 1,
+        offsetX: Number(h.offsetX) || 0,
+        offsetY: Number(h.offsetY) || -18,
+        alpha: Number.isFinite(h.alpha) ? h.alpha : 1,
+        rotation: Number.isFinite(Number(h.rotation)) ? Number(h.rotation) : 0,
+        anchorX: Number.isFinite(Number(h.anchorX)) ? Number(h.anchorX) : 0.5,
+        anchorY: Number.isFinite(Number(h.anchorY)) ? Number(h.anchorY) : 0.5,
+        anchors: h.anchors && typeof h.anchors === 'object' ? h.anchors : null,
+        layer: ['behindPlayer', 'overPlayer', 'overWeapon'].includes(h.layer) ? h.layer : 'overPlayer',
+        showHandles: h.showHandles !== false,
+        keys: Array.isArray(h.keys) ? h.keys.slice(0, 64).map(k => ({ ...k })) : [],
+      } : null).filter(Boolean);
       safe.weaponVisual = {
         imageId: def.weaponVisual.imageId ? String(def.weaponVisual.imageId).slice(0, 128) : null,
         scale: Number(def.weaponVisual.scale) || 1,
@@ -171,13 +197,18 @@ export class Player {
         offsetX: Number(def.weaponVisual.offsetX) || 0,
         offsetY: Number(def.weaponVisual.offsetY) || 0,
         dual: !!def.weaponVisual.dual,
-        hat: def.weaponVisual.hat && typeof def.weaponVisual.hat === 'object' ? {
-          imageId: def.weaponVisual.hat.imageId ? String(def.weaponVisual.hat.imageId).slice(0, 128) : null,
-          scale: Number(def.weaponVisual.hat.scale) || 1,
-          offsetX: Number(def.weaponVisual.hat.offsetX) || 0,
-          offsetY: Number(def.weaponVisual.hat.offsetY) || -18,
-          alpha: Number.isFinite(def.weaponVisual.hat.alpha) ? def.weaponVisual.hat.alpha : 1,
-        } : null
+        offhand: def.weaponVisual.offhand && typeof def.weaponVisual.offhand === 'object' ? {
+          imageId: def.weaponVisual.offhand.imageId ? String(def.weaponVisual.offhand.imageId).slice(0, 128) : null,
+          scale: Number(def.weaponVisual.offhand.scale) || 1,
+          rotationOffset: Number(def.weaponVisual.offhand.rotationOffset) || 0,
+          offsetX: Number(def.weaponVisual.offhand.offsetX) || 0,
+          offsetY: Number(def.weaponVisual.offhand.offsetY) || 0,
+          anchors: (def.weaponVisual.offhand.anchors && typeof def.weaponVisual.offhand.anchors === 'object') ? def.weaponVisual.offhand.anchors : null,
+        } : null,
+        hat: hats[0] || null,
+        hats,
+        selectedHat: Math.max(0, Math.min(hats.length - 1, Math.floor(Number(def.weaponVisual.selectedHat) || 0))),
+        layerOrder: Array.isArray(def.weaponVisual.layerOrder) ? def.weaponVisual.layerOrder.map(x => String(x).slice(0, 16)).slice(0, 7) : null,
       };
     }
     if (def && def.weaponImage && def.weaponVisual?.imageId === def.weaponImage.id) {
@@ -188,6 +219,17 @@ export class Player {
           src: def.weaponImage.src,
           size: Number(def.weaponImage.size) || 2,
           anchors: (def.weaponImage.anchors && typeof def.weaponImage.anchors === 'object') ? def.weaponImage.anchors : null,
+        };
+      }
+    }
+    if (def && def.offhandImage && safe.weaponVisual?.offhand?.imageId === def.offhandImage.id) {
+      if (saveCustomWeaponRecord(def.offhandImage)) {
+        safe.offhandImage = {
+          id: def.offhandImage.id,
+          name: String(def.offhandImage.name || '왼손 무기').slice(0, 40),
+          src: def.offhandImage.src,
+          size: Number(def.offhandImage.size) || 2,
+          anchors: (def.offhandImage.anchors && typeof def.offhandImage.anchors === 'object') ? def.offhandImage.anchors : null,
         };
       }
     }
@@ -202,9 +244,46 @@ export class Player {
         };
       }
     }
+    if (def && Array.isArray(def.hatImages) && safe.weaponVisual?.hats?.length) {
+      const allowed = new Set(safe.weaponVisual.hats.map(h => h.imageId).filter(Boolean));
+      safe.hatImages = [];
+      for (const img of def.hatImages.slice(0, 5)) {
+        if (!img || !allowed.has(img.id)) continue;
+        if (saveCustomWeaponRecord(img)) {
+          safe.hatImages.push({
+            id: img.id,
+            name: String(img.name || '모자').slice(0, 40),
+            src: img.src,
+            size: Number(img.size) || 1,
+            anchors: null,
+          });
+        }
+      }
+    }
+    if (def && Array.isArray(def.effectImages)) {
+      const allowed = new Set();
+      for (const motion of Object.values(safe.motionSet || {})) {
+        for (const fx of (Array.isArray(motion?.effects) ? motion.effects : [])) {
+          if (fx?.assetId && String(fx.assetId).startsWith('custom:fx_')) allowed.add(fx.assetId);
+        }
+      }
+      safe.effectImages = [];
+      for (const img of def.effectImages.slice(0, 24)) {
+        if (!img || !allowed.has(img.id)) continue;
+        if (saveCustomWeaponRecord(img)) {
+          safe.effectImages.push({
+            id: img.id,
+            name: String(img.name || '이펙트').slice(0, 40),
+            src: img.src,
+            size: Number(img.size) || 1,
+            anchors: null,
+          });
+        }
+      }
+    }
     // Ranged basic attack (projectile config) — kept for the fire path + renderer.
     if (def && def.ranged && def.projectile) { safe.ranged = true; safe.projectile = def.projectile; }
-    // Heavy (평타 3연타) + skill1/2/3 combat (damage/hitboxes/ranged) — the V1
+    // Heavy combo finisher + skill1/2/3 combat (damage/hitboxes/ranged) — the V1
     // clamp drops unknown keys, so re-clamp defensively (this def may be a synced
     // peer's blob) and re-attach, mirroring ranged/weaponVisual above.
     if (def && def.presetCombat && typeof def.presetCombat === 'object') {
@@ -222,6 +301,9 @@ export class Player {
       for (const k in def.presetRanged) pr[k] = sanitizeProjectile(def.presetRanged[k]);
       safe.presetRanged = pr;
     }
+    if (def && Number.isFinite(Number(def.heavyAfter))) {
+      safe.heavyAfter = Math.max(1, Math.min(5, Math.round(Number(def.heavyAfter))));
+    }
     if (def && def.motionSet && safe.motionSet) {
       for (const k in safe.motionSet) {
         const rawMotion = def.motionSet[k];
@@ -231,7 +313,11 @@ export class Player {
       }
     }
     this.workshopWeapon = safe;
-    if (def && def.id) this.workshopWeapon.id = String(def.id).slice(0, 64);
+    if (def && def.id) this.workshopWeapon.id = String(def.id).slice(0, 128);
+    if (safe.color) {
+      this.color = safe.color;
+      this.accentColor = safe.color;
+    }
     // Block-gimmick VM (host runs it; the constructor sanitizes + caps the AST).
     this.blockVM = safe.blocks ? new BlockVM(safe.blocks, 'workshop') : null;
     this.blockVars = {};       // weapon-instance locals (reset on respawn)
@@ -313,6 +399,59 @@ export class Player {
     if (this.dashCdLeft > 0) this.dashCdLeft = Math.max(0, this.dashCdLeft - deltaTime);
     if (this.stunTimeLeft > 0) this.stunTimeLeft = Math.max(0, this.stunTimeLeft - deltaTime);
     if (this.slowTimeLeft > 0) this.slowTimeLeft = Math.max(0, this.slowTimeLeft - deltaTime);
+  }
+
+  beginMotionRoot(motion, now = Date.now(), durMs = 0) {
+    const hasRoot = motion && Array.isArray(motion.keyframes) && motion.keyframes.some(k => {
+      const r = k && k.root;
+      return r && (Math.abs(Number(r.x) || 0) > 0.5 || Math.abs(Number(r.y) || 0) > 0.5);
+    });
+    if (!hasRoot) {
+      this.motionRootMotion = null;
+      this.motionRootUntil = 0;
+      this.motionRootPrev = null;
+      return;
+    }
+    const safeDur = Math.max(80, Math.min(MOTION_LIMITS.maxDuration * 1000, Math.round(durMs || (motion.duration || 0.5) * 1000)));
+    this.motionRootMotion = motion;
+    this.motionRootStart = now;
+    this.motionRootUntil = now + safeDur;
+    this.motionRootPrev = sampleRootOffset(motion, 0);
+    this.motionRootStartedAirborne = !this.grounded || this.jumping || Math.abs(this.vy || 0) > 1;
+  }
+
+  _applyMotionRoot(deltaTime, level) {
+    const m = this.motionRootMotion;
+    const now = Date.now();
+    if (!m || !this.motionRootUntil || now >= this.motionRootUntil || deltaTime <= 0) {
+      this.motionRootMotion = null;
+      this.motionRootUntil = 0;
+      this.motionRootPrev = null;
+      return false;
+    }
+    const dur = Math.max(0.08, (this.motionRootUntil - this.motionRootStart) / 1000);
+    const phase = Math.max(0, Math.min(0.999, (now - this.motionRootStart) / 1000 / dur));
+    const root = sampleRootOffset(m, phase);
+    const prev = this.motionRootPrev || root;
+    const dx = (Number(root.x) || 0) - (Number(prev.x) || 0);
+    const dy = (Number(root.y) || 0) - (Number(prev.y) || 0);
+    this.motionRootPrev = root;
+    if (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01) {
+      const vx = this.vx, vy = this.vy;
+      this.vx = dx / deltaTime;
+      this.vy = dy / deltaTime;
+      const hit = Collision.moveAndCollide(this, level, deltaTime, { dropThrough: false });
+      this.vx = vx;
+      this.vy = vy;
+      if (hit.grounded && dy >= 0) {
+        this.grounded = true;
+        this.jumping = false;
+        this.airDashUsed = false;
+      } else if (Math.abs(dy) > 0.01) {
+        this.grounded = false;
+      }
+    }
+    return !this.motionRootStartedAirborne && Math.abs(Number(root.y) || 0) > 0.5;
   }
 
   /**
@@ -430,8 +569,16 @@ export class Player {
     if (this.vy >= 0) this.jumping = false;
     this.jumpHeldPrev = jumpHeld;
 
-    // --- Gravity + terminal velocity ---
-    this.vy = Math.min(this.vy + grav * dt, PHYS.maxFall);
+    // --- Authored root motion + gravity ---
+    // A motion that deliberately lifts/floats the character owns vertical body
+    // placement while it plays. Real jump/fall gravity still applies when the
+    // motion started while airborne.
+    const motionOwnsVertical = this._applyMotionRoot(dt, level);
+    if (motionOwnsVertical) {
+      if (this.vy > 0) this.vy = 0;
+    } else {
+      this.vy = Math.min(this.vy + grav * dt, PHYS.maxFall);
+    }
 
     // --- Integrate + collide ---
     const dropThrough = this.dropThroughLeft > 0;
@@ -562,6 +709,7 @@ export class Player {
 
   triggerAttack(now) {
     this.lastAttackTime = now;
+    this.lastAttackMotionTag = 'attack';
     this.swingDirection *= -1;
     return this.swingDirection;
   }
@@ -618,7 +766,9 @@ export class Player {
       isMobile: this.isMobile,
       mobileAimAssist: this.mobileAimAssist,
       automaticAttack: this.automaticAttack,
+      lastAttackTime: this.lastAttackTime || 0,
       attackMotionTag: this.attackMotionTag || null,
+      lastAttackMotionTag: this.attackMotionTag || this.lastAttackMotionTag || null,
       arrowStacks: this.arrowStacks || 0,
       greatswordChargeMs: this.greatswordChargeStart > 0 ? Math.max(0, Date.now() - this.greatswordChargeStart) : 0,
       katanaChargeMs: this.katanaChargeStart > 0 ? Math.max(0, Date.now() - this.katanaChargeStart) : 0,
@@ -632,7 +782,11 @@ export class Player {
       sniperTeleportTargetMs: Math.max(0, Math.round((this.sniperTeleportTargetUntil || 0) - Date.now())),
       altSkillCdMs: Math.round((this.altSkillCdLeft || 0) * 1000),
       targetSkillCdMs: Math.round((this.targetSkillCdLeft || 0) * 1000),
+      wsSkillCdMs: serializeWorkshopCooldowns(this.wsSkillCd),
+      ultimateGauge: Math.max(0, Math.min(100, Math.round(this.ultimateGauge || 0))),
       motionLockMs: Math.max(0, Math.round((this.motionLockUntil || 0) - Date.now())),
+      rootMotionMs: Math.max(0, Math.round((this.motionRootUntil || 0) - Date.now())),
+      activeHitboxes: this._serializeActiveHitboxes(),
       orbitMs: Math.max(0, Math.round((this.chakramOrbitUntil || 0) - Date.now())),
       shieldMs: Math.max(0, Math.round((this.heatShieldUntil || 0) - Date.now())),
       stanceMs: Math.max(0, Math.round((this.guardianStanceUntil || 0) - Date.now())),
@@ -645,6 +799,28 @@ export class Player {
       wsw: this.workshopWeapon || null, // workshop weapon def (re-clamped on receive)
       cos: this.cosmeticsSnapshot()
     };
+  }
+
+  _serializeActiveHitboxes() {
+    const sw = this._hbSwing;
+    if (!sw || !Array.isArray(sw.hitboxes) || !Number.isFinite(sw.start) || !Number.isFinite(sw.durMs) || sw.durMs <= 0) return [];
+    const phase = (Date.now() - sw.start) / sw.durMs;
+    if (phase < 0 || phase >= 1) return [];
+    const out = [];
+    for (const hb of sw.hitboxes) {
+      if (!hb || typeof hb !== 'object') continue;
+      const frameTime = Number(hb.frameTime);
+      const activeStart = Number.isFinite(frameTime) ? Math.max(0, frameTime - 0.025) : hb.activeStart;
+      const activeEnd = Number.isFinite(frameTime) ? Math.min(1, frameTime + 0.025) : hb.activeEnd;
+      if (phase < activeStart || phase > activeEnd) continue;
+      out.push({
+        ox: Number(hb.ox) || 0,
+        oy: Number(hb.oy) || 0,
+        w: Math.max(1, Number(hb.w) || 1),
+        h: Math.max(1, Number(hb.h) || 1)
+      });
+    }
+    return out.slice(0, 8);
   }
 
   /**
@@ -676,7 +852,11 @@ export class Player {
     this.isMobile = Boolean(data.isMobile);
     this.mobileAimAssist = data.mobileAimAssist === undefined ? true : Boolean(data.mobileAimAssist);
     this.automaticAttack = Boolean(data.automaticAttack);
+    if (Number.isFinite(data.lastAttackTime)) this.lastAttackTime = data.lastAttackTime;
     this.attackMotionTag = typeof data.attackMotionTag === 'string' ? data.attackMotionTag : null;
+    this.lastAttackMotionTag = typeof data.lastAttackMotionTag === 'string'
+      ? data.lastAttackMotionTag
+      : (this.attackMotionTag || this.lastAttackMotionTag || 'attack');
     this.arrowStacks = Math.max(0, Math.floor(data.arrowStacks || 0));
     this.greatswordChargeStart = data.greatswordChargeMs > 0 ? Date.now() - data.greatswordChargeMs : 0;
     this.katanaChargeStart = data.katanaChargeMs > 0 ? Date.now() - data.katanaChargeMs : 0;
@@ -685,7 +865,11 @@ export class Player {
     this.sniperTeleportTargetUntil = data.sniperTeleportTargetMs > 0 ? Date.now() + data.sniperTeleportTargetMs : 0;
     this.altSkillCdLeft = Math.max(0, (data.altSkillCdMs || 0) / 1000);
     this.targetSkillCdLeft = Math.max(0, (data.targetSkillCdMs || 0) / 1000);
+    this.wsSkillCd = deserializeWorkshopCooldowns(data.wsSkillCdMs);
+    this.ultimateGauge = Math.max(0, Math.min(100, Math.round(Number(data.ultimateGauge) || 0)));
     this.motionLockUntil = data.motionLockMs > 0 ? Date.now() + data.motionLockMs : 0;
+    this.motionRootUntil = data.rootMotionMs > 0 ? Date.now() + data.rootMotionMs : 0;
+    this.activeHitboxes = Array.isArray(data.activeHitboxes) ? data.activeHitboxes.slice(0, 8) : [];
     this.chakramOrbitUntil = data.orbitMs > 0 ? Date.now() + data.orbitMs : 0;
     this.heatShieldUntil = data.shieldMs > 0 ? Date.now() + data.shieldMs : 0;
     this.guardianStanceUntil = data.stanceMs > 0 ? Date.now() + data.stanceMs : 0;
@@ -748,5 +932,21 @@ function deserializeMagicCooldowns(cooldowns = {}) {
     fireball: Math.max(0, (cooldowns.fireball || 0) / 1000),
     iceShard: Math.max(0, (cooldowns.iceShard || 0) / 1000),
     lifebound: Math.max(0, (cooldowns.lifebound || 0) / 1000)
+  };
+}
+
+function serializeWorkshopCooldowns(cooldowns = {}) {
+  return {
+    skill: Math.max(0, Math.round((cooldowns.skill || 0) * 1000)),
+    skill2: Math.max(0, Math.round((cooldowns.skill2 || 0) * 1000)),
+    skill3: Math.max(0, Math.round((cooldowns.skill3 || 0) * 1000))
+  };
+}
+
+function deserializeWorkshopCooldowns(cooldowns = {}) {
+  return {
+    skill: Math.max(0, (cooldowns.skill || 0) / 1000),
+    skill2: Math.max(0, (cooldowns.skill2 || 0) / 1000),
+    skill3: Math.max(0, (cooldowns.skill3 || 0) / 1000)
   };
 }

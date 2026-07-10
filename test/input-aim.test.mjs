@@ -56,6 +56,108 @@ test('mouse aim keeps the previous angle at exact arena center', () => {
   assert.equal(angle, fallbackAngle);
 });
 
+test('Y key queues one ultimate activation', () => {
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalLocalStorage = globalThis.localStorage;
+  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  globalThis.window = { innerWidth: 800, innerHeight: 600 };
+  globalThis.document = {
+    addEventListener() {},
+    removeEventListener() {},
+    getElementById() { return null; }
+  };
+  globalThis.localStorage = { getItem: () => null };
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { maxTouchPoints: 0 }
+  });
+  try {
+    const input = new Input();
+    let prevented = false;
+    input.setupListeners({
+      width: 800,
+      height: 600,
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
+      addEventListener() {},
+      removeEventListener() {}
+    });
+    input._keyDownHandler({ key: 'y', code: 'KeyY', repeat: false, preventDefault: () => { prevented = true; } });
+    assert.equal(input.consumeUltimate(), true);
+    assert.equal(input.consumeUltimate(), false);
+    assert.equal(prevented, true);
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.localStorage = originalLocalStorage;
+    if (originalNavigator) Object.defineProperty(globalThis, 'navigator', originalNavigator);
+    else delete globalThis.navigator;
+  }
+});
+
+test('custom keybinds drive movement and combat actions', () => {
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalLocalStorage = globalThis.localStorage;
+  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  globalThis.window = { innerWidth: 800, innerHeight: 600 };
+  globalThis.document = {
+    addEventListener() {},
+    removeEventListener() {},
+    getElementById() { return null; }
+  };
+  globalThis.localStorage = {
+    getItem(key) {
+      if (key === 'battle_control_settings_v1') {
+        return JSON.stringify({ keybinds: { jump: 'KeyI', dash: 'KeyQ', skill1: 'KeyU', skill2: 'KeyO', skill3: 'KeyP', ultimate: 'KeyL' } });
+      }
+      return null;
+    }
+  };
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { maxTouchPoints: 0 }
+  });
+  try {
+    const input = new Input();
+    input.setupListeners({
+      width: 800,
+      height: 600,
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
+      addEventListener() {},
+      removeEventListener() {}
+    });
+    let prevented = false;
+    const ev = (key, code, repeat = false) => ({ key, code, repeat, preventDefault: () => { prevented = true; } });
+    input._keyDownHandler(ev('i', 'KeyI'));
+    assert.equal(input.keys.w, true);
+    assert.equal(prevented, true);
+    input._keyUpHandler(ev('i', 'KeyI'));
+    assert.equal(input.keys.w, false);
+
+    input._keyDownHandler(ev('q', 'KeyQ'));
+    assert.ok(input.consumeDash());
+    input._keyDownHandler(ev('u', 'KeyU'));
+    assert.equal(input.consumeSkillDown(), true);
+    input._keyUpHandler(ev('u', 'KeyU'));
+    assert.equal(input.consumeSkillUp(), true);
+    input._keyDownHandler(ev('o', 'KeyO'));
+    assert.equal(input.consumeTeleport(), true);
+    input._keyUpHandler(ev('o', 'KeyO'));
+    assert.equal(input.consumeTeleportUp(), true);
+    input._keyDownHandler(ev('p', 'KeyP'));
+    assert.equal(input.consumeTargetCastDirection(), 0);
+    input._keyDownHandler(ev('l', 'KeyL'));
+    assert.equal(input.consumeUltimate(), true);
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.localStorage = originalLocalStorage;
+    if (originalNavigator) Object.defineProperty(globalThis, 'navigator', originalNavigator);
+    else delete globalThis.navigator;
+  }
+});
+
 test('mobile joystick cursor only flashes after target casts', () => {
   const originalWindow = globalThis.window;
   const originalDocument = globalThis.document;
@@ -66,7 +168,7 @@ test('mobile joystick cursor only flashes after target casts', () => {
   globalThis.window = { innerWidth: 800, innerHeight: 600 };
   globalThis.document = {
     getElementById(id) {
-      if (id !== 'rightJoystickContainer') return null;
+      if (id !== 'leftJoystickContainer') return null;
       return {
         offsetParent: {},
         getBoundingClientRect: () => ({ left: 100, right: 200, top: 300, bottom: 400 })
@@ -155,7 +257,7 @@ test('mobile action buttons act as release-fire aim joysticks', () => {
 
     input._moveSkillAimJoystick(button, { clientX: 190, clientY: 130 });
     assert.equal(input.aimAngle, 0);
-    assert.match(button.style.transform, /translateY\(-50%\) translate\(/);
+    assert.match(button.style.transform, /translate\(/);
 
     input._moveSkillAimJoystick(button, { clientX: 130, clientY: 190 });
     assert.ok(Math.abs(input.aimAngle - Math.PI / 2) < 1e-6);
@@ -167,7 +269,7 @@ test('mobile action buttons act as release-fire aim joysticks', () => {
 
     input._beginSkillAimJoystick(topButton, { pointerId: 8, clientX: 130, clientY: 130 });
     input._moveSkillAimJoystick(topButton, { clientX: 130, clientY: 70 });
-    assert.match(topButton.style.transform, /translateX\(-50%\) translate\(/);
+    assert.match(topButton.style.transform, /translate\(/);
 
     input._requestTargetCastDirection(Math.PI / 4);
     assert.equal(input.consumeTargetCastDirection(), Math.PI / 4);
@@ -187,7 +289,7 @@ test('mobile action buttons act as release-fire aim joysticks', () => {
   }
 });
 
-test('mobile aim stick only aims and the attack button fires basic attack', () => {
+test('mobile movement stick drives aim without cancelling jump, and attack button fires basic attack', () => {
   const originalWindow = globalThis.window;
   const originalDocument = globalThis.document;
   const originalLocalStorage = globalThis.localStorage;
@@ -207,8 +309,6 @@ test('mobile aim stick only aims and the attack button fires basic attack', () =
   [
     { id: 'leftJoystickContainer', left: 20, top: 400, width: 100, height: 100 },
     { id: 'leftJoystickKnob', left: 50, top: 430, width: 40, height: 40 },
-    { id: 'rightJoystickContainer', left: 620, top: 400, width: 100, height: 100 },
-    { id: 'rightJoystickKnob', left: 650, top: 430, width: 40, height: 40 },
     { id: 'attackBtn', left: 700, top: 500, width: 58, height: 58 }
   ].forEach(rect => {
     elements[rect.id] = { listeners: {} };
@@ -252,12 +352,16 @@ test('mobile aim stick only aims and the attack button fires basic attack', () =
   try {
     const input = new Input();
     input.setupListeners(canvas);
+    input.keys.w = true;
 
-    elements.rightJoystickContainer.listeners.pointerdown(event);
-    windowListeners.pointermove({ ...event, clientX: 720, clientY: 450 });
-    windowListeners.pointerup({ ...event, clientX: 720, clientY: 450 });
+    elements.leftJoystickContainer.listeners.pointerdown({ ...event, clientX: 70, clientY: 450 });
+    windowListeners.pointermove({ ...event, clientX: 120, clientY: 450 });
+    assert.equal(input.keys.d, true);
+    assert.equal(input.keys.w, true);
+    windowListeners.pointerup({ ...event, clientX: 120, clientY: 450 });
     assert.equal(input.consumeBasicAttack(), false);
-    assert.equal(input.isRightJoystickActive, false);
+    assert.equal(input.keys.d, false);
+    assert.equal(input.keys.w, true);
     assert.equal(input.aimAngle, 0);
 
     elements.attackBtn.listeners.pointerdown({ ...event, pointerId: 6, clientX: 730, clientY: 530 });

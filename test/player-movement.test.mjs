@@ -67,3 +67,23 @@ test('one-way platform drop requires down plus jump', () => {
   for (let i = 0; i < 10; i++) sSpace.updatePosition(1 / 60, { s: true }, level);
   assert.ok(sSpace.y > platform.y + 4, 'S + Space should drop through the platform');
 });
+
+test('authored root motion can float without being pulled down by gravity', () => {
+  const p = new Player('p', 'N', 'sword', 100, 200);
+  p.grounded = true;
+  p.vy = 0;
+  const now = Date.now();
+  const motion = {
+    duration: 0.5,
+    keyframes: [
+      { t: 0, pose: {}, root: { x: 0, y: 0 } },
+      { t: 1, pose: {}, root: { x: 0, y: -90 } },
+    ],
+  };
+  p.beginMotionRoot(motion, now - 250, 500);
+  p.motionRootPrev = { x: 0, y: 0 };
+  p.updatePosition(1 / 60, {}, null);
+  assert.ok(p.y < 170, 'root motion moves the actual body upward');
+  assert.equal(p.vy, 0, 'gravity is suppressed while grounded root motion owns vertical position');
+  assert.ok(p.serialize().rootMotionMs > 0, 'root motion state is synced for remote renderers');
+});

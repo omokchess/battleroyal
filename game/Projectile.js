@@ -91,6 +91,7 @@ export class Projectile {
       weapon: this.weapon,
       wsImageId: this.wsImageId || null,
       wsScale: this.wsScale || 1,
+      wsRotation: Number.isFinite(Number(this.wsRotation)) ? Number(this.wsRotation) : 0,
       piercing: !!this.piercing,
       isDead: this.isDead
     };

@@ -31,7 +31,18 @@ function _readMap() {
   try { const m = JSON.parse(localStorage.getItem(WS_STORE) || '{}'); return (m && typeof m === 'object') ? m : {}; }
   catch { return {}; }
 }
-function _writeMap(map) { try { localStorage.setItem(WS_STORE, JSON.stringify(map)); } catch {} }
+function _writeMap(map) {
+  try {
+    localStorage.setItem(WS_STORE, JSON.stringify(map));
+    return true;
+  } catch {
+    return false;
+  }
+}
+function _emitStoreChanged(action, weapon = null) {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return;
+  try { window.dispatchEvent(new CustomEvent('pixelroyale:workshop-store-changed', { detail: { action, weapon } })); } catch {}
+}
 
 /** One-time: fold a legacy V1 equipped weapon into the V2 store as equipped. */
 function _absorbLegacy(map) {
@@ -61,13 +72,17 @@ export function getWorkshopWeaponV2(id) {
 export function saveWorkshopWeaponLocal(raw) {
   const w = clampWorkshopWeaponV2(raw);
   const map = _readMap();
-  map[w.id] = w; _writeMap(map);
+  map[w.id] = w;
+  if (!_writeMap(map) || !_readMap()[w.id]) {
+    throw new Error('무기 저장공간이 부족하거나 로컬 저장에 실패했습니다');
+  }
+  _emitStoreChanged('save', w);
   return w;
 }
 
 export function deleteWorkshopWeaponLocal(id) {
   const map = _readMap();
-  if (map[id]) { delete map[id]; _writeMap(map); }
+  if (map[id]) { const old = map[id]; delete map[id]; _writeMap(map); _emitStoreChanged('delete', old); }
   if (equippedWorkshopWeaponId() === id) unequipWorkshopWeapon();
 }
 
@@ -76,21 +91,53 @@ export function deleteWorkshopWeaponLocal(id) {
  *  them into THIS device's image store so the recipient sees the image too — not
  *  just the default stick. */
 export function importWorkshopWeapon(raw) {
+  const savedImages = new Set();
+  const saveImageOnce = (img, idOverride = null) => {
+    const id = idOverride || img?.id;
+    if (!img || !id || !String(id).startsWith('custom:') || savedImages.has(id)) return;
+    if (saveCustomWeaponRecord({ ...img, id })) savedImages.add(id);
+  };
   const imgId = raw && raw.weaponVisual && raw.weaponVisual.imageId;
   if (raw && raw.weaponImage && imgId && String(imgId).startsWith('custom:')) {
-    saveCustomWeaponRecord({ ...raw.weaponImage, id: imgId });
+    saveImageOnce(raw.weaponImage, imgId);
+  }
+  const offhandId = raw && raw.weaponVisual && raw.weaponVisual.offhand && raw.weaponVisual.offhand.imageId;
+  if (raw && raw.offhandImage && offhandId && String(offhandId).startsWith('custom:')) {
+    saveImageOnce(raw.offhandImage, offhandId);
   }
   const hatId = raw && raw.weaponVisual && raw.weaponVisual.hat && raw.weaponVisual.hat.imageId;
   if (raw && raw.hatImage && hatId && String(hatId).startsWith('custom:')) {
-    saveCustomWeaponRecord({ ...raw.hatImage, id: hatId });
+    saveImageOnce(raw.hatImage, hatId);
   }
-  return saveWorkshopWeaponLocal(toWorkshopWeaponV2(raw));
+  const hats = raw && raw.weaponVisual && Array.isArray(raw.weaponVisual.hats) ? raw.weaponVisual.hats : [];
+  if (raw && Array.isArray(raw.hatImages)) {
+    const ids = new Set(hats.map(h => h && h.imageId).filter(id => id && String(id).startsWith('custom:')));
+    for (const img of raw.hatImages.slice(0, 5)) {
+      if (img && (!ids.size || ids.has(img.id))) saveImageOnce(img, img.id);
+    }
+  }
+  if (raw && Array.isArray(raw.effectImages)) {
+    const ids = new Set();
+    const presets = raw.presets && typeof raw.presets === 'object' ? raw.presets : {};
+    for (const preset of Object.values(presets)) {
+      for (const fx of (Array.isArray(preset?.effects) ? preset.effects : [])) {
+        if (fx?.assetId && String(fx.assetId).startsWith('custom:fx_')) ids.add(fx.assetId);
+      }
+    }
+    for (const img of raw.effectImages.slice(0, 24)) {
+      if (img && (!ids.size || ids.has(img.id))) saveImageOnce(img, img.id);
+    }
+  }
+  const saved = saveWorkshopWeaponLocal(toWorkshopWeaponV2(raw));
+  _emitStoreChanged('import', saved);
+  return saved;
 }
 
 // ── equip ──────────────────────────────────────────────────────────────────
 export function equipWorkshopWeaponLocal(id) {
   if (!_readMap()[id]) return false;
   try { localStorage.setItem(WS_EQUIP, id); } catch {}
+  _emitStoreChanged('equip', _readMap()[id] || null);
   return true;
 }
 export function equippedWorkshopWeaponId() {
@@ -98,6 +145,7 @@ export function equippedWorkshopWeaponId() {
 }
 export function unequipWorkshopWeapon() {
   try { localStorage.removeItem(WS_EQUIP); } catch {}
+  _emitStoreChanged('unequip', null);
 }
 /** The equipped weapon as a V2 object (or null). */
 export function equippedWorkshopWeaponV2() {
@@ -126,6 +174,7 @@ export function v2ToV1Runtime(w) {
     previewOffset: p.previewOffset || null,
     flipXKeys: (p.weaponTimeline && p.weaponTimeline.flipXKeys) || [],
     flipYKeys: (p.weaponTimeline && p.weaponTimeline.flipYKeys) || [],
+    handSwapKeys: (p.weaponTimeline && p.weaponTimeline.handSwapKeys) || [],
     effects: p.effects || [],
     projectileEvents: p.projectileEvents || [],
     teleportEvents: p.teleportEvents || [],
@@ -144,17 +193,19 @@ export function v2ToV1Runtime(w) {
     const sp = w.presets[k];
     motionSet[SKILL_MOTION_SLOT[k]] = { ...withFlip(sp), hitboxes: sp.hitboxes || [] };
   }
-  // Heavy (평타 3연타 finisher) keeps its OWN hitboxes for the 3rd-hit swing.
+  // Heavy combo finisher keeps its OWN hitboxes and configurable basic count.
   if (w.presets.heavy) motionSet.heavy = { ...withTimelineEvents(w.presets.heavy), hitboxes: w.presets.heavy.hitboxes || [] };
   const c = basic ? basic.combat : {};
   const stats = {
     maxHp: w.baseStats.maxHp, moveSpeed: w.baseStats.moveSpeed,
     damage: c.damage, cooldownMs: c.cooldownMs, range: c.range, knockback: c.knockback,
     status: c.status, statusDurationMs: c.statusDurationMs, statusIntensity: c.statusIntensity,
+    airborneHeight: c.airborneHeight,
   };
   const rt = clampWorkshopWeapon({ name: w.name, color: w.color, stats, motionSet, blocks: basic ? basic.blocks : null });
   // Carry the (small, id-only) custom weapon image for the in-game renderer.
-  if (w.weaponVisual && (w.weaponVisual.imageId || w.weaponVisual.dual)) {
+  if (w.weaponVisual && (w.weaponVisual.imageId || w.weaponVisual.dual || w.weaponVisual.hat || (Array.isArray(w.weaponVisual.hats) && w.weaponVisual.hats.length) || Array.isArray(w.weaponVisual.layerOrder))) {
+    const hats = Array.isArray(w.weaponVisual.hats) ? w.weaponVisual.hats.slice(0, 5) : (w.weaponVisual.hat ? [w.weaponVisual.hat] : []);
     rt.weaponVisual = {
       imageId: w.weaponVisual.imageId || null,
       scale: w.weaponVisual.scale || 1,
@@ -162,7 +213,11 @@ export function v2ToV1Runtime(w) {
       offsetX: w.weaponVisual.offsetX || 0,
       offsetY: w.weaponVisual.offsetY || 0,
       dual: !!w.weaponVisual.dual,
-      hat: w.weaponVisual.hat || null
+      offhand: w.weaponVisual.offhand || null,
+      hat: w.weaponVisual.hat || hats[0] || null,
+      hats,
+      selectedHat: w.weaponVisual.selectedHat || 0,
+      layerOrder: Array.isArray(w.weaponVisual.layerOrder) ? w.weaponVisual.layerOrder.slice(0, 7) : null,
     };
   }
   // The primary (basic) preset's ranged/projectile config drives the basic attack.
@@ -187,6 +242,7 @@ export function v2ToV1Runtime(w) {
   if (Object.keys(presetCombat).length) rt.presetCombat = presetCombat;
   if (Object.keys(presetHitboxes).length) rt.presetHitboxes = presetHitboxes;
   if (Object.keys(presetRanged).length) rt.presetRanged = presetRanged;
+  if (w.presets.heavy) rt.heavyAfter = Math.max(1, Math.min(5, Math.round(Number(w.presets.heavy.comboAfter) || 3)));
   rt.id = w.id || rt.id || null;
   return rt;
 }

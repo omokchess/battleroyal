@@ -23,6 +23,25 @@ const SLASH2_FRAMES = [[0, 26], [66, 120], [134, 193], [205, 263], [290, 329], [
 // is preserved (no square stretch). [sx, sy, w, h] in sheet px.
 const CIRC_FRAMES = [[0, 0, 63, 55], [63, 0, 63, 55], [126, 0, 63, 55], [189, 0, 63, 55], [252, 0, 63, 55], [315, 0, 63, 55]];
 const CIRC_CELL = 63;   // reference full-ring size; scale = targetSize / CIRC_CELL
+const decoClamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+function sampleDecorationState(hat, phase = 0) {
+  const base = { ...(hat || {}) };
+  const keys = Array.isArray(base.keys) ? base.keys.filter(k => k && Number.isFinite(Number(k.t))).sort((a, b) => a.t - b.t) : [];
+  if (!keys.length) return base;
+  const out = { ...base };
+  for (const field of ['offsetX', 'offsetY', 'rotation', 'scale', 'alpha']) {
+    const fks = keys.filter(k => Number.isFinite(Number(k[field])));
+    if (!fks.length) continue;
+    const t = decoClamp(Number(phase) || 0, 0, 1);
+    if (t <= fks[0].t) { out[field] = fks[0][field]; continue; }
+    if (t >= fks[fks.length - 1].t) { out[field] = fks[fks.length - 1][field]; continue; }
+    const b = fks.findIndex(k => k.t >= t);
+    const k1 = fks[Math.max(0, b - 1)], k2 = fks[b];
+    const r = (t - k1.t) / Math.max(0.0001, k2.t - k1.t);
+    out[field] = k1[field] + (k2[field] - k1[field]) * r;
+  }
+  return out;
+}
 
 // Cover obstacle textures, cut from the nature tileset (tile/nature). Each entry
 // is [sx, sy, sw, sh] in sheet px — a FULL sprite island (tight opaque bbox, so
@@ -193,14 +212,10 @@ export class Renderer {
     this._perf = !!visualSettings.performanceMode;
     this._glow = this._perf ? 0 : 1;
 
-    // Sky gradient.
-    const sky = PLATFORMER_SKY[biome] || PLATFORMER_SKY.day;
-    const g = ctx.createLinearGradient(0, 0, 0, ch);
-    g.addColorStop(0, sky[0]); g.addColorStop(1, sky[1]);
-    ctx.fillStyle = g; ctx.fillRect(0, 0, cw, ch);
-
-    // Parallax hills (slower than the camera for depth).
-    this._drawParallax(ctx, camera, cw, ch, biome);
+    // Temporary combat art direction: black arena, white level outline and
+    // white platforms until the final background art is ready.
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, cw, ch);
 
     const shake = camera.getShakeOffset ? camera.getShakeOffset(now) : { x: 0, y: 0 };
     ctx.save();
@@ -230,6 +245,9 @@ export class Renderer {
       const p = players[id];
       if (!p || p.isDead) continue;
       this._drawPlatformerPlayer(ctx, camera, cw, ch, p, id === localPlayerId, now, activeAttacks[id] || activeAttacks[p.id] || null);
+    }
+    if (visualSettings.showHitboxes !== false) {
+      this._drawActiveHitboxes(ctx, camera, cw, ch, players, localPlayerId, now);
     }
     if (state.damagePopups && state.damagePopups.length) {
       this._drawDamagePopups(ctx, camera, cw, ch, state.damagePopups, now);
@@ -264,6 +282,52 @@ export class Renderer {
 
     // Desktop aim reticle at the cursor.
     if (state.cursorPos) this._drawReticle(ctx, state.cursorPos);
+  }
+
+  _drawActiveHitboxes(ctx, camera, cw, ch, players, localPlayerId, now) {
+    const z = camera.zoom || 1;
+    ctx.save();
+    ctx.lineWidth = Math.max(2, 2 * z);
+    for (const id in players || {}) {
+      const p = players[id];
+      if (!p || p.isDead) continue;
+      const hitboxes = this._activeHitboxesForPlayer(p, now);
+      if (!hitboxes.length) continue;
+      const facing = Math.cos(p.angle || 0) >= 0 ? 1 : -1;
+      const local = p.id === localPlayerId || id === localPlayerId;
+      ctx.strokeStyle = local ? 'rgba(255,80,80,0.95)' : 'rgba(255,180,64,0.85)';
+      ctx.fillStyle = local ? 'rgba(255,40,40,0.12)' : 'rgba(255,180,64,0.10)';
+      for (const hb of hitboxes) {
+        const w = Math.max(1, Number(hb.w) || 1);
+        const h = Math.max(1, Number(hb.h) || 1);
+        const bx = p.x + (Number(hb.ox) || 0) * facing;
+        const by = p.y + (Number(hb.oy) || 0);
+        const a = camera.toScreen(bx - w / 2, by - h / 2, cw, ch);
+        const b = camera.toScreen(bx + w / 2, by + h / 2, cw, ch);
+        const x = Math.min(a.x, b.x);
+        const y = Math.min(a.y, b.y);
+        const rw = Math.abs(b.x - a.x);
+        const rh = Math.abs(b.y - a.y);
+        ctx.fillRect(x, y, rw, rh);
+        ctx.strokeRect(x, y, rw, rh);
+      }
+    }
+    ctx.restore();
+  }
+
+  _activeHitboxesForPlayer(p, now = Date.now()) {
+    if (Array.isArray(p.activeHitboxes) && p.activeHitboxes.length) return p.activeHitboxes;
+    const sw = p._hbSwing;
+    if (!sw || !Array.isArray(sw.hitboxes) || !Number.isFinite(sw.start) || !Number.isFinite(sw.durMs) || sw.durMs <= 0) return [];
+    const phase = (now - sw.start) / sw.durMs;
+    if (phase < 0 || phase >= 1) return [];
+    return sw.hitboxes.filter((hb) => {
+      if (!hb || typeof hb !== 'object') return false;
+      const frameTime = Number(hb.frameTime);
+      const activeStart = Number.isFinite(frameTime) ? Math.max(0, frameTime - 0.025) : hb.activeStart;
+      const activeEnd = Number.isFinite(frameTime) ? Math.min(1, frameTime + 0.025) : hb.activeEnd;
+      return phase >= activeStart && phase <= activeEnd;
+    });
   }
 
   _drawPlatformerZone(ctx, camera, cw, ch, storm, now) {
@@ -409,98 +473,34 @@ export class Renderer {
   }
 
   _drawLevel(ctx, camera, cw, ch, level, biome) {
-    const floor = BIOME_FLOOR[biome] || BIOME_FLOOR.day;
-    const cap = floor.base;
     const rectScreen = (r) => {
       const a = camera.toScreen(r.x, r.y, cw, ch);
       const b = camera.toScreen(r.x + r.w, r.y + r.h, cw, ch);
       return { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y };
     };
     const onScreen = (s) => !(s.x + s.w < -4 || s.x > cw + 4 || s.y + s.h < -4 || s.y > ch + 4);
-    const hash = (a, b) => {
-      let h = (Math.floor(a) * 374761393 + Math.floor(b) * 668265263) | 0;
-      h = Math.imul(h ^ (h >>> 13), 1274126177);
-      return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-    };
-    const drawProceduralTexture = (r, s, kind = 'stone') => {
+    if (Number.isFinite(level.width) && Number.isFinite(level.height)) {
+      const tl = camera.toScreen(0, 0, cw, ch);
+      const br = camera.toScreen(level.width, level.height, cw, ch);
       ctx.save();
-      ctx.beginPath();
-      ctx.rect(Math.round(s.x), Math.round(s.y), Math.ceil(s.w), Math.ceil(s.h));
-      ctx.clip();
-
-      const z = camera.zoom || 1;
-      const cell = Math.max(6, Math.round((kind === 'top' ? 12 : 18) * z));
-      for (let y = Math.floor(s.y / cell) * cell; y < s.y + s.h; y += cell) {
-        for (let x = Math.floor(s.x / cell) * cell; x < s.x + s.w; x += cell) {
-          const wx = r.x + (x - s.x) / z;
-          const wy = r.y + (y - s.y) / z;
-          const n = hash(wx / cell, wy / cell);
-          if (kind === 'top') {
-            if (n > 0.74) ctx.fillStyle = floor.mLight;
-            else if (n < 0.20) ctx.fillStyle = floor.mDark;
-            else continue;
-            ctx.fillRect(x, y, cell, Math.max(2, Math.round(cell * 0.35)));
-          } else {
-            ctx.fillStyle = n > 0.58 ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.11)';
-            ctx.fillRect(x, y, cell, cell);
-          }
-        }
-      }
-
-      const detailCount = Math.max(4, Math.min(40, Math.round((r.w * r.h) / (kind === 'top' ? 11000 : 18000))));
-      for (let i = 0; i < detailCount; i++) {
-        const n1 = hash(r.x / 17 + i * 19, r.y / 23 + i * 7);
-        const n2 = hash(r.x / 29 + i * 11, r.y / 31 + i * 13);
-        const x = s.x + n1 * s.w;
-        const y = s.y + n2 * s.h;
-        if (kind === 'top') {
-          const len = (6 + hash(i, r.x) * 11) * z;
-          const h = (2 + hash(i, r.y) * 5) * z;
-          ctx.strokeStyle = floor.tufts ? 'rgba(64,108,38,0.45)' : floor.mDark;
-          ctx.lineWidth = Math.max(1, z);
-          ctx.beginPath();
-          ctx.moveTo(x, s.y + Math.min(s.h - 1, Math.max(1, y - s.y)));
-          ctx.lineTo(x + len * 0.35, y - h);
-          ctx.lineTo(x + len, y);
-          ctx.stroke();
-        } else {
-          const len = (10 + hash(i, r.w) * 24) * z;
-          ctx.strokeStyle = hash(i, r.h) > 0.5 ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.18)';
-          ctx.lineWidth = Math.max(1, z * 0.75);
-          ctx.beginPath();
-          ctx.moveTo(x, y);
-          ctx.lineTo(x + len, y + (hash(i, r.y) - 0.5) * 9 * z);
-          ctx.stroke();
-        }
-      }
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = Math.max(2, Math.round(2 * (camera.zoom || 1)));
+      ctx.strokeRect(Math.round(tl.x), Math.round(tl.y), Math.round(br.x - tl.x), Math.round(br.y - tl.y));
       ctx.restore();
-    };
-    const drawTopDetails = (r, s, capH) => {
-      ctx.fillStyle = cap;
-      ctx.fillRect(Math.round(s.x), Math.round(s.y), Math.ceil(s.w), capH);
-      drawProceduralTexture(r, { x: s.x, y: s.y, w: s.w, h: capH }, 'top');
-      ctx.fillStyle = 'rgba(255,255,255,0.10)';
-      ctx.fillRect(Math.round(s.x), Math.round(s.y), Math.ceil(s.w), Math.max(1, capH * 0.4));
-    };
+    }
 
-    // Solids: stone body + a grassy/biome cap along the top edge.
+    // Solids and one-way platforms: temporary white single-color geometry.
     for (const r of level.solids) {
       const s = rectScreen(r); if (!onScreen(s)) continue;
       const x = Math.round(s.x), y = Math.round(s.y), w = Math.ceil(s.w), h = Math.ceil(s.h);
-      ctx.fillStyle = '#3b3a44'; ctx.fillRect(x, y, w, h);
-      drawProceduralTexture(r, s, 'stone');
-      ctx.fillStyle = 'rgba(0,0,0,0.22)'; ctx.fillRect(x, y + Math.min(10, h * 0.4), w, h);
-      const capH = Math.max(3, Math.round(8 * (camera.zoom || 1)));
-      drawTopDetails(r, s, capH);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(x, y, w, h);
     }
-    // One-way platforms: thin wooden planks with a bright top lip.
     for (const r of level.oneWays) {
       const s = rectScreen(r); if (!onScreen(s)) continue;
       const x = Math.round(s.x), y = Math.round(s.y), w = Math.ceil(s.w), h = Math.max(4, Math.ceil(s.h));
-      ctx.fillStyle = '#7a5230'; ctx.fillRect(x, y, w, h);
-      ctx.fillStyle = '#9c6b3f'; ctx.fillRect(x, y, w, Math.max(2, h * 0.45));
-      drawProceduralTexture(r, s, 'wood');
-      ctx.fillStyle = 'rgba(255,235,200,0.35)'; ctx.fillRect(x, y, w, 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(x, y, w, h);
     }
   }
 
@@ -560,30 +560,41 @@ export class Renderer {
     // Procedural stick-figure body. Authored workshop motions own the weapon arm
     // angle; aiming still drives combat direction, but no longer overrides the
     // visual weapon tilt that the player made in the motion editor.
-    const { pose, weaponFlip, weaponFlipY, rootOffset } = this._stick.sample(p, now);
+    const { pose, weaponFlip, weaponFlipY, handSwapped, rootOffset, phase } = this._stick.sample(p, now);
+    const rootAppliedToBody = (p.rootMotionMs > 0) || (p.motionRootUntil && now < p.motionRootUntil);
     const stickScr = {
-      x: bodyScr.x + (rootOffset?.x || 0) * z,
-      y: bodyScr.y + (rootOffset?.y || 0) * z,
+      x: bodyScr.x + (rootAppliedToBody ? 0 : (rootOffset?.x || 0)) * z,
+      y: bodyScr.y + (rootAppliedToBody ? 0 : (rootOffset?.y || 0)) * z,
     };
     const look = sanitizeLook(p.stickLook);
+    const stickColor = p.workshopWeapon?.color || look.color || bodyColor;
     // A workshop weapon's custom image (resolved locally from the small id) rides
     // on the stick's hand instead of the procedural bar.
     const wv = p.workshopWeapon && p.workshopWeapon.weaponVisual;
     const wimg = wv && wv.imageId ? resolveWeaponImage(wv.imageId) : null;
-    const himg = wv && wv.hat && wv.hat.imageId ? resolveWeaponImage(wv.hat.imageId) : null;
+    const offhandId = wv && wv.offhand && wv.offhand.imageId;
+    const offimg = offhandId ? resolveWeaponImage(offhandId) : null;
+    const hats = (Array.isArray(wv?.hats) && wv.hats.length ? wv.hats.slice(0, 5) : (wv?.hat ? [wv.hat] : [])).map(h => sampleDecorationState(h, phase));
+    const hatImages = hats.map(h => h?.imageId ? resolveWeaponImage(h.imageId) : null);
     drawStickman({
       ctx, x: stickScr.x, y: stickScr.y, scale: radius, facing: face,
-      color: look.color || bodyColor, accent: '#0d0a06', lineW: look.lineW,
+      color: stickColor, accent: '#0d0a06', lineW: look.lineW,
       pose, aimAngle: 0, weapon: p.weapon, rawNearArm: true,
       headShape: look.head, accessory: look.accessory,
       weaponImage: wimg && wimg.img && wimg.img.complete && wimg.img.naturalWidth ? wimg.img : null,
-      weaponImageSize: wimg ? wimg.size : 2.0,
+      weaponImageSize: Number.isFinite(Number(wv?.scale)) ? Number(wv.scale) : (wimg ? wimg.size : 2.0),
       weaponImageAnchors: wimg ? wimg.anchors : null,
       weaponFlip: !!weaponFlip,
       weaponFlipY: !!weaponFlipY,
       weaponDual: !!(wv && wv.dual),
-      hatImage: himg && himg.img && himg.img.complete && himg.img.naturalWidth ? himg.img : null,
-      hat: wv?.hat || null,
+      weaponHandSwapped: !!handSwapped,
+      offhandWeapon: offhandId || p.weapon,
+      offhandImage: offimg && offimg.img && offimg.img.complete && offimg.img.naturalWidth ? offimg.img : null,
+      offhandImageSize: Number.isFinite(Number(wv?.offhand?.scale)) ? Number(wv.offhand.scale) : (offimg ? offimg.size : 2.0),
+      offhandImageAnchors: wv?.offhand?.anchors || (offimg ? offimg.anchors : null),
+      hatImages: hatImages.map(h => h && h.img && h.img.complete && h.img.naturalWidth ? h.img : null),
+      hats,
+      layerOrder: Array.isArray(wv?.layerOrder) ? wv.layerOrder : null,
     });
 
     if (p.burnTimeLeft > 0) this._drawBurnFlames(ctx, bodyScr, radius, z);
@@ -1929,7 +1940,8 @@ export class Renderer {
 
       if (p.kind === 'wsranged' || p.kind === 'wsskill') {
         // Workshop ranged projectile (basic or a skill preset): its chosen shape.
-        drawProjectileShape(ctx, scr.x, scr.y, angle, p.wsImageId || 'arrow', (18 * (p.wsScale || 1)) * zoom);
+        const imageAngle = angle + ((Number(p.wsRotation) || 0) * Math.PI / 180);
+        drawProjectileShape(ctx, scr.x, scr.y, imageAngle, p.wsImageId || 'arrow', (18 * (p.wsScale || 1)) * zoom);
       } else if (p.kind === 'thrownspear') {
         this._drawWeaponProjectile(ctx, scr, angle, zoom, 'spear', owner, { tumble: true });
       } else if (p.kind === 'chakram') {
@@ -2813,8 +2825,20 @@ export class Renderer {
     ctx.save();
     ctx.translate(scr.x, scr.y);
     if (Number.isFinite(e.angle)) ctx.rotate(e.angle);
+    if (e.flipX || e.flipY) ctx.scale(e.flipX ? -1 : 1, e.flipY ? -1 : 1);
     ctx.globalAlpha = Math.max(0, Math.min(1, alpha * baseAlpha * (1 - progress * 0.35)));
-    drawFxShape(ctx, e.assetId || 'spark', 18 * (Number(e.scale) || 1) * zoom * pulse);
+    const rec = resolveWeaponImage(e.assetId || '');
+    const img = rec && rec.img;
+    if (img && img.complete && img.naturalWidth) {
+      const size = 36 * (Number(e.scale) || 1) * zoom * pulse;
+      const aspect = img.naturalWidth / Math.max(1, img.naturalHeight);
+      const w = aspect >= 1 ? size : size * aspect;
+      const h = aspect >= 1 ? size / aspect : size;
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(img, -w / 2, -h / 2, w, h);
+    } else {
+      drawFxShape(ctx, e.assetId || 'spark', 18 * (Number(e.scale) || 1) * zoom * pulse);
+    }
     ctx.restore();
   }
 
@@ -2958,9 +2982,10 @@ export class Renderer {
     // e.angle + 270° (picked from the rotation-offset preview): the vertical
     // crescent stands in front with its belly toward the aim. Flip across the
     // swing axis for handedness, and nestle it close to the body.
-    // Flip on the DOWN swing (swingDirection > 0) so the crescent curls the
-    // same way the blade travels: down-swing curls down, up-swing curls up.
-    const flipY = this._visualSwingDirection(e.weapon, e.swingDirection) > 0;
+    // Keep the slash sheet orientation stable. The weapon motion itself may
+    // alternate, but flipping the bitmap every basic attack reads as the effect
+    // turning upside down.
+    const flipY = false;
     const reach = weapon.range * (finisher ? 0.95 : 0.85);
     const targetH = reach * (finisher ? 1.45 : 1.2);
     const fwd = reach * (finisher ? 0.4 : 0.35);

@@ -44,9 +44,9 @@ const DEFS = {
   onWallHit: { cat: 'ev', hat: 1, scope: 'entity', op: 'onWallHit', parts: ['벽 충돌 시'] },
   onExpire: { cat: 'ev', hat: 1, scope: 'entity', op: 'onExpire', parts: ['소멸 시'] },
   // ── actions ──
-  spawnProjectile: { cat: 'act', op: 'spawnProjectile', parts: ['투사체 발사 방향', s('dir', 'sel', 'angle', ['angle|고정각도', 'cursor|커서', 'facing|바라보는쪽']), '각도', s('angle', 'num', 0), '속도', s('speed', 'num', 520), '사거리', s('range', 'num', 280), '데미지', s('damagePct', 'num', 90), '% 태그', s('tag', 'text', ''), '관통', s('pierce', 'check', false)] },
-  spawnMelee: { cat: 'act', op: 'spawnMelee', parts: ['근접 판정 앞', s('frontOffset', 'num', 60), '폭', s('width', 'num', 50), '높이', s('height', 'num', 44), '데미지', s('damagePct', 'num', 100), '%'] },
-  spawnArea: { cat: 'act', op: 'spawnArea', parts: ['범위 판정 반경', s('radius', 'num', 60), '데미지', s('damagePct', 'num', 70), '%'] },
+  spawnProjectile: { cat: 'act', op: 'spawnProjectile', parts: ['투사체 발사 방향', s('dir', 'sel', 'angle', ['angle|고정각도', 'cursor|커서', 'facing|바라보는쪽']), '각도', s('angle', 'num', 0), '속도', s('speed', 'num', 520), '사거리', s('range', 'num', 280), '대미지', s('damagePct', 'num', 90), '% 태그', s('tag', 'text', ''), '관통', s('pierce', 'check', false)] },
+  spawnMelee: { cat: 'act', op: 'spawnMelee', parts: ['근접 판정 앞', s('frontOffset', 'num', 60), '폭', s('width', 'num', 50), '높이', s('height', 'num', 44), '대미지', s('damagePct', 'num', 100), '%'] },
+  spawnArea: { cat: 'act', op: 'spawnArea', parts: ['범위 판정 반경', s('radius', 'num', 60), '대미지', s('damagePct', 'num', 70), '%'] },
   applyStatus: { cat: 'act', op: 'applyStatus', parts: ['상태이상', s('status', 'sel', 'burn', ['bleed', 'burn', 'slow', 'stun']), '지속', s('durationMs', 'num', 1000), 'ms'] },
   heal: { cat: 'act', op: 'heal', parts: ['회복 마지막 피해의', s('ofLastDamagePct', 'num', 20), '%'] },
   knockback: { cat: 'act', op: 'knockback', parts: ['넉백 힘', s('force', 'num', 80)] },
@@ -69,7 +69,7 @@ const DEFS = {
   setGravity: { cat: 'act', scope: 'entity', op: 'setGravity', parts: ['중력', s('value', 'num', 900)] },
   setLifetime: { cat: 'act', scope: 'entity', op: 'setLifetime', parts: ['수명', s('ms', 'num', 1200), 'ms'] },
   removeSelf: { cat: 'act', scope: 'entity', op: 'removeSelf', parts: ['자신 제거'] },
-  split: { cat: 'act', scope: 'entity', op: 'split', parts: ['분열', s('count', 'num', 4), '개 퍼짐', s('spreadDeg', 'num', 60), '° 속도', s('speed', 'num', 300), '데미지', s('damagePct', 'num', 40), '% 태그', s('tag', 'text', '')] },
+  split: { cat: 'act', scope: 'entity', op: 'split', parts: ['분열', s('count', 'num', 4), '개 퍼짐', s('spreadDeg', 'num', 60), '° 속도', s('speed', 'num', 300), '대미지', s('damagePct', 'num', 40), '% 태그', s('tag', 'text', '')] },
   // ── control (C-blocks) ──
   if: { cat: 'ctl', c: 1, op: 'if', parts: ['만약', s('cond', 'bool')], containers: ['then', 'else'] },
   repeat: { cat: 'ctl', c: 1, op: 'repeat', parts: [s('count', 'num', 3), '번 반복'], containers: ['body'] },

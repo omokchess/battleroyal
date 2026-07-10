@@ -3,6 +3,78 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+export const CONTROL_SETTINGS_KEY = 'battle_control_settings_v1';
+
+export const DEFAULT_KEYBINDS = Object.freeze({
+  left: 'KeyA',
+  right: 'KeyD',
+  down: 'KeyS',
+  jump: 'Space',
+  dash: 'ShiftLeft',
+  skill1: 'KeyF',
+  skill2: 'KeyE',
+  skill3: 'KeyR',
+  ultimate: 'KeyY',
+});
+
+const KEYBIND_ACTIONS = new Set(Object.keys(DEFAULT_KEYBINDS));
+
+export function normalizeKeybinds(raw = {}) {
+  const out = { ...DEFAULT_KEYBINDS };
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [action, code] of Object.entries(raw)) {
+    if (KEYBIND_ACTIONS.has(action) && typeof code === 'string' && code.trim()) {
+      out[action] = code.trim();
+    }
+  }
+  return out;
+}
+
+export function readStoredKeybinds() {
+  try {
+    const settings = JSON.parse(localStorage.getItem(CONTROL_SETTINGS_KEY) || '{}') || {};
+    return normalizeKeybinds(settings.keybinds);
+  } catch {
+    return normalizeKeybinds();
+  }
+}
+
+export function formatKeyCode(code) {
+  const c = String(code || '');
+  const labels = {
+    Space: 'Space',
+    ShiftLeft: 'Shift',
+    ShiftRight: 'Shift',
+    ControlLeft: 'Ctrl',
+    ControlRight: 'Ctrl',
+    AltLeft: 'Alt',
+    AltRight: 'Alt',
+    ArrowLeft: '←',
+    ArrowRight: '→',
+    ArrowUp: '↑',
+    ArrowDown: '↓',
+    Escape: 'Esc',
+  };
+  if (labels[c]) return labels[c];
+  if (/^Key[A-Z]$/.test(c)) return c.slice(3);
+  if (/^Digit[0-9]$/.test(c)) return c.slice(5);
+  return c.replace(/^Numpad/, 'Num ');
+}
+
+function isSamePhysicalKey(event, code) {
+  const want = String(code || '');
+  if (!want) return false;
+  if (event.code === want) return true;
+  if ((want === 'ShiftLeft' || want === 'ShiftRight') && (event.code === 'ShiftLeft' || event.code === 'ShiftRight')) return true;
+  if ((want === 'ControlLeft' || want === 'ControlRight') && (event.code === 'ControlLeft' || event.code === 'ControlRight')) return true;
+  if ((want === 'AltLeft' || want === 'AltRight') && (event.code === 'AltLeft' || event.code === 'AltRight')) return true;
+  return false;
+}
+
+function eventMatchesCodeOrFallback(event, code, fallbacks = []) {
+  return isSamePhysicalKey(event, code) || fallbacks.some((fb) => isSamePhysicalKey(event, fb));
+}
+
 export class Input {
   constructor() {
     this.keys = {
@@ -22,7 +94,6 @@ export class Input {
     };
 
     this.aimAngle = 0;
-    this.isRightJoystickActive = false;
     // True while the skill button is held and being dragged as an aim stick.
     this.isSkillAimActive = false;
     this.localWeapon = 'sword';
@@ -41,6 +112,7 @@ export class Input {
     this.skillUpRequested = false;
     this.skillHeld = false;
     this.basicAttackRequested = false;
+    this.ultimateRequested = false;
     this.targetCastRequested = false;
     this.targetCastPointer = null;
     this.targetCastDirectionRequested = false;
@@ -54,6 +126,7 @@ export class Input {
     this.skillAimButton = null;
     this.skillAimCenter = null;
     this.skillAimBaseTransform = 'translateY(-50%)';
+    this.keybinds = readStoredKeybinds();
 
     // Detect if device is touch-capable or loaded from stored preference
     const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
@@ -99,12 +172,10 @@ export class Input {
 
     // Mobile Virtual Joystick bound entries
     this._leftTouchStart = null;
-    this._rightTouchStart = null;
     this._windowTouchMove = null;
     this._windowTouchEnd = null;
     this._windowTouchCancel = null;
     this._leftPointerStart = null;
-    this._rightPointerStart = null;
     this._windowPointerMove = null;
     this._windowPointerUp = null;
     this._windowPointerCancel = null;
@@ -176,13 +247,33 @@ export class Input {
 
   _isMobileControlTarget(target) {
     return Boolean(target?.closest?.(
-      '#mobileJoystickOverlay, #leftJoystickContainer, #rightJoystickContainer, #mobileActionCluster, .mobile-action-btn'
+      '#mobileJoystickOverlay, #leftJoystickContainer, #mobileActionCluster, .mobile-action-btn, .mobile-jump-btn'
     ));
+  }
+
+  reloadKeybinds() {
+    this.keybinds = readStoredKeybinds();
+  }
+
+  _matchesAction(event, action) {
+    const kb = this.keybinds || DEFAULT_KEYBINDS;
+    const fallback = {
+      left: ['ArrowLeft'],
+      right: ['ArrowRight'],
+      down: ['ArrowDown'],
+      jump: ['KeyW', 'ArrowUp'],
+      dash: ['ShiftRight'],
+    }[action] || [];
+    return eventMatchesCodeOrFallback(event, kb[action], fallback);
+  }
+
+  _isGameplayKey(event) {
+    return Object.keys(DEFAULT_KEYBINDS).some((action) => this._matchesAction(event, action));
   }
 
   _isMobileControlPoint(clientX, clientY) {
     if (!this.joystickEnabled || !Number.isFinite(clientX) || !Number.isFinite(clientY)) return false;
-    const ids = ['leftJoystickContainer', 'rightJoystickContainer', 'attackBtn', 'skillBtn', 'altSkillBtn', 'lmbBtn', 'dashBtn', 'jumpBtn'];
+    const ids = ['leftJoystickContainer', 'attackBtn', 'skillBtn', 'altSkillBtn', 'lmbBtn', 'dashBtn', 'jumpBtn'];
     return ids.some(id => {
       const el = document.getElementById(id);
       if (!el || el.offsetParent === null) return false;
@@ -208,15 +299,7 @@ export class Input {
   }
 
   _getSkillAimBaseTransform(button) {
-    if (button?.classList?.contains?.('mobile-action-top') ||
-        button?.classList?.contains?.('mobile-action-bottom')) {
-      return 'translateX(-50%)';
-    }
-    if (button?.classList?.contains?.('mobile-action-left') ||
-        button?.classList?.contains?.('mobile-action-right')) {
-      return 'translateY(-50%)';
-    }
-    return this.skillAimBaseTransform || '';
+    return '';
   }
 
   _isActiveSkillAimPointer(button, event) {
@@ -279,35 +362,34 @@ export class Input {
     this.mouse.y = canvas.height / 2;
 
     this._keyDownHandler = (e) => {
-      // Toggle movement keys
-      const key = e.key.toLowerCase();
-      if (key === 'w' || e.key === 'ArrowUp' || e.code === 'Space') this.keys.w = true;
-      if (key === 's' || e.key === 'ArrowDown') this.keys.s = true;
-      if (key === 'a' || e.key === 'ArrowLeft') this.keys.a = true;
-      if (key === 'd' || e.key === 'ArrowRight') this.keys.d = true;
+      // Toggle movement keys. The public key names stay w/a/s/d so Player,
+      // Protocol, and old netcode do not need to know about custom keybinds.
+      if (this._matchesAction(e, 'jump')) this.keys.w = true;
+      if (this._matchesAction(e, 'down')) this.keys.s = true;
+      if (this._matchesAction(e, 'left')) this.keys.a = true;
+      if (this._matchesAction(e, 'right')) this.keys.d = true;
 
-      // Space = jump, Shift = dash, F = weapon skill (edge-triggered, ignore auto-repeat)
-      if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat) this._requestDash();
-      // Skill scheme: F = 스킬1, E = 스킬2 (alt/held), R = 스킬3 (target cast).
-      if (key === 'f' && !e.repeat) this._requestSkillDown();
-      if (key === 'e' && !e.repeat) this.teleportRequested = true;
-      if (key === 'r' && !e.repeat) this._requestTargetCastDirection();
+      // Edge-triggered combat actions.
+      if (this._matchesAction(e, 'dash') && !e.repeat) this._requestDash();
+      if (this._matchesAction(e, 'skill1') && !e.repeat) this._requestSkillDown();
+      if (this._matchesAction(e, 'skill2') && !e.repeat) this.teleportRequested = true;
+      if (this._matchesAction(e, 'skill3') && !e.repeat) this._requestTargetCastDirection();
+      if (this._matchesAction(e, 'ultimate') && !e.repeat) this.ultimateRequested = true;
 
       // Prevent scrolling behaviors on gaming buttons
-      if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(e.key.toLowerCase()) ||
-          e.code === 'Space' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+      if (this._isGameplayKey(e)) {
         e.preventDefault();
       }
     };
 
     this._keyUpHandler = (e) => {
-      const key = e.key.toLowerCase();
-      if (key === 'w' || e.key === 'ArrowUp' || e.code === 'Space') this.keys.w = false;
-      if (key === 's' || e.key === 'ArrowDown') this.keys.s = false;
-      if (key === 'a' || e.key === 'ArrowLeft') this.keys.a = false;
-      if (key === 'd' || e.key === 'ArrowRight') this.keys.d = false;
-      if (key === 'f') this._requestSkillUp();
-      if (key === 'e') this.teleportUpRequested = true;   // 스킬2 release (held alt skills)
+      if (this._matchesAction(e, 'jump')) this.keys.w = false;
+      if (this._matchesAction(e, 'down')) this.keys.s = false;
+      if (this._matchesAction(e, 'left')) this.keys.a = false;
+      if (this._matchesAction(e, 'right')) this.keys.d = false;
+      if (this._matchesAction(e, 'skill1')) this._requestSkillUp();
+      if (this._matchesAction(e, 'skill2')) this.teleportUpRequested = true;   // 스킬2 release (held alt skills)
+      if (this._isGameplayKey(e)) e.preventDefault();
     };
 
     this._mouseMoveHandler = (e) => {
@@ -436,8 +518,6 @@ export class Input {
     // --- MOBILE VIRTUAL JOYSTICKS INTEGRATION ---
     const leftContainer = document.getElementById('leftJoystickContainer');
     const leftKnob = document.getElementById('leftJoystickKnob');
-    const rightContainer = document.getElementById('rightJoystickContainer');
-    const rightKnob = document.getElementById('rightJoystickKnob');
     const joystickOverlay = document.getElementById('mobileJoystickOverlay');
 
     if (joystickOverlay) {
@@ -524,7 +604,6 @@ export class Input {
       jumpBtn.addEventListener('pointerdown', this._jumpDownHandler);
       jumpBtn.addEventListener('pointerup', this._jumpUpHandler);
       jumpBtn.addEventListener('pointercancel', this._jumpUpHandler);
-      jumpBtn.addEventListener('pointerleave', this._jumpUpHandler);
     }
 
     const skillBtn = document.getElementById('skillBtn');
@@ -707,12 +786,10 @@ export class Input {
       lmbBtn.addEventListener('click', this._lmbClickHandler);
     }
 
-    if (leftContainer && leftKnob && rightContainer && rightKnob) {
+    if (leftContainer && leftKnob) {
       let leftTouchId = null;
       let leftCenter = null;
       let leftDashVector = null;
-      let rightTouchId = null;
-      let rightCenter = null;
 
       const beginLeftJoystick = (point, id) => {
         leftTouchId = id;
@@ -723,18 +800,6 @@ export class Input {
           radius: rect.width / 2
         };
         handleLeftMove(point);
-      };
-
-      const beginRightJoystick = (point, id) => {
-        rightTouchId = id;
-        const rect = rightContainer.getBoundingClientRect();
-        rightCenter = {
-          x: rect.left + rect.width / 2,
-          y: rect.top + rect.height / 2,
-          radius: rect.width / 2
-        };
-        this.isRightJoystickActive = true;
-        handleRightMove(point);
       };
 
       // Left joystick start
@@ -784,46 +849,6 @@ export class Input {
         this.keys.a = nx < -0.3;
         this.keys.d = nx > 0.3;
         this.keys.s = ny > 0.45;
-        this.keys.w = false;
-      };
-
-      // Right joystick start
-      this._rightTouchStart = (e) => {
-        if (!this.joystickEnabled) return;
-        this._markTouchInput();
-        e.preventDefault();
-        e.stopPropagation();
-
-        const touch = e.changedTouches[0];
-        beginRightJoystick(touch, touch.identifier);
-      };
-
-      this._rightPointerStart = (e) => {
-        if (!this.joystickEnabled) return;
-        this._markTouchLikeInput(e);
-        e.preventDefault();
-        e.stopPropagation();
-        try { rightContainer.setPointerCapture(e.pointerId); } catch (_) {}
-        beginRightJoystick(e, e.pointerId);
-      };
-
-      const handleRightMove = (touch) => {
-        if (!rightCenter) return;
-        const dx = touch.clientX - rightCenter.x;
-        const dy = touch.clientY - rightCenter.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        const cap = rightCenter.radius * 0.8;
-
-        let targetX = dx;
-        let targetY = dy;
-        if (dist > cap) {
-          targetX = (dx / dist) * cap;
-          targetY = (dy / dist) * cap;
-        }
-
-        rightKnob.style.transform = `translate(${targetX}px, ${targetY}px)`;
-
-        // Map aim angle based on direction
         if (dist > 5) {
           this.aimAngle = Math.atan2(dy, dx);
         }
@@ -838,8 +863,6 @@ export class Input {
           const touch = e.changedTouches[i];
           if (touch.identifier === leftTouchId) {
             handleLeftMove(touch);
-          } else if (touch.identifier === rightTouchId) {
-            handleRightMove(touch);
           }
         }
       };
@@ -849,8 +872,6 @@ export class Input {
         if (!this.joystickEnabled) return;
         if (e.pointerId === leftTouchId) {
           handleLeftMove(e);
-        } else if (e.pointerId === rightTouchId) {
-          handleRightMove(e);
         }
       };
 
@@ -862,16 +883,9 @@ export class Input {
         leftTouchId = null;
         leftDashVector = null;
         leftKnob.style.transform = 'translate(0px, 0px)';
-        this.keys.w = false;
         this.keys.s = false;
         this.keys.a = false;
         this.keys.d = false;
-      };
-
-      const handleRightEnd = () => {
-        rightTouchId = null;
-        this.isRightJoystickActive = false;
-        rightKnob.style.transform = 'translate(0px, 0px)';
       };
 
       this._windowTouchEnd = (e) => {
@@ -880,8 +894,6 @@ export class Input {
           const touch = e.changedTouches[i];
           if (touch.identifier === leftTouchId) {
             handleLeftEnd(true);
-          } else if (touch.identifier === rightTouchId) {
-            handleRightEnd();
           }
         }
       };
@@ -890,8 +902,6 @@ export class Input {
         this._markTouchLikeInput(e);
         if (e.pointerId === leftTouchId) {
           handleLeftEnd(true);
-        } else if (e.pointerId === rightTouchId) {
-          handleRightEnd();
         }
       };
 
@@ -901,8 +911,6 @@ export class Input {
           const touch = e.changedTouches[i];
           if (touch.identifier === leftTouchId) {
             handleLeftEnd(false);
-          } else if (touch.identifier === rightTouchId) {
-            handleRightEnd();
           }
         }
       };
@@ -911,20 +919,16 @@ export class Input {
         this._markTouchLikeInput(e);
         if (e.pointerId === leftTouchId) {
           handleLeftEnd(false);
-        } else if (e.pointerId === rightTouchId) {
-          handleRightEnd();
         }
       };
 
       if (window.PointerEvent) {
         leftContainer.addEventListener('pointerdown', this._leftPointerStart);
-        rightContainer.addEventListener('pointerdown', this._rightPointerStart);
         window.addEventListener('pointermove', this._windowPointerMove);
         window.addEventListener('pointerup', this._windowPointerUp);
         window.addEventListener('pointercancel', this._windowPointerCancel);
       } else {
         leftContainer.addEventListener('touchstart', this._leftTouchStart, { passive: false });
-        rightContainer.addEventListener('touchstart', this._rightTouchStart, { passive: false });
         window.addEventListener('touchmove', this._windowTouchMove, { passive: true });
         window.addEventListener('touchend', this._windowTouchEnd, { passive: true });
         window.addEventListener('touchcancel', this._windowTouchCancel, { passive: true });
@@ -980,6 +984,12 @@ export class Input {
   consumeBasicAttack() {
     if (!this.basicAttackRequested) return false;
     this.basicAttackRequested = false;
+    return true;
+  }
+
+  consumeUltimate() {
+    if (!this.ultimateRequested) return false;
+    this.ultimateRequested = false;
     return true;
   }
 
@@ -1041,10 +1051,8 @@ export class Input {
   updateAimAngle(player, camera, canvasWidth, canvasHeight, mapWidth = 0, mapHeight = 0) {
     // While a mobile action button is being used as an aim stick, it owns aim.
     if (this.isSkillAimActive) return;
-    // While actively dragging the right joystick, it owns the aim.
-    if (this.isRightJoystickActive) return;
     // Pure touch mode (joystick enabled AND no mouse ever used): hold the last
-    // angle so releasing the joystick doesn't snap aim to a stale mouse pos.
+    // angle so releasing the movement joystick doesn't snap aim to a stale mouse pos.
     // As soon as a real mouse move is seen we always aim at the cursor, even on
     // touch-capable PCs where joystickEnabled may have been auto-set.
     if (this.joystickEnabled && !this.hasMouseInput) return;
@@ -1093,7 +1101,6 @@ export class Input {
       if (this._jumpUpHandler) {
         jumpBtn.removeEventListener('pointerup', this._jumpUpHandler);
         jumpBtn.removeEventListener('pointercancel', this._jumpUpHandler);
-        jumpBtn.removeEventListener('pointerleave', this._jumpUpHandler);
       }
     }
 
@@ -1141,6 +1148,7 @@ export class Input {
     this.skillUpRequested = false;
     this.skillHeld = false;
     this.basicAttackRequested = false;
+    this.ultimateRequested = false;
     this._resetSkillAimJoystick();
     this.targetCastRequested = false;
     this.targetCastPointer = null;
@@ -1152,19 +1160,12 @@ export class Input {
     this.pointerTargetMode = null;
 
     const leftContainer = document.getElementById('leftJoystickContainer');
-    const rightContainer = document.getElementById('rightJoystickContainer');
 
     if (leftContainer && this._leftTouchStart) {
       leftContainer.removeEventListener('touchstart', this._leftTouchStart);
     }
-    if (rightContainer && this._rightTouchStart) {
-      rightContainer.removeEventListener('touchstart', this._rightTouchStart);
-    }
     if (leftContainer && this._leftPointerStart) {
       leftContainer.removeEventListener('pointerdown', this._leftPointerStart);
-    }
-    if (rightContainer && this._rightPointerStart) {
-      rightContainer.removeEventListener('pointerdown', this._rightPointerStart);
     }
     if (this._windowTouchMove) {
       window.removeEventListener('touchmove', this._windowTouchMove);

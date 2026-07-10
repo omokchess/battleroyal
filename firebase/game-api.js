@@ -397,6 +397,10 @@ export async function publishWorkshopWeapon(def, authorName = 'Player') {
       // The custom weapon IMAGE travels with the doc so recipients see it too
       // (not just the author). Bounded dataURL; null when using a stock stick.
       weaponImage: cleanForFirestore(def?.weaponImage),
+      offhandImage: cleanForFirestore(def?.offhandImage),
+      hatImage: cleanForFirestore(def?.hatImage),
+      hatImages: cleanForFirestore(Array.isArray(def?.hatImages) ? def.hatImages.slice(0, 5) : []),
+      effectImages: cleanForFirestore(Array.isArray(def?.effectImages) ? def.effectImages.slice(0, 24) : []),
       likes: snap.exists() ? Number(snap.data().likes || 0) : 0,
       plays: snap.exists() ? Number(snap.data().plays || 0) : 0,
       reports: snap.exists() ? Number(snap.data().reports || 0) : 0,
@@ -423,6 +427,10 @@ function wsRow(id, d) {
     if (d.weaponVisual) row.weaponVisual = d.weaponVisual;
   }
   if (d.weaponImage) row.weaponImage = d.weaponImage;   // custom pixels for the recipient
+  if (d.offhandImage) row.offhandImage = d.offhandImage;
+  if (d.hatImage) row.hatImage = d.hatImage;
+  if (Array.isArray(d.hatImages)) row.hatImages = d.hatImages.slice(0, 5);
+  if (Array.isArray(d.effectImages)) row.effectImages = d.effectImages.slice(0, 24);
   return row;
 }
 

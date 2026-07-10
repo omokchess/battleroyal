@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import {
   sanitizeMotion, sanitizeMotionSetId, registerMotionSet, hasMotionSet,
   weaponSetId, resolveMotion, MOTION_LIMITS, DEFAULT_MOTION, sampleRootOffset,
+  StickAnimator,
 } from '../game/Motion.js';
 
 test('sanitizeMotion clamps angles and caps keyframes', () => {
@@ -99,6 +100,7 @@ test('gameplay fields are KEPT + clamped on the admin path', () => {
   assert.ok(Math.abs(hb.oy) <= MOTION_LIMITS.hitboxOffsetMax, 'oy clamped');
   assert.ok(hb.w >= MOTION_LIMITS.hitboxSizeMin && hb.h <= MOTION_LIMITS.hitboxSizeMax, 'size clamped');
   assert.ok(hb.activeStart <= hb.activeEnd, 'active window ordered');  // swapped from 0.8>0.2
+  assert.ok(Number.isFinite(hb.frameTime), 'hitbox keeps a frame marker for editor/runtime display');
   assert.ok(m.knockback <= MOTION_LIMITS.knockbackMax, 'knockback clamped');
 });
 
@@ -107,4 +109,56 @@ test('hitbox count is capped and bad entries dropped', () => {
     hitboxes: [null, 'x', {}, { ox: 1 }, { ox: 2 }, { ox: 3 }, { ox: 4 }, { ox: 5 }] };
   const m = sanitizeMotion(many, DEFAULT_MOTION, { allowGameplay: true });
   assert.ok(m.hitboxes.length <= MOTION_LIMITS.maxHitboxes);
+});
+
+test('StickAnimator starts remote workshop attack from last motion tag', () => {
+  const animator = new StickAnimator();
+  const player = {
+    id: 'remote',
+    weapon: 'sword',
+    vx: 0,
+    vy: 0,
+    grounded: true,
+    lastAttackTime: 12345,
+    attackMotionTag: null,
+    lastAttackMotionTag: 'skill1',
+    workshopWeapon: {
+      motionSet: {
+        skill1: {
+          duration: 0.5,
+          keyframes: [
+            { t: 0, pose: { spine: -90 } },
+            { t: 1, pose: { spine: -70 } },
+          ],
+        },
+      },
+    },
+  };
+  const sample = animator.sample(player, 1000);
+  assert.equal(sample.motionName, 'skill1');
+});
+
+test('StickAnimator samples weapon hand-swap timeline', () => {
+  const animator = new StickAnimator();
+  const player = {
+    id: 'hands',
+    weapon: 'sword',
+    vx: 0,
+    vy: 0,
+    grounded: true,
+    lastAttackTime: 1000,
+    lastAttackMotionTag: 'attack',
+    workshopWeapon: {
+      motionSet: {
+        attack: {
+          duration: 1,
+          handSwapKeys: [{ time: 0, value: false }, { time: 0.2, value: true }],
+          keyframes: [{ t: 0, pose: {} }, { t: 1, pose: {} }],
+        },
+      },
+    },
+  };
+  animator.sample(player, 1000);
+  const sample = animator.sample(player, 1300);
+  assert.equal(sample.handSwapped, true);
 });

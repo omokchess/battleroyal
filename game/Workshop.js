@@ -26,12 +26,13 @@ export const ENVELOPE = {
   maxHp:           [70, 160],
   moveSpeed:       [0.7, 1.35],
   damage:          [4, 55],        // « any instakill; a workshop weapon cannot one-shot
-  cooldownMs:      [250, 2500],    // floor 250ms — no machine-gun
+  cooldownMs:      [250, 10000],   // floor 250ms — no machine-gun, max 10s
   range:           [30, 300],
   projectileSpeed: [180, 1200],
   knockback:       [0, 200],
   statusDurationMs:[0, 3000],
   statusIntensity: [0, 1],
+  airborneHeight:  [20, 260],
   // Per-hitbox geometry (tighter than the admin canonical caps).
   hitboxDimMax:    160,            // each of w/h
   hitboxAreaMax:   14000,          // w*h px²
@@ -41,9 +42,12 @@ export const ENVELOPE = {
   maxTeleportEvents: 5,
 };
 
-export const VALID_STATUS = new Set(['none', 'slow', 'bleed', 'burn', 'stun']);
+export const VALID_STATUS = new Set(['none', 'slow', 'bleed', 'burn', 'stun', 'airborne']);
 export const POINT_BUDGET = 100;
 const BUDGET_COST_MULT = 1.5;
+const COOLDOWN_BUDGET_BASE_MS = 600;
+const COOLDOWN_BUDGET_COST_STEP_MS = 300;
+const COOLDOWN_BUDGET_REFUND_STEP_MS = 500;
 
 const clampNum = (v, [lo, hi], dflt) => (Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : dflt);
 
@@ -71,6 +75,8 @@ export function clampWorkshopStats(raw) {
     status,
     statusDurationMs: status === 'none' ? 0 : Math.round(clampNum(r.statusDurationMs, ENVELOPE.statusDurationMs, 0)),
     statusIntensity: status === 'none' ? 0 : Math.round(clampNum(r.statusIntensity, ENVELOPE.statusIntensity, 0.5) * 100) / 100,
+    ultimateGain: Math.round(clampNum(r.ultimateGain, [10, 35], 10) / 5) * 5,
+    airborneHeight: status === 'airborne' ? Math.round(clampNum(r.airborneHeight, ENVELOPE.airborneHeight, 120)) : 120,
   };
 }
 
@@ -145,7 +151,8 @@ export function clampWorkshopHitboxes(hitboxes) {
     let aE = clampNum(hb.activeEnd, [0, 1], 1);
     if (aE < aS) { const t = aS; aS = aE; aE = t; }
     if (aE - aS > ENVELOPE.activeLenMax) aE = aS + ENVELOPE.activeLenMax;   // cap window length
-    out.push({ ox: clampNum(hb.ox, [-220, 220], 0), oy: clampNum(hb.oy, [-220, 220], 0), w, h, activeStart: aS, activeEnd: aE });
+    const frameTime = clampNum(hb.frameTime, [0, 1], (aS + aE) / 2);
+    out.push({ ox: clampNum(hb.ox, [-220, 220], 0), oy: clampNum(hb.oy, [-220, 220], 0), w, h, activeStart: aS, activeEnd: aE, frameTime });
   }
   return out;
 }
@@ -179,6 +186,7 @@ export function clampWorkshopWeapon(raw) {
     // Preserve the weapon flip timeline (sanitizeMotion drops it) — cosmetic.
     if (Array.isArray(rawSet[state].flipXKeys)) m.flipXKeys = sanitizeFlipKeys(rawSet[state].flipXKeys);
     if (Array.isArray(rawSet[state].flipYKeys)) m.flipYKeys = sanitizeFlipKeys(rawSet[state].flipYKeys);
+    if (Array.isArray(rawSet[state].handSwapKeys)) m.handSwapKeys = sanitizeFlipKeys(rawSet[state].handSwapKeys);
     if (['attack', 'heavy', 'skill', 'skill2', 'skill3'].includes(state)) {
       m.projectileEvents = sanitizeProjectileEvents(rawSet[state].projectileEvents);
       m.teleportEvents = sanitizeTeleportEvents(rawSet[state].teleportEvents);
@@ -208,12 +216,19 @@ export const NONCOMBAT_PRESET_KINDS = new Set(['idle', 'run', 'jump', 'hurt', 'k
 export const ALL_PRESET_KINDS = new Set(['basic', 'heavy', 'dash', 'skill1', 'skill2', 'skill3', ...NONCOMBAT_PRESET_KINDS]);
 export const PRIMARY_PRESET_KEYS = ['basic', 'heavy', 'dash', 'skill1', 'skill2', 'skill3'];
 export const PRESET_LABELS = {
-  basic: '평타', heavy: '강공격', dash: '대시', skill1: '스킬 1', skill2: '스킬 2', skill3: '스킬 3',
+  basic: '평타', heavy: '강공격', dash: '대시', skill1: '스킬 1', skill2: '스킬 2', skill3: '궁극기',
   idle: '대기', run: '걷기', jump: '점프', hurt: '피격', kill: '처치',
 };
 // Which in-game input fires each combat/dash preset (cooldown = preset.combat).
-// heavy = the 3rd hit of a basic-attack combo (평타 3연타), not a dedicated key.
-export const PRESET_INPUT = { basic: 'lmb', heavy: 'combo3', skill1: 'skillF', skill2: 'skillE', skill3: 'skillR', dash: 'dash' };
+// heavy = a basic-attack combo finisher. The required basic count is authored
+// on the heavy preset as comboAfter (1..5), defaulting to the old 3-hit behavior.
+export const PRESET_INPUT = { basic: 'lmb', heavy: 'combo', skill1: 'skillF', skill2: 'skillE', skill3: 'skillR', dash: 'dash' };
+export const FIXED_PRESET_DURATIONS = Object.freeze({
+  dash: 0.16,  // DashConfig.durationMs
+  run: 0.5,    // STICK_MOTIONS.run
+  jump: 0.4,   // STICK_MOTIONS.jump
+  hurt: 0.3,
+});
 export const PROJECTILE_IMAGES = ['arrow', 'bolt', 'magicbolt', 'flame', 'iceshard', 'bullet'];
 export const PROJECTILE_ENV = {
   speed: [80, 1200], lifetimeMs: [100, 4000], scale: [0.3, 3],
@@ -253,20 +268,28 @@ function sanitizePreviewOffset(o) {
   return { x: clampNum(r.x, [-200, 200], 0), y: clampNum(r.y, [-200, 200], 0) };
 }
 
-/** Cosmetic frame effects. assetId is a registered FX id; no binary data.
+/** Cosmetic frame effects. assetId is a registered FX id or a bounded custom
+ *  image id (`custom:fx_*`); the image payload itself travels separately as
+ *  effectImages when published.
  *  Time is NORMALIZED (0..1) — shared axis with motion/flip keyframes. */
 export function sanitizeEffects(list) {
   if (!Array.isArray(list)) return [];
   const out = [];
   for (const e of list.slice(0, V2_LIMITS.maxEffects)) {
     if (!e || typeof e !== 'object') continue;
+    const time = clampNum(e.time, [0, 1], 0);
+    const endTime = clampNum(e.endTime, [time, 1], Math.min(1, time + 0.12));
+    const rawAssetId = sanitizeText(e.assetId, 128) || 'spark';
     out.push({
-      time: clampNum(e.time, [0, 1], 0),
-      assetId: sanitizeText(e.assetId, 32) || 'spark',
+      time,
+      endTime,
+      assetId: rawAssetId,
       x: clampNum(e.x, [-200, 200], 0), y: clampNum(e.y, [-200, 200], 0),
       scale: clampNum(e.scale, [0.1, 4], 1),
       rotation: clampNum(e.rotation, [-360, 360], 0),
       alpha: clampNum(e.alpha, [0, 1], 1),
+      flipX: !!e.flipX,
+      flipY: !!e.flipY,
       followBone: FOLLOW_BONES.has(e.followBone) ? e.followBone : null,
     });
   }
@@ -295,6 +318,7 @@ export function sanitizeProjectile(p) {
     imageId,
     directionSource: dir,
     angle: clampNum(r.angle, [-360, 360], 0),
+    rotation: clampNum(r.rotation, [-180, 180], 0),
     speed: clampNum(r.speed, PROJECTILE_ENV.speed, 600),
     lifetimeMs: clampNum(r.lifetimeMs, PROJECTILE_ENV.lifetimeMs, 1200),
     pierce: !!r.pierce,
@@ -345,6 +369,8 @@ export function sanitizeCombat(c) {
     status,
     statusDurationMs: status === 'none' ? 0 : Math.round(clampNum(r.statusDurationMs, ENVELOPE.statusDurationMs, 0)),
     statusIntensity: status === 'none' ? 0 : Math.round(clampNum(r.statusIntensity, ENVELOPE.statusIntensity, 0.5) * 100) / 100,
+    ultimateGain: Math.round(clampNum(r.ultimateGain, [10, 35], 10) / 5) * 5,
+    airborneHeight: status === 'airborne' ? Math.round(clampNum(r.airborneHeight, ENVELOPE.airborneHeight, 120)) : 120,
   };
 }
 
@@ -356,6 +382,9 @@ export function sanitizePreset(raw, key) {
   const kind = ALL_PRESET_KINDS.has(key) ? key : 'basic';
   // Pose only (hitboxes live separately on combat presets → strip from motion).
   const motion = sanitizeMotion(r.motion, undefined, { allowGameplay: false });
+  if (Object.prototype.hasOwnProperty.call(FIXED_PRESET_DURATIONS, kind)) {
+    motion.duration = FIXED_PRESET_DURATIONS[kind];
+  }
   const out = {
     label: PRESET_LABELS[kind] || kind,
     kind,
@@ -363,7 +392,8 @@ export function sanitizePreset(raw, key) {
     previewOffset: sanitizePreviewOffset(r.previewOffset),
     weaponTimeline: {
       flipXKeys: sanitizeFlipKeys(r.weaponTimeline && r.weaponTimeline.flipXKeys),
-      flipYKeys: sanitizeFlipKeys(r.weaponTimeline && r.weaponTimeline.flipYKeys)
+      flipYKeys: sanitizeFlipKeys(r.weaponTimeline && r.weaponTimeline.flipYKeys),
+      handSwapKeys: sanitizeFlipKeys(r.weaponTimeline && r.weaponTimeline.handSwapKeys)
     },
     effects: sanitizeEffects(r.effects),
     hitboxes: [],
@@ -377,6 +407,7 @@ export function sanitizePreset(raw, key) {
     out.projectileEvents = sanitizeProjectileEvents(r.projectileEvents);
     out.teleportEvents = sanitizeTeleportEvents(r.teleportEvents);
     out.blocks = sanitizeBlocksData(r.blocks);
+    if (kind === 'heavy') out.comboAfter = Math.round(clampNum(r.comboAfter, [1, 5], 3));
   } else if (kind === 'dash') {
     out.dashDistance = Math.round(clampNum(r.dashDistance, V2_LIMITS.dashDistance, 120));
     out.ranged = false;
@@ -395,12 +426,17 @@ export function baseStatsCost(bs = {}) {
 export function combatCost(combat) {
   const c = combat || {};
   const damage = Math.max(0, Math.min(60, Number(c.damage) || 0));
-  const cooldown = Math.max(0, Math.round((2500 - (Number(c.cooldownMs) || 2500)) / 50));
+  const cooldownMs = Math.max(ENVELOPE.cooldownMs[0], Math.min(ENVELOPE.cooldownMs[1], Number(c.cooldownMs) || COOLDOWN_BUDGET_BASE_MS));
+  const cooldownDelta = COOLDOWN_BUDGET_BASE_MS - cooldownMs;
+  const cooldown = cooldownDelta >= 0
+    ? Math.floor(cooldownDelta / COOLDOWN_BUDGET_COST_STEP_MS)
+    : -Math.floor(Math.abs(cooldownDelta) / COOLDOWN_BUDGET_REFUND_STEP_MS);
   const knockback = Math.round(Math.abs((Number(c.knockback) || 60) - 60) / 5) * 2;
   const dur = Math.max(0, Number(c.statusDurationMs) || 0);
-  const statusMul = c.status === 'slow' ? 1 : (c.status === 'bleed' || c.status === 'burn' ? 2 : (c.status === 'stun' ? 3 : 0));
+  const statusMul = c.status === 'slow' ? 1 : (c.status === 'bleed' || c.status === 'burn' ? 2 : (c.status === 'stun' ? 3 : (c.status === 'airborne' ? 4 : 0)));
   const status = Math.ceil(dur / 100) * statusMul;
-  return Math.round((damage + cooldown + knockback + status) * BUDGET_COST_MULT);
+  const ultimate = Math.max(0, Math.round(((Number(c.ultimateGain) || 10) - 10) / 5) * 3);
+  return Math.round((damage + knockback + status + ultimate) * BUDGET_COST_MULT + cooldown);
 }
 export function statCostV2(weapon) {
   const w = weapon || {};
@@ -429,7 +465,8 @@ export function enforceBudgetV2(weapon) {
       if (cost > POINT_BUDGET && cost > bestCost) { best = p; bestCost = cost; }
     }
     if (best && best.combat.statusDurationMs > 0) { best.combat.statusDurationMs = Math.max(0, best.combat.statusDurationMs - 100); continue; }
-    if (best && best.combat.cooldownMs < ENVELOPE.cooldownMs[1]) { best.combat.cooldownMs = Math.min(ENVELOPE.cooldownMs[1], best.combat.cooldownMs + 50); continue; }
+    if (best && best.combat.ultimateGain > 10) { best.combat.ultimateGain = Math.max(10, best.combat.ultimateGain - 5); continue; }
+    if (best && best.combat.cooldownMs < ENVELOPE.cooldownMs[1]) { best.combat.cooldownMs = Math.min(ENVELOPE.cooldownMs[1], best.combat.cooldownMs + COOLDOWN_BUDGET_REFUND_STEP_MS); continue; }
     if (best && best.combat.damage > 0) { best.combat.damage -= 1; continue; }
     if (best && best.combat.knockback !== 60) { best.combat.knockback += best.combat.knockback > 60 ? -5 : 5; continue; }
     break;
@@ -467,6 +504,63 @@ export function clampWorkshopWeaponV2(raw) {
     moveSpeed: Math.round(clampNum(bs0.moveSpeed, ENVELOPE.moveSpeed, 1) * 100) / 100,
   };
   const vv = (r.weaponVisual && typeof r.weaponVisual === 'object') ? r.weaponVisual : {};
+  const sanitizeAnchors = (a) => {
+    if (!a || typeof a !== 'object') return null;
+    const gx = clampNum(a.gx, [0, 1], 0.15);
+    const gy = clampNum(a.gy, [0, 1], 0.5);
+    const tx = clampNum(a.tx, [0, 1], 0.95);
+    const ty = clampNum(a.ty, [0, 1], 0.5);
+    return Math.hypot(tx - gx, ty - gy) < 0.02 ? null : { gx, gy, tx, ty };
+  };
+  const sanitizeDecorationAnchors = (a) => {
+    if (!a || typeof a !== 'object') return null;
+    const gx = clampNum(a.gx, [0, 1], 0.5);
+    const gy = clampNum(a.gy, [0, 1], 0.5);
+    const tx = clampNum(a.tx, [0, 1], 0.85);
+    const ty = clampNum(a.ty, [0, 1], 0.5);
+    return Math.hypot(tx - gx, ty - gy) < 0.02 ? { gx, gy, tx: 0.85, ty: 0.5 } : { gx, gy, tx, ty };
+  };
+  const sanitizeHat = (h) => (h && typeof h === 'object') ? {
+    imageId: h.imageId ? sanitizeText(h.imageId, 128) : null,
+    name: h.name ? sanitizeText(h.name, 24) : null,
+    scale: clampNum(h.scale, [0.2, 4], 1),
+    offsetX: clampNum(h.offsetX, [-120, 120], 0),
+    offsetY: clampNum(h.offsetY, [-120, 120], -18),
+    alpha: clampNum(h.alpha, [0, 1], 1),
+    rotation: clampNum(h.rotation, [-180, 180], 0),
+    anchorX: clampNum(h.anchorX, [0, 1], 0.5),
+    anchorY: clampNum(h.anchorY, [0, 1], 0.5),
+    anchors: sanitizeDecorationAnchors(h.anchors),
+    layer: ['behindPlayer', 'overPlayer', 'overWeapon'].includes(h.layer) ? h.layer : 'overPlayer',
+    showHandles: h.showHandles !== false,
+    followHead: !!h.followHead,
+    keys: Array.isArray(h.keys) ? h.keys.slice(0, 64).map(k => ({
+      t: clampNum(k && k.t, [0, 1], 0),
+      offsetX: clampNum(k && k.offsetX, [-120, 120], 0),
+      offsetY: clampNum(k && k.offsetY, [-120, 120], -18),
+      rotation: clampNum(k && k.rotation, [-180, 180], 0),
+      scale: clampNum(k && k.scale, [0.2, 4], 1),
+      alpha: clampNum(k && k.alpha, [0, 1], 1),
+    })).sort((a, b) => a.t - b.t) : [],
+  } : null;
+  const hats = (Array.isArray(vv.hats) && vv.hats.length ? vv.hats : (vv.hat ? [vv.hat] : []))
+    .map(sanitizeHat)
+    .filter(Boolean)
+    .slice(0, 5);
+  const sanitizeLayerOrder = (raw) => {
+    const allowed = new Set(['player', 'weapon', ...hats.map((_, i) => `hat:${i}`)]);
+    const out = [];
+    if (Array.isArray(raw)) {
+      for (const item of raw) {
+        const key = sanitizeText(item, 16);
+        if (allowed.has(key) && !out.includes(key)) out.push(key);
+      }
+    }
+    for (const item of ['player', 'weapon', ...hats.map((_, i) => `hat:${i}`)]) {
+      if (!out.includes(item)) out.push(item);
+    }
+    return out;
+  };
   const weaponVisual = {
     imageId: vv.imageId ? sanitizeText(vv.imageId, 128) : null,
     scale: clampNum(vv.scale, [0.3, 4.5], 1),
@@ -474,13 +568,18 @@ export function clampWorkshopWeaponV2(raw) {
     offsetX: clampNum(vv.offsetX, [-120, 120], 0),
     offsetY: clampNum(vv.offsetY, [-120, 120], 0),
     dual: !!vv.dual,   // 쌍수(양손) — draws a second off-hand weapon
-    hat: vv.hat && typeof vv.hat === 'object' ? {
-      imageId: vv.hat.imageId ? sanitizeText(vv.hat.imageId, 128) : null,
-      scale: clampNum(vv.hat.scale, [0.2, 4], 1),
-      offsetX: clampNum(vv.hat.offsetX, [-120, 120], 0),
-      offsetY: clampNum(vv.hat.offsetY, [-120, 120], -18),
-      alpha: clampNum(vv.hat.alpha, [0, 1], 1),
+    offhand: vv.offhand && typeof vv.offhand === 'object' ? {
+      imageId: vv.offhand.imageId ? sanitizeText(vv.offhand.imageId, 128) : null,
+      scale: clampNum(vv.offhand.scale, [0.3, 4.5], 1),
+      rotationOffset: clampNum(vv.offhand.rotationOffset, [-360, 360], 0),
+      offsetX: clampNum(vv.offhand.offsetX, [-120, 120], 0),
+      offsetY: clampNum(vv.offhand.offsetY, [-120, 120], 0),
+      anchors: sanitizeAnchors(vv.offhand.anchors),
     } : null,
+    hat: hats[0] || null,
+    hats,
+    selectedHat: clampNum(vv.selectedHat, [0, Math.max(0, hats.length - 1)], 0),
+    layerOrder: sanitizeLayerOrder(vv.layerOrder),
   };
   const rawPresets = (r.presets && typeof r.presets === 'object') ? r.presets : {};
   const presets = {};
@@ -493,7 +592,7 @@ export function clampWorkshopWeaponV2(raw) {
 
   const out = {
     schemaVersion: 2,
-    id: r.id ? sanitizeText(r.id, 48) : ('w2_' + Date.now().toString(36) + '_' + (_v2seq++)),
+    id: r.id ? sanitizeText(r.id, 128) : ('w2_' + Date.now().toString(36) + '_' + (_v2seq++)),
     name: sanitizeText(r.name, 24) || '이름없는 무기',
     desc: sanitizeText(r.desc, 80),
     color: (typeof r.color === 'string' && /^#[0-9a-f]{6}$/i.test(r.color)) ? r.color : null,

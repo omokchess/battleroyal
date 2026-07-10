@@ -57,11 +57,6 @@ export const BOT_DIFFICULTY = {
   },
 };
 
-// Bot weapon pool. Only the two built-ins remain (workshop weapons are the
-// live catalogue now); greatsword is excluded — its hold-to-charge F plays
-// poorly without a human, leaving a bot that never attacks.
-export const BOT_LOADOUT = ['sword'];
-
 // Rough projectile speeds (px/s) for aim lead. Melee weapons fall back to a
 // large value (≈ instant) so lead collapses to ~0 for them.
 const PROJ_SPEED = {};

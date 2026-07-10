@@ -43,6 +43,7 @@ const NEUTRAL = {
   legNearU: 84, legNearL: 90,
   legFarU: 96, legFarL: 92,
   weapon: 75,      // weapon angle from the hand (≈ continues the neutral forearm)
+  weaponOff: 105,  // off-hand weapon angle for dual wield
 };
 
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -214,6 +215,7 @@ export function solveStickman(pose, scale, x, y, facing = 1, opts = {}) {
   // Authored forearm direction (local) BEFORE any aim override — used to keep the
   // weapon's authored angle relative to the arm when the arm tracks the aim.
   const authForeDeg = segAngle(S.elbowN, S.handN);
+  const authOffForeDeg = segAngle(S.elbowF, S.handF);
 
   if (!opts.rawNearArm) {
     // Near arm follows the aim so the weapon points at the cursor (un-flip by facing).
@@ -237,81 +239,193 @@ export function solveStickman(pose, scale, x, y, facing = 1, opts = {}) {
     wDeg = curForeDeg + (wAuthored - authForeDeg);
   }
   S.weaponTip = { x: S.handN.x + Math.cos(wDeg * DEG) * wLen, y: S.handN.y + Math.sin(wDeg * DEG) * wLen };
+  const offAuthored = (pose.weaponOff ?? wAuthored);
+  const offLen = weaponReach(opts.offhandWeapon || opts.weapon, scale);
+  const offDeg = opts.rawNearArm
+    ? offAuthored
+    : segAngle(S.elbowF, S.handF) + (offAuthored - authOffForeDeg);
+  S.weaponOffTip = { x: S.handF.x + Math.cos(offDeg * DEG) * offLen, y: S.handF.y + Math.sin(offDeg * DEG) * offLen };
 
   const joints = {};
-  for (const k of ['pelvis', 'neck', 'shoulder', 'head', 'elbowN', 'handN', 'elbowF', 'handF', 'kneeN', 'footN', 'kneeF', 'footF', 'weaponTip']) {
+  for (const k of ['pelvis', 'neck', 'shoulder', 'head', 'elbowN', 'handN', 'elbowF', 'handF', 'kneeN', 'footN', 'kneeF', 'footF', 'weaponTip', 'weaponOffTip']) {
     joints[k] = toScreen(S[k]);
   }
+  joints._facing = facing >= 0 ? 1 : -1;
   return { joints, headR: S.headR };
 }
 
 /** Draw a stick figure from solved screen joints. `aimAngle` only orients the
  *  held weapon. Used by both the game and the editor preview. */
-export function drawStickFromJoints(ctx, sc, headR, { color = '#cdd3da', accent = '#0d0a06', lineW = 3, scale = 14, weapon = 'sword', drawWeapon = true, aimAngle = 0, headShape = 'circle', accessory = 'none', weaponImage = null, weaponImageSize = 2.0, weaponImageAnchors = null, weaponFlip = false, weaponFlipY = false, weaponDual = false, hatImage = null, hat = null } = {}) {
+export function drawStickFromJoints(ctx, sc, headR, { color = '#cdd3da', accent = '#0d0a06', lineW = 3, scale = 14, weapon = 'sword', drawWeapon = true, aimAngle = 0, headShape = 'circle', accessory = 'none', weaponImage = null, weaponImageSize = 2.0, weaponImageAnchors = null, weaponFlip = false, weaponFlipY = false, weaponDual = false, weaponHandSwapped = false, offhandWeapon = null, offhandImage = null, offhandImageSize = 2.0, offhandImageAnchors = null, hatImage = null, hat = null, hatImages = null, hats = null, layerOrder = null } = {}) {
   const lw = Math.max(2, lineW * (scale / 14));
+  const visualFacing = sc && sc._facing < 0 ? -1 : 1;
   const limb = (a, b, w, col) => {
     ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineCap = 'round';
     ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
   };
   const back = shade(color, -0.32);
+  const hatList = Array.isArray(hats) && hats.length ? hats.slice(0, 5) : (hat ? [hat] : []);
+  const imgList = Array.isArray(hatImages) && hatImages.length ? hatImages.slice(0, 5) : (hatImage ? [hatImage] : []);
+  const mainHand = weaponHandSwapped && sc.handF ? sc.handF : sc.handN;
+  const mainTip = weaponHandSwapped && sc.weaponOffTip ? sc.weaponOffTip : sc.weaponTip;
+  const offHand = weaponHandSwapped && sc.handN ? sc.handN : sc.handF;
+  const offTipBase = weaponHandSwapped && sc.weaponTip ? sc.weaponTip : sc.weaponOffTip;
+  const drawOffhandWeapon = () => {
+    // Dual-wield: a second (back-hand) weapon. In custom layer mode it follows
+    // the weapon layer; in legacy mode it remains behind the body as before.
+    if (!drawWeapon || !weaponDual || !offHand) return;
+    const offTip = offTipBase || (mainTip && mainHand
+      ? { x: offHand.x + (mainTip.x - mainHand.x), y: offHand.y + (mainTip.y - mainHand.y) }
+      : null);
+    if (offTip && offhandImage && offhandImage.complete && offhandImage.naturalWidth) {
+      ctx.save(); ctx.globalAlpha = 0.85; drawImageWeapon(ctx, offHand, offTip, scale, offhandImage, offhandImageSize, offhandImageAnchors, !weaponFlip, weaponFlipY, visualFacing); ctx.restore();
+    } else if (offTip && weaponImage && weaponImage.complete && weaponImage.naturalWidth) {
+      ctx.save(); ctx.globalAlpha = 0.85; drawImageWeapon(ctx, offHand, offTip, scale, weaponImage, weaponImageSize, weaponImageAnchors, !weaponFlip, weaponFlipY, visualFacing); ctx.restore();
+    } else if (offTip) {
+      const ow = offhandWeapon || weapon;
+      drawHeldWeapon(ctx, offHand, offTip, scale, ow, shade(WEAPON_STICK_COLOR[ow] || WEAPON_STICK_COLOR[weapon] || color, -0.25));
+    }
+  };
+  const drawMainWeapon = () => {
+    if (!drawWeapon || !mainTip || !mainHand) return;
+    if (weaponImage && weaponImage.complete && weaponImage.naturalWidth) {
+      drawImageWeapon(ctx, mainHand, mainTip, scale, weaponImage, weaponImageSize, weaponImageAnchors, weaponFlip, weaponFlipY, visualFacing);
+    } else {
+      const wcol = WEAPON_STICK_COLOR[weapon] || color;
+      drawHeldWeapon(ctx, mainHand, mainTip, scale, weapon, wcol);
+    }
+  };
+  const drawPlayerBody = () => {
+    limb(sc.pelvis, sc.kneeF, lw, back); limb(sc.kneeF, sc.footF, lw, back);
+    // Arms start at the NECK (not the lower shoulder) so they read as attached at
+    // the top of the torso.
+    limb(sc.neck, sc.elbowF, lw * 0.9, back); limb(sc.elbowF, sc.handF, lw * 0.9, back);
+    limb(sc.pelvis, sc.neck, lw * 1.15, color);
+    limb(sc.pelvis, sc.kneeN, lw, color); limb(sc.kneeN, sc.footN, lw, color);
+    drawHead(ctx, sc.head, sc.neck, headR, color, accent, Math.max(1, lw * 0.5), headShape, accessory);
+    limb(sc.neck, sc.elbowN, lw, color); limb(sc.elbowN, sc.handN, lw, color);
+  };
+  const customOrder = normalizeVisualLayerOrder(layerOrder, hatList);
+  if (customOrder) {
+    for (const item of customOrder) {
+      if (item === 'player') drawPlayerBody();
+      else if (item === 'weapon') { drawOffhandWeapon(); drawMainWeapon(); }
+      else if (item.startsWith('hat:')) drawDecorationAt(ctx, sc, headR, scale, hatList, imgList, Number(item.slice(4)), visualFacing);
+    }
+    return;
+  }
+
+  drawDecorationLayer(ctx, sc, headR, scale, hatList, imgList, 'behindPlayer', visualFacing);
   limb(sc.pelvis, sc.kneeF, lw, back); limb(sc.kneeF, sc.footF, lw, back);
   // Arms start at the NECK (not the lower shoulder) so they read as attached at
   // the top of the torso.
   limb(sc.neck, sc.elbowF, lw * 0.9, back); limb(sc.elbowF, sc.handF, lw * 0.9, back);
-  // Dual-wield: a second (back-hand) weapon behind the body, drawn before the
-  // front so it reads as the off-hand.
-  if (drawWeapon && weaponDual && sc.weaponTip && sc.handF) {
-    const farTip = { x: sc.handF.x + (sc.weaponTip.x - sc.handN.x), y: sc.handF.y + (sc.weaponTip.y - sc.handN.y) };
-    if (weaponImage && weaponImage.complete && weaponImage.naturalWidth) {
-      ctx.save(); ctx.globalAlpha = 0.85; drawImageWeapon(ctx, sc.handF, farTip, scale, weaponImage, weaponImageSize, weaponImageAnchors, !weaponFlip, weaponFlipY); ctx.restore();
-    } else drawHeldWeapon(ctx, sc.handF, farTip, scale, weapon, shade(WEAPON_STICK_COLOR[weapon] || color, -0.25));
-  }
+  drawOffhandWeapon();
   limb(sc.pelvis, sc.neck, lw * 1.15, color);
   limb(sc.pelvis, sc.kneeN, lw, color); limb(sc.kneeN, sc.footN, lw, color);
   drawHead(ctx, sc.head, sc.neck, headR, color, accent, Math.max(1, lw * 0.5), headShape, accessory);
-  if (hatImage && hatImage.complete && hatImage.naturalWidth && sc.head) {
-    const cfg = hat || {};
-    const size = headR * 2.4 * (Number(cfg.scale) || 1);
-    ctx.save();
-    ctx.globalAlpha = Number.isFinite(cfg.alpha) ? cfg.alpha : 1;
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(
-      hatImage,
-      sc.head.x - size / 2 + (Number(cfg.offsetX) || 0) * (scale / 46),
-      sc.head.y - size / 2 + (Number(cfg.offsetY) || -18) * (scale / 46),
-      size,
-      size
-    );
-    ctx.restore();
-  }
+  drawDecorationLayer(ctx, sc, headR, scale, hatList, imgList, 'overPlayer', visualFacing);
   limb(sc.neck, sc.elbowN, lw, color); limb(sc.elbowN, sc.handN, lw, color);
-  if (drawWeapon && sc.weaponTip) {
-    if (weaponImage && weaponImage.complete && weaponImage.naturalWidth) {
-      drawImageWeapon(ctx, sc.handN, sc.weaponTip, scale, weaponImage, weaponImageSize, weaponImageAnchors, weaponFlip, weaponFlipY);
-    } else {
-      const wcol = WEAPON_STICK_COLOR[weapon] || color;
-      drawHeldWeapon(ctx, sc.handN, sc.weaponTip, scale, weapon, wcol);
-    }
+  drawMainWeapon();
+  drawDecorationLayer(ctx, sc, headR, scale, hatList, imgList, 'overWeapon', visualFacing);
+}
+
+function normalizeVisualLayerOrder(layerOrder, hatList) {
+  if (!Array.isArray(layerOrder)) return null;
+  const allowed = new Set(['player', 'weapon', ...hatList.map((_, i) => `hat:${i}`)]);
+  const out = [];
+  for (const raw of layerOrder) {
+    const item = String(raw || '');
+    if (allowed.has(item) && !out.includes(item)) out.push(item);
   }
+  if (!out.includes('player')) out.push('player');
+  if (!out.includes('weapon')) out.push('weapon');
+  for (let i = 0; i < hatList.length; i++) {
+    const item = `hat:${i}`;
+    if (!out.includes(item)) out.push(item);
+  }
+  return out;
+}
+
+function drawDecorationAt(ctx, sc, headR, scale, hatList, imgList, index, visualFacing = 1) {
+  const img = imgList[index];
+  if (!img || !img.complete || !img.naturalWidth || !sc.pelvis) return;
+  const cfg = hatList[index] || {};
+  drawDecoration(ctx, sc, headR, scale, cfg, img, visualFacing);
+}
+
+function drawDecorationLayer(ctx, sc, headR, scale, hatList, imgList, layer, visualFacing = 1) {
+  for (let i = 0; i < hatList.length; i++) {
+    const img = imgList[i];
+    if (!img || !img.complete || !img.naturalWidth || !sc.pelvis) continue;
+    const cfg = hatList[i] || {};
+    if ((cfg.layer || 'overPlayer') !== layer) continue;
+    drawDecoration(ctx, sc, headR, scale, cfg, img, visualFacing);
+  }
+}
+
+function decorationOrigin(sc, scale, followHead = false) {
+  if (followHead && sc.head) {
+    return { x: sc.head.x, y: sc.head.y };
+  }
+  // Decorations are player-root cosmetics, not head-bone attachments. Use the
+  // neutral head centre relative to the pelvis so they stay still during pose
+  // playback unless the decoration's own keys move them.
+  return {
+    x: sc.pelvis.x,
+    y: sc.pelvis.y - (SEG.spine + SEG.neck + SEG.headR * 0.5) * scale,
+  };
+}
+
+function drawDecoration(ctx, sc, headR, scale, cfg, img, visualFacing = 1) {
+  const size = headR * 2.4 * (Number(cfg.scale) || 1);
+  const iw = img.naturalWidth || 1;
+  const ih = img.naturalHeight || 1;
+  const aspect = iw / ih;
+  const drawW = aspect >= 1 ? size : size * aspect;
+  const drawH = aspect >= 1 ? size / aspect : size;
+  const ax = Number.isFinite(Number(cfg.anchors?.gx)) ? Number(cfg.anchors.gx) : (Number.isFinite(Number(cfg.anchorX)) ? Number(cfg.anchorX) : 0.5);
+  const ay = Number.isFinite(Number(cfg.anchors?.gy)) ? Number(cfg.anchors.gy) : (Number.isFinite(Number(cfg.anchorY)) ? Number(cfg.anchorY) : 0.5);
+  const origin = decorationOrigin(sc, scale, !!cfg.followHead);
+  const facing = visualFacing < 0 ? -1 : 1;
+  const x = origin.x + (Number(cfg.offsetX) || 0) * (scale / 46) * facing;
+  const y = origin.y + (Number(cfg.offsetY) || -18) * (scale / 46);
+  const headRot = cfg.followHead && sc.head && sc.neck ? Math.atan2(sc.head.y - sc.neck.y, (sc.head.x - sc.neck.x) * facing) + Math.PI / 2 : 0;
+  ctx.save();
+  ctx.globalAlpha = Number.isFinite(cfg.alpha) ? cfg.alpha : 1;
+  ctx.imageSmoothingEnabled = false;
+  ctx.translate(x, y);
+  if (facing < 0) ctx.scale(-1, 1);
+  ctx.rotate(headRot + (Number(cfg.rotation) || 0) * Math.PI / 180);
+  ctx.drawImage(img, -drawW * ax, -drawH * ay, drawW, drawH);
+  ctx.restore();
 }
 
 // A user-supplied weapon IMAGE. The user marks two anchors on the image — the
 // GRIP (손잡이) and the TIP (끝) — and we map grip→hand and the grip→tip vector
 // onto the hand→weaponTip direction (so the weapon joint still aims it), scaled
 // so the grip→tip distance equals the weapon length (scale × size multiplier).
-function drawImageWeapon(ctx, hand, tip, scale, img, sizeMul, anchors, flip = false, flipY = false) {
+export function imageWeaponAnchorVector(anchors, iw, ih, flip = false, flipY = false) {
   const a = (anchors && Number.isFinite(anchors.gx)) ? anchors : { gx: 0.15, gy: 0.5, tx: 0.95, ty: 0.5 };
-  const iw = img.naturalWidth, ih = img.naturalHeight;
   const gX = a.gx * iw, gY = a.gy * ih;
-  const dx = (a.tx - a.gx) * iw, dy = (a.ty - a.gy) * ih;
-  const d = Math.hypot(dx, dy);
+  const rawDx = (a.tx - a.gx) * iw, rawDy = (a.ty - a.gy) * ih;
+  const dx = flipY ? -rawDx : rawDx;
+  const dy = flip ? -rawDy : rawDy;
+  return { gX, gY, dx, dy, d: Math.hypot(dx, dy), angle: Math.atan2(dy, dx) };
+}
+
+function drawImageWeapon(ctx, hand, tip, scale, img, sizeMul, anchors, flip = false, flipY = false, visualFacing = 1) {
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  const { gX, gY, d, angle } = imageWeaponAnchorVector(anchors, iw, ih, flip, flipY);
   if (!(d > 1)) return;                                   // degenerate anchors → skip
   const len = scale * (sizeMul || 2.0);
   const s = len / d;
-  const ang = Math.atan2(tip.y - hand.y, tip.x - hand.x);
+  const facing = visualFacing < 0 ? -1 : 1;
+  const ang = Math.atan2(tip.y - hand.y, (tip.x - hand.x) * facing);
   ctx.save();
   ctx.translate(hand.x, hand.y);
-  ctx.rotate(ang - Math.atan2(dy, dx));
+  if (facing < 0) ctx.scale(-1, 1);
+  ctx.rotate(ang - angle);
   if (flip) ctx.scale(1, -1);                             // 무기 좌우 반전 (blade side mirror)
   if (flipY) ctx.scale(-1, 1);                             // 무기 상하 반전 (grip-axis mirror)
   ctx.scale(s, s);
@@ -364,10 +478,10 @@ export function drawStickman(opts) {
   const { ctx, x, y, scale, facing = 1, color = '#cdd3da', accent = '#0d0a06',
     lineW = 3, pose, aimAngle = 0, weapon = 'sword', headShape = 'circle', accessory = 'none',
     weaponImage = null, weaponImageSize = 2.0, weaponImageAnchors = null, weaponFlip = false, weaponFlipY = false, weaponDual = false,
-    hatImage = null, hat = null,
+    offhandWeapon = null, offhandImage = null, offhandImageSize = 2.0, offhandImageAnchors = null, weaponHandSwapped = false, hatImage = null, hat = null, hatImages = null, hats = null, layerOrder = null,
     rawNearArm = false } = opts;
-  const { joints, headR } = solveStickman(pose, scale, x, y, facing, { aimAngle, weapon, rawNearArm });
-  drawStickFromJoints(ctx, joints, headR, { color, accent, lineW, scale, weapon, aimAngle, headShape, accessory, weaponImage, weaponImageSize, weaponImageAnchors, weaponFlip, weaponFlipY, weaponDual, hatImage, hat });
+  const { joints, headR } = solveStickman(pose, scale, x, y, facing, { aimAngle, weapon, rawNearArm, offhandWeapon });
+  drawStickFromJoints(ctx, joints, headR, { color, accent, lineW, scale, weapon, aimAngle, headShape, accessory, weaponImage, weaponImageSize, weaponImageAnchors, weaponFlip, weaponFlipY, weaponDual, weaponHandSwapped, offhandWeapon, offhandImage, offhandImageSize, offhandImageAnchors, hatImage, hat, hatImages, hats, layerOrder });
 }
 
 // A held weapon: a bar/blade from the hand to the (already-solved) tip.

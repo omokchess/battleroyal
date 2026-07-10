@@ -87,19 +87,19 @@ export const Collision = {
         const dx = p2.x - p1.x;
         const dy = p2.y - p1.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        const minDist = radius * 2;
+        const minDist = radius * 1.55;
 
         if (dist < minDist) {
           // If perfectly overlapping, nudge them
           const overlap = minDist - dist;
           const forceX = dist === 0 ? 1 : dx / dist;
-          const forceY = dist === 0 ? 0 : dy / dist;
+          const forceY = 0;
 
-          // Push them apart 50/50
-          p1.x -= forceX * overlap * 0.5;
-          p1.y -= forceY * overlap * 0.5;
-          p2.x += forceX * overlap * 0.5;
-          p2.y += forceY * overlap * 0.5;
+          // Push them apart gently. This is only an anti-overlap nudge, not combat knockback.
+          p1.x -= forceX * overlap * 0.18;
+          p1.y -= forceY * overlap * 0.18;
+          p2.x += forceX * overlap * 0.18;
+          p2.y += forceY * overlap * 0.18;
         }
       }
     }

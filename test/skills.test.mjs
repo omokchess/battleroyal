@@ -16,8 +16,54 @@ function combatGame() {
   game.mapWidth = 700;
   game.mapHeight = 700;
   game._creditKill = () => {};
+  game._runWorkshopSwingEvents = () => {};
+  game._terrainBlocksSegment = () => false;
+  game._displace = (p, dx, dy) => { p.x += dx || 0; p.y += dy || 0; };
+  game._awardUltimateGauge = () => {};
+  game._applyStatusEffect = () => {};
+  game._triggerHitstop = () => {};
   return game;
 }
+
+function botSpawnGame(botWorkshopWeapons = []) {
+  const game = Object.create(Game.prototype);
+  game.players = {};
+  game._bots = [];
+  game._botSeq = 0;
+  game.botWorkshopWeapons = botWorkshopWeapons;
+  game._getRandomSpawnPoint = () => ({ x: 100, y: 120 });
+  return game;
+}
+
+test('bots require workshop weapons instead of falling back to sword loadout', () => {
+  const empty = botSpawnGame([]);
+  empty._spawnBots(2, 'normal');
+  assert.equal(Object.keys(empty.players).length, 0);
+  assert.equal(empty._bots.length, 0);
+
+  const weapon = {
+    id: 'ws-bot-blade',
+    name: '봇 공방검',
+    stats: { damage: 18, cooldownMs: 640, maxHp: 133, moveSpeed: 1.2, knockback: 40 },
+    motionSet: {
+      attack: {
+        duration: 0.4,
+        keyframes: [{ t: 0, pose: {} }, { t: 1, pose: {} }],
+        hitboxes: [{ ox: 35, oy: 0, w: 50, h: 30, activeStart: 0.2, activeEnd: 0.35, frameTime: 0.25 }]
+      }
+    }
+  };
+  const game = botSpawnGame([weapon]);
+  game._spawnBots(3, 'normal');
+  const bots = Object.values(game.players);
+  assert.equal(bots.length, 3);
+  assert.equal(game._bots.length, 3);
+  for (const bot of bots) {
+    assert.ok(bot.isBot);
+    assert.equal(bot.workshopWeapon.name, '봇 공방검');
+    assert.equal(bot.maxHp, 133);
+  }
+});
 
 test('dash grants i-frames and bursts the player along the held direction', () => {
   const p = new Player('p1', 'Dasher', 'sword', 100, 100);
@@ -43,6 +89,31 @@ test('dash is gated by its cooldown', () => {
   assert.equal(p.startDash(1, 0), true);
   p.updatePosition(DashConfig.durationMs / 1000, {}, 1000, 1000);
   assert.equal(p.startDash(1, 0), false);
+});
+
+test('workshop frame hitboxes split preset damage across authored hitboxes', () => {
+  const game = combatGame();
+  const attacker = new Player('atk', 'Maker', 'sword', 100, 100);
+  const target = new Player('tar', 'Target', 'sword', 130, 100);
+  attacker.angle = 0;
+  attacker.workshopWeapon = { stats: { damage: 10 } };
+  game.players[attacker.id] = attacker;
+  game.players[target.id] = target;
+
+  game._startHitboxSwing(attacker, {
+    duration: 1,
+    hitboxes: [
+      { ox: 30, oy: 0, w: 60, h: 40, frameTime: 0.2 },
+      { ox: 30, oy: 0, w: 60, h: 40, frameTime: 0.6 },
+    ],
+  }, 1000, { damage: 10 });
+
+  game._updateHitboxSwings(1200);
+  assert.equal(target.hp, target.maxHp - 5);
+  game._updateHitboxSwings(1210);
+  assert.equal(target.hp, target.maxHp - 5, 'same frame hitbox does not tick repeatedly');
+  game._updateHitboxSwings(1600);
+  assert.equal(target.hp, target.maxHp - 10, 'all authored hitboxes together preserve the preset damage');
 });
 
 test('sword skill releases timed swordwaves without a spin effect', () => {

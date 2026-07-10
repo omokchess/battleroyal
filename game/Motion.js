@@ -35,7 +35,7 @@ const VALID_EVENTS = new Set(['impact', 'projectile', 'sfx']);
 // (Phase C) is stricter still; these are the absolute ceilings.
 export const MOTION_LIMITS = {
   minDuration: 0.05,
-  maxDuration: 6,
+  maxDuration: 30,
   maxKeyframes: 64,
   maxEvents: 12,
   angleMin: -360,
@@ -135,7 +135,10 @@ function sanitizeHitboxes(arr) {
     let aS = Number.isFinite(hb.activeStart) ? clamp(hb.activeStart, 0, 1) : 0;
     let aE = Number.isFinite(hb.activeEnd) ? clamp(hb.activeEnd, 0, 1) : 1;
     if (aE < aS) { const t = aS; aS = aE; aE = t; }
-    out.push({ ox, oy, w, h, activeStart: aS, activeEnd: aE });
+    const frameTime = Number.isFinite(Number(hb.frameTime))
+      ? clamp(Number(hb.frameTime), 0, 1)
+      : clamp((aS + aE) / 2, 0, 1);
+    out.push({ ox, oy, w, h, activeStart: aS, activeEnd: aE, frameTime });
   }
   return out;
 }
@@ -348,7 +351,7 @@ export class StickAnimator {
     if (!motion || !Array.isArray(motion.keyframes) || !motion.keyframes.length) return;
     const s = this._for(id);
     s.ovMotion = motion; s.ovStart = now;
-    s.ovUntil = now + Math.min(3000, (motion.duration || 0.5) * 1000);
+    s.ovUntil = now + Math.min(MOTION_LIMITS.maxDuration * 1000, (motion.duration || 0.5) * 1000);
   }
 
   /** Scan synced effects for stick_motion triggers (host pushes them; every
@@ -366,7 +369,7 @@ export class StickAnimator {
     }
   }
 
-  /** Advance + sample a player's pose this frame. Returns { pose, rootOffset, motionName }. */
+  /** Advance + sample a player's pose this frame. Returns { pose, rootOffset, motionName, phase }. */
   sample(player, now) {
     const s = this._for(player.id);
     const dt = s.last ? Math.min(0.05, (now - s.last) / 1000) : 0;
@@ -377,7 +380,7 @@ export class StickAnimator {
     if (s.ovUntil && now < s.ovUntil && s.ovMotion) {
       const ph = Math.min(0.999, (now - s.ovStart) / 1000 / (s.ovMotion.duration || 0.5));
       s.motion = 'overlay';
-      return { pose: samplePose(s.ovMotion, ph), rootOffset: sampleRootOffset(s.ovMotion, ph), motionName: 'overlay' };
+      return { pose: samplePose(s.ovMotion, ph), rootOffset: sampleRootOffset(s.ovMotion, ph), motionName: 'overlay', phase: ph };
     }
 
     const setId = sanitizeMotionSetId(player.motionSetId) || weaponSetId(player.weapon);
@@ -400,7 +403,7 @@ export class StickAnimator {
     if (player.lastAttackTime && player.lastAttackTime !== s.prevAttack) {
       s.prevAttack = player.lastAttackTime;
       s.attackStart = now;
-      s.attackTag = player.attackMotionTag || 'attack';
+      s.attackTag = player.attackMotionTag || player.lastAttackMotionTag || 'attack';
       s.attackDur = (tagMotion(s.attackTag) || tagMotion('attack') || resolveMotion(setId, 'attack')).duration || 0.42;
       s.attackUntil = now + s.attackDur * 1000;
       player.attackMotionTag = null;
@@ -429,8 +432,10 @@ export class StickAnimator {
       pose: samplePose(motion, s.phase),
       rootOffset: sampleRootOffset(motion, s.phase),
       motionName,
+      phase: s.phase,
       weaponFlip: sampleFlipAt(motion.flipXKeys, s.phase),
-      weaponFlipY: sampleFlipAt(motion.flipYKeys, s.phase)
+      weaponFlipY: sampleFlipAt(motion.flipYKeys, s.phase),
+      handSwapped: sampleFlipAt(motion.handSwapKeys, s.phase)
     };
   }
 }
@@ -452,6 +457,9 @@ function cloneMotion(m) {
     events: (m.events || []).map(e => ({ t: e.t, type: e.type })),
   };
   if (m.previewOffset) c.previewOffset = { ...m.previewOffset };
+  if (Array.isArray(m.flipXKeys)) c.flipXKeys = m.flipXKeys.map(k => ({ ...k }));
+  if (Array.isArray(m.flipYKeys)) c.flipYKeys = m.flipYKeys.map(k => ({ ...k }));
+  if (Array.isArray(m.handSwapKeys)) c.handSwapKeys = m.handSwapKeys.map(k => ({ ...k }));
   // Preserve admin-canonical gameplay fields when present (already sanitized).
   if (Array.isArray(m.hitboxes)) c.hitboxes = m.hitboxes.map(h => ({ ...h }));
   if (Number.isFinite(m.knockback)) c.knockback = m.knockback;

@@ -96,21 +96,26 @@ export async function signUpWithId(id, password) {
   if (!firebaseAuth) throw new Error('Firebase가 설정되지 않았습니다');
   const cleanId = String(id || '').trim();
   const cred = await createUserWithEmailAndPassword(firebaseAuth, idToEmail(cleanId), password);
-  await ensureUserProfile(cred.user, cleanId);
+  try { await ensureUserProfile(cred.user, cleanId); }
+  catch (error) { console.error('[firebase] ensure profile after signup failed', error); }
   return cred.user;
 }
 
 export async function signInWithId(id, password) {
   if (!firebaseAuth) throw new Error('Firebase가 설정되지 않았습니다');
   const cred = await signInWithEmailAndPassword(firebaseAuth, idToEmail(id), password);
-  await ensureUserProfile(cred.user, id);
+  try { await ensureUserProfile(cred.user, id); }
+  catch (error) { console.error('[firebase] ensure profile after signin failed', error); }
+  return cred.user;
 }
 
 export async function signInWithGoogle() {
   if (!firebaseAuth) return;
   const provider = new GoogleAuthProvider();
   const cred = await signInWithPopup(firebaseAuth, provider);
-  await ensureUserProfile(cred.user);
+  try { await ensureUserProfile(cred.user); }
+  catch (error) { console.error('[firebase] ensure profile after google signin failed', error); }
+  return cred.user;
 }
 
 export async function signOut() {

@@ -7,7 +7,7 @@ import { Player } from './Player.js';
 import { Projectile } from './Projectile.js';
 import { Collision } from './Collision.js';
 import { Camera } from './Camera.js';
-import { Input } from './Input.js';
+import { Input, formatKeyCode } from './Input.js';
 import { Renderer } from './Renderer.js';
 import { Weapons, getEffectiveWeapon, SkillConfig, DashConfig, ComboConfig, MagicConfig, AuxSkillConfig } from './Weapons.js';
 import { isMobileDevice } from './Device.js';
@@ -17,7 +17,7 @@ import { Sound } from './Sound.js';
 import { generateCover, resolveCover, coverBlocksSegment, coverRayDistance, coverClearOfPoint, coverBlocksCircle } from './Cover.js';
 import { generateWater, emptyWater } from './Water.js';
 import { buildLevel, PHYS } from './Level.js';
-import { BotBrain, BOT_DIFFICULTY, BOT_LOADOUT } from './Bot.js';
+import { BotBrain, BOT_DIFFICULTY } from './Bot.js';
 import { resolveMotion, weaponSetId, sanitizeMotionSetId, canonicalWeaponMotion, canonicalWeaponsSnapshot, setCanonicalWeapon } from './Motion.js';
 import { STATUS } from './Status.js';
 
@@ -25,6 +25,16 @@ import { STATUS } from './Status.js';
 // avoid the "blink and die again" loop from a 0.5s death turn.
 const RESPAWN_MS = 1500;
 const RESPAWN_PROTECTION_MS = 2000;
+
+function escapeHudHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch]));
+}
 
 export class Game {
   constructor(canvas, networkManager, costume = null, options = {}) {
@@ -44,6 +54,9 @@ export class Game {
     this.botCount = Number.isFinite(options.botCount) ? options.botCount : 3;
     this.botFill = Number.isFinite(options.botFill) ? options.botFill : 0;
     this.botDifficulty = BOT_DIFFICULTY[options.botDifficulty] ? options.botDifficulty : 'normal';
+    this.botWorkshopWeapons = Array.isArray(options.botWorkshopWeapons)
+      ? options.botWorkshopWeapons.filter(w => w && typeof w === 'object')
+      : [];
     this._botSeq = 0;
     this._bots = [];   // BotBrain instances (host only)
 
@@ -231,27 +244,23 @@ export class Game {
       // simulated time matches the clock no matter how hard we're throttled.
       this._visibilityChangeHandler = () => {
         if (document.hidden) {
+          this._hiddenAt = Date.now();
           if (!this.backgroundIntervalId) {
-            this._bgLastTick = Date.now();
-            this.backgroundIntervalId = setInterval(() => {
-              const nowTime = Date.now();
-              let elapsed = (nowTime - this._bgLastTick) / 1000;
-              this._bgLastTick = nowTime;
-              if (this.matchOver || this.matchHold || nowTime < this.countdownUntil) return;
-              elapsed = Math.min(elapsed, 3); // hard cap: never simulate a huge gap
-              const step = 0.035;             // ~30 FPS physics step
-              while (elapsed > 1e-4) {
-                const dt = Math.min(step, elapsed);
-                this._updateHostPhysics(dt, nowTime);
-                elapsed -= dt;
-              }
-            }, 35);
+            this.backgroundIntervalId = -1;
           }
         } else {
-          if (this.backgroundIntervalId) {
-            clearInterval(this.backgroundIntervalId);
-            this.backgroundIntervalId = null;
+          const pauseMs = this._hiddenAt ? Math.max(0, Date.now() - this._hiddenAt) : 0;
+          if (pauseMs > 0) {
+            Object.values(this.players || {}).forEach(p => {
+              if (p?.isDead && p.respawnTime) p.respawnTime += pauseMs;
+            });
+            if (this.countdownUntil > Date.now()) this.countdownUntil += pauseMs;
           }
+          this._hiddenAt = 0;
+          if (this.backgroundIntervalId && this.backgroundIntervalId !== -1) {
+            clearInterval(this.backgroundIntervalId);
+          }
+          this.backgroundIntervalId = null;
           this.lastFrameTime = performance.now();
         }
       };
@@ -313,7 +322,8 @@ export class Game {
     const bindings = [
       ['settingHideEnemyPreview', 'hideEnemyAttackPreviews'],
       ['settingMinEnemyEffects', 'minimizeEnemyAttackEffects'],
-      ['settingPerformanceMode', 'performanceMode']
+      ['settingPerformanceMode', 'performanceMode'],
+      ['settingShowHitboxes', 'showHitboxes']
     ];
 
     const cleanups = [];
@@ -351,12 +361,14 @@ export class Game {
       return {
         hideEnemyAttackPreviews: Boolean(parsed.hideEnemyAttackPreviews),
         minimizeEnemyAttackEffects: Boolean(parsed.minimizeEnemyAttackEffects),
+        showHitboxes: parsed.showHitboxes === undefined ? true : Boolean(parsed.showHitboxes),
         performanceMode: parsed.performanceMode === undefined ? perfDefault : Boolean(parsed.performanceMode)
       };
     } catch {
       return {
         hideEnemyAttackPreviews: false,
         minimizeEnemyAttackEffects: false,
+        showHitboxes: true,
         performanceMode: perfDefault
       };
     }
@@ -375,6 +387,11 @@ export class Game {
    */
   _gameLoop(timestamp) {
     if (!this.isRunning) return;
+    if (document.hidden) {
+      this.lastFrameTime = timestamp;
+      this.animationFrameId = requestAnimationFrame((t) => this._gameLoop(t));
+      return;
+    }
 
     const deltaTime = Math.min((timestamp - this.lastFrameTime) / 1000, 0.1); // Cap deltaTime to prevent quantum tunneling on lags
     this.lastFrameTime = timestamp;
@@ -413,6 +430,9 @@ export class Game {
           if (this.input.consumeBasicAttack()) {
             this._applyMobileAimAssistForAttack(hp, 'basic');
             this._performBasicAttack(hp, getEffectiveWeapon(hp.weapon, hp.buffType), now);
+          }
+          if (this.input.consumeUltimate()) {
+            this._handleUltimatePressed(hp, now);
           }
           const targetCast = this._consumeTargetCastWorld(hp);
           if (targetCast) {
@@ -470,6 +490,9 @@ export class Game {
           this._applyMobileAimAssistForAttack(localPlayer, 'basic');
           this.networkManager.sendToHost(Protocol.clientAim(localPlayer.angle));
           this.networkManager.sendToHost(Protocol.clientAction('basicAttack'));
+        }
+        if (this.input.consumeUltimate()) {
+          this.networkManager.sendToHost(Protocol.clientAction('ultimate'));
         }
         const targetCast = this._consumeTargetCastWorld(localPlayer);
         if (targetCast) {
@@ -712,6 +735,7 @@ export class Game {
             // A workshop ranged basic attack: weapon-damage direct hit + status.
             const owner = this.players[proj.ownerId];
             const died = target.takeDamage(proj.damage || 0, owner ? owner.nickname : '');
+            if (owner) this._awardUltimateGauge(owner, proj.wsUltimateGain ?? 10);
             if (owner) this._applyWorkshopStatus(owner, target, now);
             if (died) this._creditKill(proj.ownerId, target);
             if (!proj.piercing) proj.isDead = true;
@@ -722,7 +746,8 @@ export class Game {
             // (not the basic swing's) — see _fireWorkshopPresetProjectile.
             const owner = this.players[proj.ownerId];
             const died = target.takeDamage(proj.damage || 0, owner ? owner.nickname : '');
-            if (proj.wsStatus) this._applyStatusEffect(target, proj.ownerId, proj.wsStatus, proj.wsStatusMs || 0, now);
+            if (owner) this._awardUltimateGauge(owner, proj.wsUltimateGain ?? 10);
+            if (proj.wsStatus) this._applyStatusEffect(target, proj.ownerId, proj.wsStatus, proj.wsStatusMs || 0, now, proj.wsAirborneHeight);
             if (died) this._creditKill(proj.ownerId, target);
             if (!proj.piercing) proj.isDead = true;
             return;
@@ -986,6 +1011,7 @@ export class Game {
     const pj = player.workshopWeapon.projectile; if (!pj) return;
     player.lastAttackTime = now; player.swingDirection *= -1;
     player.attackMotionTag = 'attack';
+    player.lastAttackMotionTag = 'attack';
     this._lockPlayerMotion(player, now, player.workshopWeapon?.motionSet?.attack);
     this._spawnWorkshopProjectile(player, pj, player.workshopWeapon?.stats || {}, now, 'basic');
   }
@@ -1010,9 +1036,16 @@ export class Game {
     // Collision radius from the authored hitbox (circle radius, or rect ½-extent).
     const hb = pj.hitbox || {};
     proj.radius = (hb.shape === 'circle') ? Math.max(3, hb.radius || 8) : Math.max(4, Math.max(hb.width || 24, hb.height || 12) / 2);
-    proj.wsImageId = pj.imageId || 'arrow'; proj.wsScale = pj.scale || 1;
+    proj.wsImageId = pj.imageId || 'arrow';
+    proj.wsScale = Math.max(0.3, Math.min(3, Number(pj.scale) || 1));
+    proj.wsRotation = Number.isFinite(Number(pj.rotation)) ? Number(pj.rotation) : 0;
     proj.wsStatus = combat.status || 'none';
     proj.wsStatusMs = combat.statusDurationMs || 0;
+    proj.wsAirborneHeight = combat.airborneHeight || 120;
+    proj.wsSlot = tagSuffix;
+    proj.wsUltimateGain = tagSuffix === 'basic'
+      ? 10
+      : Math.max(10, Math.min(35, Math.round((Number(combat.ultimateGain) || 10) / 5) * 5));
     this.projectiles.push(proj);
     if (player.id === this.localPlayerId) Sound.play('shoot');
   }
@@ -1020,17 +1053,40 @@ export class Game {
   _applyWorkshopStatus(owner, target, now) {
     const s = owner.workshopWeapon?.stats;
     if (!s || !s.status || s.status === 'none') return;
-    this._applyStatusEffect(target, owner.id, s.status, s.statusDurationMs || 0, now);
+    this._applyStatusEffect(target, owner.id, s.status, s.statusDurationMs || 0, now, s.airborneHeight);
   }
 
   /** Apply an arbitrary status effect (shared by basic/heavy/skill hits — each
    *  preset carries its own status/duration rather than always the basic one). */
-  _applyStatusEffect(target, ownerId, status, ms, now) {
+  _applyStatusEffect(target, ownerId, status, ms, now, airborneHeight = 120) {
     if (!status || status === 'none') return;
     if (status === 'slow') this._applySlow(target, ms);
     else if (status === 'bleed') this._applyBleed(target, ownerId);
     else if (status === 'burn') this._applyBurn(target, ownerId, 2, ms);
     else if (status === 'stun') this._applyStun(target, ms, now);
+    else if (status === 'airborne') this._applyAirborne(target, ms, airborneHeight, now);
+  }
+
+  _applyAirborne(target, durationMs = 400, height = 120, now = Date.now()) {
+    if (!this._canApplyStatus(target)) return;
+    const ms = Math.max(100, Number(durationMs) || 400);
+    const h = Math.max(20, Math.min(260, Number(height) || 120));
+    const liftSeconds = Math.max(0.12, ms / 1000);
+    target.vy = Math.min(target.vy || 0, -h / liftSeconds);
+    target.grounded = false;
+    target.jumping = false;
+    this._applyStun(target, ms, now);
+  }
+
+  _awardUltimateGauge(player, amount = 10) {
+    if (!player || player.isDead) return;
+    const gain = Math.max(0, Math.min(35, Math.round((Number(amount) || 0) / 5) * 5));
+    if (gain <= 0) return;
+    const before = Math.max(0, Math.min(100, Number(player.ultimateGauge) || 0));
+    player.ultimateGauge = Math.max(0, Math.min(100, before + gain));
+    if (before < 100 && player.ultimateGauge >= 100 && player.id === this.localPlayerId) {
+      this._announce('궁극기 준비!');
+    }
   }
 
   /** Fire a ranged skill preset's projectile (skill1/2/3) — same shape as the
@@ -1040,6 +1096,7 @@ export class Game {
     if (this._isMotionLocked(player, now)) return;
     player.lastAttackTime = now; player.swingDirection *= -1;
     player.attackMotionTag = tagSuffix || 'skill';
+    player.lastAttackMotionTag = player.attackMotionTag;
     this._lockPlayerMotion(player, now, player.workshopWeapon?.motionSet?.[tagSuffix || 'skill']);
     this._spawnWorkshopProjectile(player, pj, combat, now, tagSuffix || 'skill');
   }
@@ -1066,9 +1123,10 @@ export class Game {
       const swingMotion = motion ? { ...motion, hitboxes: (Array.isArray(motion.hitboxes) ? motion.hitboxes : hb) || [] } : { duration: 0.4, hitboxes: hb || [] };
       this._startHitboxSwing(player, swingMotion, now, {
         damage: combat.damage, knockback: combat.knockback,
-        status: combat.status, statusMs: combat.statusDurationMs,
+        status: combat.status, statusMs: combat.statusDurationMs, airborneHeight: combat.airborneHeight,
         projectile: ranged || null,
         motionTag: slot,
+        ultimateGain: combat.ultimateGain,
       });
     }
     return true;   // slot is authored (motion + cooldown apply) even with no hitbox/projectile yet
@@ -1079,6 +1137,7 @@ export class Game {
   _startHitboxSwing(player, motion, now, opts = {}) {
     player.lastAttackTime = now;
     player.attackMotionTag = opts.motionTag || 'attack';
+    player.lastAttackMotionTag = player.attackMotionTag;
     this._lockPlayerMotion(player, now, motion);
     player.swingDirection *= -1;
     player._hbSwing = {
@@ -1094,8 +1153,11 @@ export class Game {
       firedFrameEffects: new Set(),
       knockback: Number.isFinite(opts.knockback) ? opts.knockback : (motion.knockback || 0),
       damage: Number.isFinite(opts.damage) ? opts.damage : null,   // override (e.g. heavy/skill preset)
+      damageDivisor: Math.max(1, Array.isArray(motion.hitboxes) ? motion.hitboxes.length : 0),
       status: opts.status && opts.status !== 'none' ? opts.status : null,
       statusMs: opts.statusMs || 0,
+      airborneHeight: opts.airborneHeight || 120,
+      ultimateGain: Number.isFinite(Number(opts.ultimateGain)) ? Number(opts.ultimateGain) : null,
       hit: new Set(),
     };
     if (player.id === this.localPlayerId) Sound.play(Sound.attackSoundFor(getEffectiveWeapon(player.weapon, player.buffType)));
@@ -1105,6 +1167,9 @@ export class Game {
     if (!player) return;
     const durMs = Math.max(80, Math.round(((motion && motion.duration) || 0.42) * 1000));
     player.motionLockUntil = Math.max(player.motionLockUntil || 0, now + durMs);
+    if (motion && typeof player.beginMotionRoot === 'function') {
+      player.beginMotionRoot(motion, now, durMs);
+    }
   }
 
   _isMotionLocked(player, now = Date.now()) {
@@ -1114,7 +1179,9 @@ export class Game {
   /**
    * Advance every active hitbox swing: during each hitbox's active window, test
    * its AABB (world px relative to the attacker, forward = facing) against all
-   * live targets and apply the weapon's damage once per target per swing.
+   * live targets and apply the weapon's damage once per target per authored
+   * hitbox. This lets frame-by-frame hitboxes land independently while each
+   * individual active frame still hits a target only once.
    */
   _updateHitboxSwings(now) {
     for (const id in this.players) {
@@ -1129,24 +1196,32 @@ export class Game {
       const wcfg = getEffectiveWeapon(p.weapon, p.buffType);
       // Swing-specific override (heavy finisher) → workshop damage → base weapon.
       const dmg = (Number.isFinite(sw.damage) ? sw.damage : (p.workshopWeapon?.stats?.damage)) || wcfg.damage || 10;
+      const perHitDamage = dmg / Math.max(1, Number(sw.damageDivisor) || hitboxDamageDivisor(sw.hitboxes));
 
       this._runWorkshopSwingEvents(p, sw, phase, now);
 
-      for (const hb of (sw.hitboxes || [])) {
-        if (phase < hb.activeStart || phase > hb.activeEnd) continue;
+      const hitboxes = sw.hitboxes || [];
+      for (let hbIndex = 0; hbIndex < hitboxes.length; hbIndex++) {
+        const hb = hitboxes[hbIndex];
+        const frameTime = Number(hb.frameTime);
+        const activeStart = Number.isFinite(frameTime) ? Math.max(0, frameTime - 0.025) : hb.activeStart;
+        const activeEnd = Number.isFinite(frameTime) ? Math.min(1, frameTime + 0.025) : hb.activeEnd;
+        if (phase < activeStart || phase > activeEnd) continue;
         const bx = p.x + hb.ox * facing, by = p.y + hb.oy;
         const bl = bx - hb.w / 2, br = bx + hb.w / 2, bt = by - hb.h / 2, bb = by + hb.h / 2;
         for (const tid in this.players) {
           const t = this.players[tid];
-          if (t.id === p.id || t.isDead || sw.hit.has(t.id)) continue;
+          const hitKey = `${hbIndex}:${t.id}`;
+          if (t.id === p.id || t.isDead || sw.hit.has(hitKey)) continue;
           if (t.isInvincible && t.isInvincible()) continue;
           const tr = t.radius || 14;
           if (br <= t.x - tr || bl >= t.x + tr || bb <= t.y - tr || bt >= t.y + tr) continue;
           if (this._terrainBlocksSegment(p.x, p.y, t.x, t.y)) continue;  // walls block
-          sw.hit.add(t.id);
+          sw.hit.add(hitKey);
           if (sw.knockback) this._displace(t, facing * sw.knockback, 0);
-          const died = t.takeDamage(dmg, p.nickname);
-          if (sw.status) this._applyStatusEffect(t, p.id, sw.status, sw.statusMs, now);
+          const died = t.takeDamage(perHitDamage, p.nickname);
+          this._awardUltimateGauge(p, Number.isFinite(Number(sw.ultimateGain)) ? sw.ultimateGain : 10);
+          if (sw.status) this._applyStatusEffect(t, p.id, sw.status, sw.statusMs, now, sw.airborneHeight);
           if (died) this._creditKill(p.id, t);
           if (p.id === this.localPlayerId) this._triggerHitstop(now, 42);
         }
@@ -1168,7 +1243,9 @@ export class Game {
     const combat = {
       damage: Number.isFinite(sw.damage) ? sw.damage : (player.workshopWeapon?.stats?.damage || 12),
       status: sw.status || 'none',
-      statusDurationMs: sw.statusMs || 0
+      statusDurationMs: sw.statusMs || 0,
+      airborneHeight: sw.airborneHeight || 120,
+      ultimateGain: Number.isFinite(Number(sw.ultimateGain)) ? sw.ultimateGain : 10,
     };
     for (let i = 0; i < (sw.projectileEvents || []).length; i++) {
       if (sw.firedProjectileEvents.has(i)) continue;
@@ -1192,11 +1269,11 @@ export class Game {
       const ev = sw.frameEffects[i];
       if (phase < ev.time) continue;
       sw.firedFrameEffects.add(i);
-      this._spawnWorkshopFrameEffect(player, ev, now);
+      this._spawnWorkshopFrameEffect(player, ev, now, sw.durMs);
     }
   }
 
-  _spawnWorkshopFrameEffect(player, ev = {}, now = Date.now()) {
+  _spawnWorkshopFrameEffect(player, ev = {}, now = Date.now(), motionDurMs = 420) {
     if (!player) return;
     const angle = (player.angle || 0) + ((Number(ev.rotation) || 0) * Math.PI / 180);
     const forward = Math.cos(player.angle || 0) >= 0 ? 1 : -1;
@@ -1215,6 +1292,10 @@ export class Game {
     } else if (ev.followBone === 'root') {
       by = player.y;
     }
+    const startTime = Number(ev.time) || 0;
+    const lifeMs = Number.isFinite(Number(ev.endTime))
+      ? Math.round(Math.max(0.04, Number(ev.endTime) - startTime) * (Number(motionDurMs) || 420))
+      : 420;
     this.effects.push({
       attackerId: player.id,
       x: bx + xOff * forward,
@@ -1226,9 +1307,11 @@ export class Game {
       assetId: ev.assetId || 'spark',
       scale: Number(ev.scale) || 1,
       alpha: Number.isFinite(ev.alpha) ? ev.alpha : 1,
+      flipX: !!ev.flipX,
+      flipY: !!ev.flipY,
       progress: 0,
       timestamp: now,
-      lifetime: 420
+      lifetime: Math.max(80, Math.min(30000, lifeMs))
     });
   }
 
@@ -1580,6 +1663,7 @@ export class Game {
     if (player.blockVM && player.blockVM.hasHandler('basicAttack')) {
       player.lastAttackTime = now;
       player.attackMotionTag = 'attack';
+      player.lastAttackMotionTag = 'attack';
       this._lockPlayerMotion(player, now, player.workshopWeapon?.motionSet?.attack);
       player.swingDirection *= -1;
       this._runBlockEvent(player, 'basicAttack', now);
@@ -1594,8 +1678,8 @@ export class Game {
     }
     const hbMotion = this._canonicalHitboxMotion(player);
     if (hbMotion) {
-      // 강공격 = 평타 3연타. Every 3rd consecutive basic (within the combo window)
-      // swings the workshop weapon's heavy preset instead — bigger reach/damage.
+      // 강공격 = authored basic combo finisher. Default remains the old 3-hit
+      // behavior, but workshop weapons can set 1..5 hits on the heavy preset.
       const ws = player.workshopWeapon;
       const heavyCombat = ws && ws.presetCombat && ws.presetCombat.heavy;
       const heavyHb = ws && ws.presetHitboxes && ws.presetHitboxes.heavy;
@@ -1603,19 +1687,21 @@ export class Game {
       const heavyHasEvents = !!(heavyMotion && ((heavyMotion.projectileEvents && heavyMotion.projectileEvents.length) || (heavyMotion.teleportEvents && heavyMotion.teleportEvents.length)));
       const heavyReady = heavyCombat && ((Array.isArray(heavyHb) && heavyHb.length) || heavyHasEvents);
       if (heavyReady) {
+        const heavyAfter = Math.max(1, Math.min(5, Math.round(Number(ws.heavyAfter) || 3)));
         if (!player._basicComboAt || (now - player._basicComboAt) > 1400) player._basicCombo = 0;
         player._basicComboAt = now;
         player._basicCombo = (player._basicCombo || 0) + 1;
-        if (player._basicCombo >= 3) {
+        if (player._basicCombo >= heavyAfter) {
           player._basicCombo = 0;
           const motion = heavyMotion;
           const swingMotion = motion ? { ...motion, hitboxes: (Array.isArray(motion.hitboxes) ? motion.hitboxes : heavyHb) || [] } : { duration: 0.5, hitboxes: heavyHb || [] };
           this._startHitboxSwing(player, swingMotion, now, {
             damage: Number.isFinite(heavyCombat.damage) ? heavyCombat.damage : Math.round((ws.stats?.damage || 12) * 1.6),
             knockback: heavyCombat.knockback,
-            status: heavyCombat.status, statusMs: heavyCombat.statusDurationMs,
+            status: heavyCombat.status, statusMs: heavyCombat.statusDurationMs, airborneHeight: heavyCombat.airborneHeight,
             projectile: ws.presetRanged?.heavy || null,
             motionTag: 'heavy',
+            ultimateGain: 10,
           });
           return true;
         }
@@ -1645,6 +1731,7 @@ export class Game {
       : player.triggerAttack(now);
     if (Number.isFinite(attackConfig.fixedSwingDirection)) {
       player.lastAttackTime = now;
+      player.lastAttackMotionTag = 'attack';
     }
     this._applyComboRecovery(player, combo, now);
 
@@ -2489,19 +2576,43 @@ export class Game {
    */
   _spawnBots(count, difficulty = 'normal') {
     const n = Math.max(0, Math.min(12, Math.floor(count) || 0));
+    if (!this.botWorkshopWeapons.length) {
+      console.warn('[bots] no workshop weapons available; bots were not spawned');
+      return;
+    }
+    const loadout = Array.from({ length: n }, () => this._pickBotWorkshopWeapon()).filter(Boolean);
+    if (loadout.length < n) {
+      console.warn('[bots] failed to assign workshop weapons to every bot; bots were not spawned');
+      return;
+    }
     const NAMES = ['글라디우스', '레기온', '발로르', '모르가나', '카이저', '도르', '벨라', '녹스', '아레스', '루멘', '가레스', '세라핌'];
     for (let i = 0; i < n; i++) {
-      const weapon = BOT_LOADOUT[(this._botSeq + i) % BOT_LOADOUT.length];
+      const workshopWeapon = loadout[i];
       const spawnP = this._getRandomSpawnPoint();
       const id = `bot_${this._botSeq++}`;
       const name = NAMES[i % NAMES.length];
-      const bot = new Player(id, `🤖${name}`, weapon, spawnP.x, spawnP.y);
+      const bot = new Player(id, `🤖${name}`, 'sword', spawnP.x, spawnP.y, { workshopWeapon });
+      if (!bot.workshopWeapon) {
+        bot._applyWorkshopWeapon(workshopWeapon);
+        bot.hp = bot.maxHp;
+      }
+      if (!bot.workshopWeapon) continue;
       bot.isBot = true;
       bot.keys = {};
       bot.brain = new BotBrain(bot, difficulty);
       this._bots.push(bot.brain);
       this.players[id] = bot;
     }
+  }
+
+  _pickBotWorkshopWeapon() {
+    const list = this.botWorkshopWeapons;
+    if (!list.length) return null;
+    const raw = list[Math.floor(Math.random() * list.length)];
+    try {
+      if (typeof structuredClone === 'function') return structuredClone(raw);
+    } catch {}
+    try { return JSON.parse(JSON.stringify(raw)); } catch { return raw; }
   }
 
   /**
@@ -2548,7 +2659,9 @@ export class Game {
         min: damaging ? (z.leftX ?? 0) + 24 : 0,
         max: damaging ? (z.rightX ?? this.mapWidth) - 24 : this.mapWidth,
       }),
-      weaponOf: (p) => getEffectiveWeapon(p.weapon, p.buffType),
+      weaponOf: (p) => p?.workshopWeapon?.stats
+        ? { ...getEffectiveWeapon(p.weapon, p.buffType), ...p.workshopWeapon.stats }
+        : getEffectiveWeapon(p.weapon, p.buffType),
       solidBlocks: (x, y, r) => this._levelSolidBlocks(x, y, r),
       surfaceBelow: (x, fromY) => this._surfaceBelow(x, fromY),
       // Nearest platform/solid TOP still above the flood — where a bot should
@@ -2775,6 +2888,8 @@ export class Game {
     const ay = lp ? lp.y : this.mapHeight / 2;
     const pts = [];
     if (lp) pts.push({ x: ax + (lp.isDead ? 0 : (lp.facing || 1) * 70), y: ay });
+    const livingCount = Object.values(this.players).filter(p => p && !p.isDead).length;
+    if (livingCount >= 3) return pts.length ? pts : [{ x: ax, y: ay }];
     const MAX_SPREAD = 1250;
     for (const id in this.players) {
       if (id === this.localPlayerId) continue;
@@ -3029,6 +3144,8 @@ export class Game {
       if (this._isMotionLocked(player, now)) return;
       this._applyMobileAimAssistForAttack(player, 'basic');
       this._performBasicAttack(player, getEffectiveWeapon(player.weapon, player.buffType), now);
+    } else if (data.action === 'ultimate') {
+      this._handleUltimatePressed(player, now);
     } else if (data.action === 'targetCast') {
       this._handleTargetCast(player, data.x, data.y, now);
     }
@@ -3116,6 +3233,21 @@ export class Game {
     if (player.weapon === 'greatsword') {
       this._releaseGreatswordCharge(player, now);
     }
+  }
+
+  _handleUltimatePressed(player, now) {
+    if (!player || player.isDead || player.stunTimeLeft > 0) return;
+    if ((Number(player.ultimateGauge) || 0) < 100) return;
+    const hasUltimate = Boolean(player.workshopWeapon?.presetCombat?.skill3);
+    if (!hasUltimate) {
+      if (player.id === this.localPlayerId) this._announce('궁극기 스킬이 없습니다');
+      return;
+    }
+    if (this._isMotionLocked(player, now)) return;
+    player.ultimateGauge = 0;
+    if (!player.wsSkillCd) player.wsSkillCd = {};
+    player.wsSkillCd.skill3 = 0;
+    this._activateWorkshopSkill(player, 'skill3', now);
   }
 
   _handleAltSkillPressed(player, now) {
@@ -3989,6 +4121,7 @@ export class Game {
 
   _castMagicStaff(player, now) {
     player.lastAttackTime = now;
+    player.lastAttackMotionTag = 'attack';
     const roll = Math.floor(Math.random() * 3);
     if (roll === 0) this._castFireball(player, now);
     else if (roll === 1) this._castIceShards(player, now);
@@ -4090,6 +4223,7 @@ export class Game {
     if (count <= 0) return;
     player.pendingIcicles = 0;
     player.lastAttackTime = now; // 3s cast cooldown restarts from firing
+    player.lastAttackMotionTag = 'attack';
     const spawnDist = player.radius + 4;
     // All four shards travel toward the cursor (player.angle); only the spawn
     // points are spread abreast so they read as four distinct icicles.
@@ -5742,15 +5876,15 @@ export class Game {
     // skill (e.g. magicstaff has none), so players never see a dead button.
     const skillBtnEl = document.getElementById('skillBtn');
     if (skillBtnEl) {
-      skillBtnEl.classList.toggle('hidden', !(SkillConfig[local.weapon] || local.weapon === 'magicstaff'));
+      skillBtnEl.classList.toggle('hidden', !this._playerHasVisibleFSkill(local));
     }
     const altSkillBtnEl = document.getElementById('altSkillBtn');
     if (altSkillBtnEl) {
-      altSkillBtnEl.classList.toggle('hidden', !this._weaponHasAltSkill(local.weapon));
+      altSkillBtnEl.classList.toggle('hidden', !this._playerHasVisibleESkill(local));
     }
     const lmbBtnEl = document.getElementById('lmbBtn');
     if (lmbBtnEl) {
-      lmbBtnEl.classList.toggle('hidden', !this._weaponHasTargetSkill(local.weapon));
+      lmbBtnEl.classList.toggle('hidden', !this._playerHasVisibleRSkill(local));
     }
 
     // HP Bar
@@ -5828,23 +5962,87 @@ export class Game {
     return weapon === 'magicstaff' || Boolean(AuxSkillConfig[weapon]?.target);
   }
 
+  _playerHasWorkshopSkill(player, slot) {
+    return Boolean(player?.workshopWeapon?.presetCombat?.[slot]);
+  }
+
+  _playerUsesWorkshopWeapon(player) {
+    return Boolean(player?.workshopWeapon);
+  }
+
+  _playerHasVisibleFSkill(player) {
+    if (!player) return false;
+    if (this._playerUsesWorkshopWeapon(player)) return this._playerHasWorkshopSkill(player, 'skill');
+    return Boolean(SkillConfig[player.weapon] || player.weapon === 'magicstaff');
+  }
+
+  _playerHasVisibleESkill(player) {
+    if (!player) return false;
+    if (this._playerUsesWorkshopWeapon(player)) return this._playerHasWorkshopSkill(player, 'skill2');
+    return this._weaponHasAltSkill(player.weapon);
+  }
+
+  _playerHasVisibleRSkill(player) {
+    if (!player) return false;
+    if (this._playerUsesWorkshopWeapon(player)) return this._playerHasWorkshopSkill(player, 'skill3');
+    return this._weaponHasTargetSkill(player.weapon);
+  }
+
+  _workshopSkillCooldownInfo(player, slot) {
+    const combat = player?.workshopWeapon?.presetCombat?.[slot];
+    if (!combat) return null;
+    return {
+      left: Math.max(0, Number(player?.wsSkillCd?.[slot]) || 0),
+      total: Math.max(0.1, (Number(combat.cooldownMs) || 1000) / 1000),
+      color: player.workshopWeapon?.color || Weapons[player.weapon]?.color || '#c9a227'
+    };
+  }
+
+  _keyLabel(action) {
+    return formatKeyCode(this.input?.keybinds?.[action]);
+  }
+
+  _keyStrong(action, className) {
+    return `<strong class="${className}">${escapeHudHtml(this._keyLabel(action))}</strong>`;
+  }
+
+  _setRowLabel(row, html) {
+    const label = row?.querySelector?.('span');
+    if (label) label.innerHTML = html;
+  }
+
   /**
    * Update the F-skill and Shift-dash readiness widgets.
    */
   _updateAbilityHud(local) {
     const weaponColor = Weapons[local.weapon]?.color || '#d4af37';
 
+    const skillRow = document.getElementById('hudSkillRow');
     const skillState = document.getElementById('hudSkillState');
     const skillBar = document.getElementById('hudSkillBar');
-    if (skillState && skillBar) {
+    const hasFSkill = this._playerHasVisibleFSkill(local);
+    if (skillRow) skillRow.classList.toggle('hidden', !hasFSkill);
+    if (skillRow) this._setRowLabel(skillRow, `${this._keyStrong('skill1', 'text-[#c9a227]')} 스킬`);
+    if (skillState && skillBar && hasFSkill) {
       const sk = SkillConfig[local.weapon];
-      if (local.weapon === 'magicstaff') {
+      const wsSkill = this._workshopSkillCooldownInfo(local, 'skill');
+      if (wsSkill) {
+        if (wsSkill.left > 0) {
+          skillState.textContent = `${wsSkill.left.toFixed(1)}s`;
+          skillBar.style.width = `${clamp01(1 - wsSkill.left / wsSkill.total) * 100}%`;
+          skillBar.style.background = wsSkill.color;
+        } else {
+          skillState.textContent = '준비!';
+          skillBar.style.width = '100%';
+          skillBar.style.background = wsSkill.color;
+        }
+      } else if (local.weapon === 'magicstaff') {
         const fireCd = local.magicCooldowns?.fireball || 0;
         const total = (MagicConfig.fireball?.cooldownMs || MagicConfig.cooldownMs || 2000) / 1000;
         if (fireCd > 0) {
           skillState.textContent = `${fireCd.toFixed(1)}s`;
           skillBar.style.width = `${clamp01(1 - fireCd / total) * 100}%`;
-          skillBar.style.background = '#4b5563';
+          skillBar.style.background = '#60a5fa';
         } else {
           skillState.textContent = 'FIRE';
           skillBar.style.width = '100%';
@@ -5877,7 +6075,7 @@ export class Game {
         const total = (sk?.cooldownMs || 1) / 1000;
         skillState.textContent = `${local.skillCdLeft.toFixed(1)}s`;
         skillBar.style.width = `${clamp01(1 - local.skillCdLeft / total) * 100}%`;
-        skillBar.style.background = '#4b5563';
+        skillBar.style.background = weaponColor;
       } else if (local.weapon === 'bow') {
         const stacks = Math.min(sk?.maxStacks || 5, local.arrowStacks || 0);
         skillState.textContent = `${stacks}/${sk?.maxStacks || 5} 스택`;
@@ -5892,17 +6090,32 @@ export class Game {
 
     const dashState = document.getElementById('hudDashState');
     const dashBar = document.getElementById('hudDashBar');
+    const dashRow = dashState?.closest?.('.mb-2');
+    if (dashRow) this._setRowLabel(dashRow, `${this._keyStrong('dash', 'text-[#22d3ee]')} 대시`);
     if (dashState && dashBar) {
       if (local.dashCdLeft > 0) {
         const total = DashConfig.cooldownMs / 1000;
         dashState.textContent = `${local.dashCdLeft.toFixed(1)}s`;
         dashBar.style.width = `${clamp01(1 - local.dashCdLeft / total) * 100}%`;
-        dashBar.style.background = '#4b5563';
+        dashBar.style.background = '#22d3ee';
       } else {
         dashState.textContent = '준비!';
         dashBar.style.width = '100%';
         dashBar.style.background = '#c9a227';
       }
+    }
+
+    const ultimateState = document.getElementById('hudUltimateState');
+    const ultimateBar = document.getElementById('hudUltimateBar');
+    const ultimateRow = document.getElementById('hudUltimateRow');
+    const hasUltimate = this._playerHasWorkshopSkill(local, 'skill3');
+    if (ultimateRow) ultimateRow.classList.toggle('hidden', !hasUltimate);
+    if (ultimateRow) this._setRowLabel(ultimateRow, `${this._keyStrong('ultimate', 'text-[#facc15]')} 궁극기`);
+    if (ultimateState && ultimateBar && hasUltimate) {
+      const gauge = Math.max(0, Math.min(100, Math.round(Number(local.ultimateGauge) || 0)));
+      ultimateState.textContent = gauge >= 100 ? '준비!' : `${gauge}/100`;
+      ultimateBar.style.width = `${gauge}%`;
+      ultimateBar.style.background = gauge >= 100 ? '#facc15' : '#a16207';
     }
 
     // R teleport cooldown — only the sniper has it, so the row is hidden otherwise.
@@ -5917,7 +6130,7 @@ export class Game {
         if (leftMs > 0) {
           teleportState.textContent = `${(leftMs / 1000).toFixed(1)}s`;
           teleportBar.style.width = `${clamp01(1 - leftMs / total) * 100}%`;
-          teleportBar.style.background = '#4b5563';
+          teleportBar.style.background = '#22c55e';
         } else {
           teleportState.textContent = '준비!';
           teleportBar.style.width = '100%';
@@ -5935,29 +6148,35 @@ export class Game {
     const teleportState = document.getElementById('hudTeleportState');
     const teleportBar = document.getElementById('hudTeleportBar');
     if (teleportRow && teleportState && teleportBar) {
-      const usesRRow = this._weaponHasAltSkill(local.weapon);
+      const wsSkill2 = this._workshopSkillCooldownInfo(local, 'skill2');
+      const usesRRow = this._playerUsesWorkshopWeapon(local)
+        ? Boolean(wsSkill2)
+        : Boolean(wsSkill2) || this._weaponHasAltSkill(local.weapon);
       if (usesRRow) {
         teleportRow.classList.remove('hidden');
         const label = teleportRow.querySelector('span');
         if (label) {
-          if (local.weapon === 'magicstaff') label.innerHTML = '<strong class="text-[#a855f7]">E</strong> HEAL';
-          else if (local.weapon === 'katana') label.innerHTML = '<strong class="text-[#f43f5e]">E</strong> IAI';
+          if (wsSkill2) label.innerHTML = `${this._keyStrong('skill2', 'text-[#22c55e]')} 스킬`;
+          else if (local.weapon === 'magicstaff') label.innerHTML = `${this._keyStrong('skill2', 'text-[#a855f7]')} HEAL`;
+          else if (local.weapon === 'katana') label.innerHTML = `${this._keyStrong('skill2', 'text-[#f43f5e]')} IAI`;
           else {
             const altLabel = local.weapon === 'sniper'
               ? 'BLINK'
               : AuxSkillConfig[local.weapon]?.alt?.label || '보조 스킬';
-            label.innerHTML = `<strong class="text-[#22c55e]">E</strong> ${altLabel}`;
+            label.innerHTML = `${this._keyStrong('skill2', 'text-[#22c55e]')} ${escapeHudHtml(altLabel)}`;
           }
         }
 
-        const total = local.weapon === 'sniper'
+        const total = wsSkill2 ? wsSkill2.total
+          : local.weapon === 'sniper'
           ? SkillConfig.sniper?.teleportCooldownMs || 2000
           : local.weapon === 'katana'
             ? SkillConfig.katana?.iaijutsuCooldownMs || 3000
             : local.weapon === 'magicstaff'
               ? MagicConfig.lifebound?.cooldownMs || MagicConfig.cooldownMs || 2000
               : AuxSkillConfig[local.weapon]?.alt?.cooldownMs || 1000;
-        const leftMs = local.weapon === 'magicstaff'
+        const leftMs = wsSkill2 ? wsSkill2.left * 1000
+          : local.weapon === 'magicstaff'
           ? Math.max(0, (local.magicCooldowns?.lifebound || 0) * 1000)
           : local.weapon === 'sniper' || local.weapon === 'katana'
             ? Math.max(0, (local.teleportReadyAt || 0) - Date.now())
@@ -5975,12 +6194,12 @@ export class Game {
           teleportBar.style.background = '#f43f5e';
         } else if (leftMs > 0) {
           teleportState.textContent = `${(leftMs / 1000).toFixed(1)}s`;
-          teleportBar.style.width = `${clamp01(1 - leftMs / total) * 100}%`;
-          teleportBar.style.background = '#4b5563';
+          teleportBar.style.width = `${clamp01(1 - leftMs / (wsSkill2 ? total * 1000 : total)) * 100}%`;
+          teleportBar.style.background = wsSkill2 ? wsSkill2.color : (Weapons[local.weapon]?.color || '#22c55e');
         } else {
-          teleportState.textContent = local.weapon === 'katana' ? 'HOLD' : '준비!';
+          teleportState.textContent = local.weapon === 'katana' && !wsSkill2 ? 'HOLD' : '준비!';
           teleportBar.style.width = '100%';
-          teleportBar.style.background = local.weapon === 'magicstaff'
+          teleportBar.style.background = wsSkill2 ? wsSkill2.color : local.weapon === 'magicstaff'
             ? '#a855f7'
             : local.weapon === 'katana'
               ? '#f43f5e'
@@ -5995,29 +6214,37 @@ export class Game {
     const clickSkillState = document.getElementById('hudClickSkillState');
     const clickSkillBar = document.getElementById('hudClickSkillBar');
     if (clickSkillRow && clickSkillState && clickSkillBar) {
-      if (this._weaponHasTargetSkill(local.weapon)) {
+      const wsSkill3 = this._workshopSkillCooldownInfo(local, 'skill3');
+      const usesClickRow = this._playerUsesWorkshopWeapon(local)
+        ? Boolean(wsSkill3)
+        : Boolean(wsSkill3) || this._weaponHasTargetSkill(local.weapon);
+      if (usesClickRow) {
         clickSkillRow.classList.remove('hidden');
         const label = clickSkillRow.querySelector('span');
         if (label) {
           const tLabel = AuxSkillConfig[local.weapon]?.target?.label || '스킬';
-          label.innerHTML = local.weapon === 'magicstaff'
-            ? '<strong class="text-[#93c5fd]">R</strong> ICE'
-            : `<strong class="text-[#93c5fd]">R</strong> ${tLabel}`;
+          label.innerHTML = wsSkill3
+            ? `${this._keyStrong('skill3', 'text-[#93c5fd]')} 스킬`
+            : local.weapon === 'magicstaff'
+            ? `${this._keyStrong('skill3', 'text-[#93c5fd]')} ICE`
+            : `${this._keyStrong('skill3', 'text-[#93c5fd]')} ${escapeHudHtml(tLabel)}`;
         }
-        const iceCd = local.weapon === 'magicstaff'
+        const iceCd = wsSkill3 ? wsSkill3.left
+          : local.weapon === 'magicstaff'
           ? local.magicCooldowns?.iceShard || 0
           : local.targetSkillCdLeft || 0;
-        const total = local.weapon === 'magicstaff'
+        const total = wsSkill3 ? wsSkill3.total
+          : local.weapon === 'magicstaff'
           ? (MagicConfig.iceShard?.cooldownMs || MagicConfig.cooldownMs || 2000) / 1000
           : (AuxSkillConfig[local.weapon]?.target?.cooldownMs || 1000) / 1000;
         if (iceCd > 0) {
           clickSkillState.textContent = `${iceCd.toFixed(1)}s`;
           clickSkillBar.style.width = `${clamp01(1 - iceCd / total) * 100}%`;
-          clickSkillBar.style.background = '#4b5563';
+          clickSkillBar.style.background = wsSkill3 ? wsSkill3.color : (Weapons[local.weapon]?.color || '#93c5fd');
         } else {
-          clickSkillState.textContent = local.weapon === 'magicstaff' ? 'TARGET' : '준비!';
+          clickSkillState.textContent = local.weapon === 'magicstaff' && !wsSkill3 ? 'TARGET' : '준비!';
           clickSkillBar.style.width = '100%';
-          clickSkillBar.style.background = local.weapon === 'magicstaff' ? '#93c5fd' : (Weapons[local.weapon]?.color || '#93c5fd');
+          clickSkillBar.style.background = wsSkill3 ? wsSkill3.color : local.weapon === 'magicstaff' ? '#93c5fd' : (Weapons[local.weapon]?.color || '#93c5fd');
         }
       } else {
         clickSkillRow.classList.add('hidden');
@@ -6324,7 +6551,11 @@ export class Game {
             p.spearThrown = Boolean(snap.spearThrown);
             p.flameSpraying = Boolean(snap.flameSpraying);
             p.isMobile = Boolean(snap.isMobile);
+            if (Number.isFinite(snap.lastAttackTime)) p.lastAttackTime = snap.lastAttackTime;
             p.attackMotionTag = typeof snap.attackMotionTag === 'string' ? snap.attackMotionTag : null;
+            p.lastAttackMotionTag = typeof snap.lastAttackMotionTag === 'string'
+              ? snap.lastAttackMotionTag
+              : (p.attackMotionTag || p.lastAttackMotionTag || 'attack');
             p.arrowStacks = Math.max(0, Math.floor(snap.arrowStacks || 0));
             p.greatswordChargeStart = snap.greatswordChargeMs > 0 ? Date.now() - snap.greatswordChargeMs : 0;
             p.katanaChargeStart = snap.katanaChargeMs > 0 ? Date.now() - snap.katanaChargeMs : 0;
@@ -6339,17 +6570,25 @@ export class Game {
             p.comboDelayUntil = Date.now() + Math.max(0, Math.round(snap.comboDelayMs || 0));
             p.pendingIcicles = Math.max(0, Math.floor(snap.pendingIcicles || 0));
             p.magicCooldowns = deserializeMagicCooldowns(snap.magicCdMs);
+            p.wsSkillCd = deserializeWorkshopCooldowns(snap.wsSkillCdMs);
             p.burnTimeLeft = Math.max(0, (snap.burnMs || 0) / 1000);
             p.bleedTimeLeft = Math.max(0, (snap.bleedMs || 0) / 1000);
             p.slowTimeLeft = Math.max(0, (snap.slowMs || 0) / 1000);
+            p.ultimateGauge = Math.max(0, Math.min(100, Math.round(Number(snap.ultimateGauge) || 0)));
             p.teleportReadyAt = Date.now() + Math.max(0, Math.round(snap.teleportCdMs || 0));
             p.color = snap.color;
             p.accentColor = snap.accentColor;
             p.costumeDecoration = snap.costumeDecoration || null;
             p.costumeEffect = snap.costumeEffect || null;
             p.motionLockUntil = snap.motionLockMs > 0 ? Date.now() + Math.max(0, Math.round(snap.motionLockMs || 0)) : 0;
+            p.motionRootUntil = snap.rootMotionMs > 0 ? Date.now() + Math.max(0, Math.round(snap.rootMotionMs || 0)) : 0;
+            p.activeHitboxes = Array.isArray(snap.activeHitboxes) ? snap.activeHitboxes.slice(0, 8) : [];
             if (snap.wsw) {
-              const nextWsKey = `${snap.wsw.id || ''}:${snap.wsw.name || ''}:${snap.wsw.weaponVisual?.imageId || ''}:${snap.wsw.weaponImage?.src?.length || 0}`;
+              const motionSetSig = (() => { try { return JSON.stringify(snap.wsw.motionSet || {}).length; } catch { return 0; } })();
+              const visualSig = (() => { try { return JSON.stringify(snap.wsw.weaponVisual || {}).length; } catch { return 0; } })();
+              const hatSig = Array.isArray(snap.wsw.hatImages) ? snap.wsw.hatImages.map(h => `${h?.id || ''}:${h?.src?.length || 0}`).join('|') : '';
+              const effectSig = Array.isArray(snap.wsw.effectImages) ? snap.wsw.effectImages.map(h => `${h?.id || ''}:${h?.src?.length || 0}`).join('|') : '';
+              const nextWsKey = `${snap.wsw.id || ''}:${snap.wsw.name || ''}:${visualSig}:${snap.wsw.weaponImage?.src?.length || 0}:${snap.wsw.offhandImage?.src?.length || 0}:${snap.wsw.hatImage?.src?.length || 0}:${hatSig}:${effectSig}:${motionSetSig}`;
               if (p._wsSnapshotKey !== nextWsKey) {
                 p._applyWorkshopWeapon(snap.wsw);
                 p._wsSnapshotKey = nextWsKey;
@@ -6419,6 +6658,7 @@ export class Game {
             proj.weapon = snap.weapon || (snap.kind === 'greatswordwave' ? 'greatsword' : proj.weapon);
             proj.wsImageId = snap.wsImageId || null;
             proj.wsScale = snap.wsScale || 1;
+            proj.wsRotation = Number.isFinite(Number(snap.wsRotation)) ? Number(snap.wsRotation) : 0;
             proj.piercing = !!snap.piercing;
             proj.isDead = snap.isDead;
             return proj;
@@ -6622,6 +6862,14 @@ function deserializeMagicCooldowns(cooldowns = {}) {
   };
 }
 
+function deserializeWorkshopCooldowns(cooldowns = {}) {
+  return {
+    skill: Math.max(0, (cooldowns.skill || 0) / 1000),
+    skill2: Math.max(0, (cooldowns.skill2 || 0) / 1000),
+    skill3: Math.max(0, (cooldowns.skill3 || 0) / 1000)
+  };
+}
+
 function clamp01(value) {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(1, value));
@@ -6672,6 +6920,10 @@ function zoneIsOutside(zone, x, y) {
   const dx = x - cx;
   const dy = y - cy;
   return dx * dx + dy * dy > z.radius * z.radius;
+}
+
+function hitboxDamageDivisor(hitboxes) {
+  return Math.max(1, Array.isArray(hitboxes) ? hitboxes.length : 0);
 }
 
 // Damage number styling tier (drives color + size in the renderer). Derived

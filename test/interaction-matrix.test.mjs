@@ -258,6 +258,7 @@ test('direct basic attack execution matrix covers blocked and workshop-ranged pa
     projectile: {
       directionSource: 'angle',
       angle: 90,
+      rotation: -45,
       speed: 100,
       lifetimeMs: 1000,
       hitbox: { shape: 'circle', radius: 6 },
@@ -275,5 +276,20 @@ test('direct basic attack execution matrix covers blocked and workshop-ranged pa
   assert.equal(rangedGame.projectiles.length, 1);
   assert.equal(rangedGame.projectiles[0].damage, 17);
   assert.equal(rangedGame.projectiles[0].radius, 6);
+  assert.equal(rangedGame.projectiles[0].wsRotation, -45);
+  assert.equal(rangedGame.projectiles[0].serialize().wsRotation, -45);
   assert.ok(Math.abs(rangedGame.projectiles[0].angle - Math.PI / 2) < 1e-9);
+});
+
+test('workshop ultimate gauge gain clamps and caps at ready', () => {
+  const game = Object.assign(Object.create(Game.prototype), {
+    localPlayerId: 'none',
+    _announce: () => {}
+  });
+  const player = new Player('p', 'Player', 'sword', 0, 0);
+  player.ultimateGauge = 90;
+  game._awardUltimateGauge(player, 35);
+  assert.equal(player.ultimateGauge, 100);
+  game._awardUltimateGauge(player, 35);
+  assert.equal(player.ultimateGauge, 100);
 });

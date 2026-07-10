@@ -23,7 +23,7 @@ export const Weapons = {
     hitMode: 'melee_blade_sweep',  // hit along the swept blade, like the greatsword
     bladeHalfWidth: 12,
     description: '공수 밸런스가 뛰어난 기준점 무기입니다. 상태이상이나 조건부 보상은 없지만 모든 면이 안정적입니다.',
-    skill: 'F: 0.25초 간격으로 검기 3회 발사(직격 24, 폭발 20/반경 70) · 쿨타임 4초\nR: 회전 베기(22 피해, 360도, 넉백) · 쿨타임 4.5초\nLMB: 전방 돌진 찌르기(30 피해, 사거리 115px, 넉백) · 쿨타임 4초',
+    skill: 'F: 0.25초 간격으로 검기 3회 발사(직격 24, 폭발 20/반경 70) · 쿨타임 4초\nE: 22 피해, 360도, 넉백 · 쿨타임 4.5초\nR: 전방 공격(30 피해, 사거리 115px, 넉백) · 쿨타임 4초',
     color: '#45f3ff'
   },
   greatsword: {
@@ -135,8 +135,8 @@ export const MagicConfig = {
 // `alt` is bound to R. `target` is bound to LMB / target-cast.
 export const AuxSkillConfig = {
   sword: {
-    alt: { label: '회전 베기', cooldownMs: 4500, type: 'melee_circle', damage: 22, range: 74, angle: 360, knockback: 22 },
-    target: { label: '돌진 찌르기', cooldownMs: 4000, type: 'melee_line', damage: 30, range: 115, width: 28, lungeDistance: 28, knockback: 28 }
+    alt: { label: '스킬', cooldownMs: 4500, type: 'melee_circle', damage: 22, range: 74, angle: 360, knockback: 22 },
+    target: { label: '스킬', cooldownMs: 4000, type: 'melee_line', damage: 30, range: 115, width: 28, lungeDistance: 28, knockback: 28 }
   },
   greatsword: {
     alt: { label: '내려찍기', cooldownMs: 5000, type: 'melee_slam', damage: 42, shockwaveDamage: 34, range: 96, innerRange: 50, knockback: 92, stunMs: 450 },

@@ -18,9 +18,21 @@ service cloud.firestore {
     // dataURL) so recipients see it too. Keep it well under Firestore's 1MB doc
     // cap; null / absent is always fine. (.get avoids errors on missing keys.)
     function weaponImageWithinLimit(data) {
-      return !('weaponImage' in data)
+      return (!('weaponImage' in data)
           || data.weaponImage == null
-          || data.weaponImage.get('src', '').size() < 900000;
+          || data.weaponImage.get('src', '').size() < 900000)
+          && (!('offhandImage' in data)
+          || data.offhandImage == null
+          || data.offhandImage.get('src', '').size() < 900000)
+          && (!('hatImage' in data)
+          || data.hatImage == null
+          || data.hatImage.get('src', '').size() < 900000)
+          && (!('hatImages' in data)
+          || data.hatImages == null
+          || data.hatImages.size() <= 5)
+          && (!('effectImages' in data)
+          || data.effectImages == null
+          || data.effectImages.size() <= 24);
     }
 
     match /items/{itemId} {
@@ -45,11 +57,11 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // 공방 무기(Tier-2): published 또는 작성자/어드민만 read; 작성자만 생성/수정,
+    // 공방 무기(Tier-2): 공개 브라우징을 위해 read는 허용하고, 클라이언트가
+    // status=published/누락 문서만 표시한다. 작성자만 생성/수정,
     // 어드민은 모더레이션(status) 가능. 누구나 카운터(likes/plays/reports)만 증가 가능.
     match /workshop_weapons/{weaponId} {
-      allow read: if resource.data.status == 'published'
-                  || isOwner(resource.data.author_id) || isAdmin();
+      allow read: if true;
       allow create: if isOwner(request.resource.data.author_id)
                   && weaponImageWithinLimit(request.resource.data);
       allow update: if (isOwner(resource.data.author_id) && weaponImageWithinLimit(request.resource.data))

@@ -117,8 +117,13 @@
 
 #mobileActionCluster {
   position: relative;
-  width: 13rem;
-  height: 13rem;
+  width: auto;
+  height: auto;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.55rem;
   pointer-events: none;
 }
 
@@ -132,14 +137,7 @@
 }
 
 #rightJoystickContainer {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 7rem;
-  height: 7rem;
-  aspect-ratio: 1 / 1;
-  transform: translate(-50%, -50%);
-  z-index: 2;
+  display: none !important;
 }
 
 #rightJoystickKnob {
@@ -148,7 +146,8 @@
 }
 
 .mobile-action-btn {
-  position: absolute;
+  position: static;
+  flex: 0 0 auto;
   width: 3.6rem;
   height: 3.6rem;
   aspect-ratio: 1 / 1;
@@ -165,24 +164,37 @@
   z-index: 3;
 }
 
-.mobile-action-top { left: 50%; top: 0; transform: translateX(-50%); }
-.mobile-action-right { right: 0; top: 50%; transform: translateY(-50%); }
-.mobile-action-left { left: 0; top: 50%; transform: translateY(-50%); }
-.mobile-action-bottom { left: 50%; bottom: 0; transform: translateX(-50%); }
-.mobile-action-attack { right: 0.7rem; bottom: 0.7rem; }
+.mobile-action-top,
+.mobile-action-right,
+.mobile-action-left,
+.mobile-action-bottom,
+.mobile-action-attack {
+  transform: none;
+}
 
-/* Platformer jump button — sits just left of the right action cluster. */
+#attackBtn { order: 1; }
+#skillBtn { order: 2; }
+#altSkillBtn { order: 3; }
+#lmbBtn { order: 4; }
+#dashBtn { order: 5; }
+#jumpBtn { order: 6; }
+
+/* Platformer jump button — same size as action buttons, above E skill. */
 .mobile-jump-btn {
-  position: absolute;
-  left: auto;
-  right: 14.4rem;
-  bottom: 2.2rem;
-  width: 4.2rem;
-  height: 4.2rem;
+  position: static;
+  flex: 0 0 auto;
+  width: 3.6rem;
+  height: 3.6rem;
+  aspect-ratio: 1 / 1;
+  border-radius: 9999px;
+  box-sizing: border-box;
+  padding: 0;
+  overflow: hidden;
+  pointer-events: auto;
   z-index: 4;
 }
 @media (min-width: 768px) {
-  .mobile-jump-btn { left: auto; right: 17.8rem; bottom: 3.6rem; width: 5.4rem; height: 5.4rem; }
+  .mobile-jump-btn { width: 3.6rem; height: 3.6rem; }
 }
 .weapon-switch.weapon-current::after { content: "착용"; background: #d4af37; }
 .weapon-switch.weapon-pending::after { content: "대기"; background: #fbbf24; }
@@ -203,6 +215,7 @@
 .mobile-action-btn {
   border-radius: 9999px !important;
 }
+.mobile-jump-btn { border-radius: 9999px !important; }
 
 /* ---- Medieval fantasy theme (visual only — no markup/logic) ---- */
 /* Full-screen layers get a deep warm-black backdrop lit by a torch-amber glow and
@@ -584,8 +597,14 @@ canvas {
 }
 
 #hudRightCluster {
-  align-items: stretch;
-  gap: 0.75rem;
+  position: fixed;
+  left: auto;
+  right: max(1rem, env(safe-area-inset-right));
+  top: max(1rem, env(safe-area-inset-top));
+  width: min(300px, calc(100vw - 2rem));
+  align-items: flex-end;
+  gap: 0.45rem;
+  z-index: 24;
 }
 
 #hudPlayerPanel,
@@ -598,10 +617,11 @@ canvas {
 
 #abilityHud {
   left: 1rem;
-  top: 31rem;
+  top: 5.85rem;
   bottom: auto;
   width: min(360px, calc(100vw - 2rem));
   pointer-events: none;
+  padding: 0.75rem;
 }
 
 #hudName {
@@ -681,7 +701,11 @@ canvas {
   }
 
   #abilityHud {
-    top: 32rem;
+    top: 5.85rem;
+  }
+
+  #hudRightCluster {
+    top: max(1rem, env(safe-area-inset-top));
   }
 
   #lobbyMenu .weapon-card {
@@ -721,6 +745,48 @@ canvas {
 
   #weaponCards .weapon-card span {
     font-size: 0.62rem;
+  }
+}
+
+@media (max-width: 640px) {
+  #lobbyMenu {
+    align-items: stretch !important;
+    justify-content: flex-start !important;
+    padding: max(0.5rem, env(safe-area-inset-top)) max(0.5rem, env(safe-area-inset-right)) max(0.5rem, env(safe-area-inset-bottom)) max(0.5rem, env(safe-area-inset-left)) !important;
+    overflow: hidden !important;
+  }
+
+  #lobbyViewport,
+  #moduleShell,
+  #lobbyHub {
+    max-height: calc(100dvh - max(1rem, calc(env(safe-area-inset-top) + env(safe-area-inset-bottom))));
+    min-height: 0;
+  }
+
+  #lobbyTrack > .lobby-scr {
+    align-items: flex-start;
+  }
+
+  #lobbyHub,
+  #moduleShell,
+  #moduleBody,
+  #shopBody,
+  #leaderboardBody {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  #hubModules {
+    gap: 0.5rem !important;
+  }
+
+  #hubModules button {
+    padding: 0.65rem !important;
+    min-height: 0;
+  }
+
+  #hubModules .font-bold {
+    font-size: 0.9rem;
   }
 }
 
@@ -776,6 +842,9 @@ canvas {
   }
 
   #hudRightCluster {
+    position: static;
+    left: auto;
+    top: auto;
     width: auto;
     align-items: flex-end;
     gap: 0.35rem;
@@ -864,21 +933,18 @@ canvas {
 
   #mobileActionCluster {
     position: relative;
-    width: clamp(11.8rem, 48vw, 13.2rem);
-    height: clamp(11.8rem, 48vw, 13.2rem);
+    width: auto;
+    height: auto;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+    gap: clamp(0.28rem, 1.6vw, 0.55rem);
     pointer-events: none;
   }
 
   #rightJoystickContainer {
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    width: clamp(5.9rem, 25vw, 6.9rem);
-    height: clamp(5.9rem, 25vw, 6.9rem);
-    aspect-ratio: 1 / 1;
-    transform: translate(-50%, -50%);
-    border-width: 2px;
-    z-index: 2;
+    display: none !important;
   }
 
   #rightJoystickKnob {
@@ -887,9 +953,9 @@ canvas {
   }
 
   .mobile-action-btn {
-    position: absolute;
-    width: clamp(3.15rem, 13.5vw, 3.65rem);
-    height: clamp(3.15rem, 13.5vw, 3.65rem);
+    position: static;
+    width: clamp(2.65rem, 11.6vw, 3.45rem);
+    height: clamp(2.65rem, 11.6vw, 3.45rem);
     aspect-ratio: 1 / 1;
     border-width: 2px;
     border-radius: 9999px;
@@ -898,33 +964,31 @@ canvas {
     z-index: 3;
   }
 
+  .mobile-jump-btn {
+    position: static;
+    width: clamp(2.65rem, 11.6vw, 3.45rem);
+    height: clamp(2.65rem, 11.6vw, 3.45rem);
+    font-size: 0.54rem;
+  }
+
   .mobile-action-top {
-    left: 50%;
-    top: 0;
-    transform: translateX(-50%);
+    transform: none;
   }
 
   .mobile-action-right {
-    right: 0;
-    top: 50%;
-    transform: translateY(-50%);
+    transform: none;
   }
 
   .mobile-action-left {
-    left: 0;
-    top: 50%;
-    transform: translateY(-50%);
+    transform: none;
   }
 
   .mobile-action-bottom {
-    left: 50%;
-    bottom: 0;
-    transform: translateX(-50%);
+    transform: none;
   }
 
   .mobile-action-attack {
-    right: 0.65rem;
-    bottom: 0.65rem;
+    transform: none;
   }
 
   .mobile-action-btn .text-base,
@@ -982,13 +1046,13 @@ canvas {
   }
 
   #mobileActionCluster {
-    width: clamp(10rem, 52dvh, 11.4rem);
-    height: clamp(10rem, 52dvh, 11.4rem);
+    width: auto;
+    height: auto;
+    gap: clamp(0.22rem, 1.7dvh, 0.42rem);
   }
 
   #rightJoystickContainer {
-    width: clamp(5rem, 25dvh, 5.9rem);
-    height: clamp(5rem, 25dvh, 5.9rem);
+    display: none !important;
   }
 
   #rightJoystickKnob {
@@ -997,13 +1061,17 @@ canvas {
   }
 
   .mobile-action-btn {
-    width: clamp(2.65rem, 13dvh, 3.05rem);
-    height: clamp(2.65rem, 13dvh, 3.05rem);
+    width: clamp(2.35rem, 11.8dvh, 2.9rem);
+    height: clamp(2.35rem, 11.8dvh, 2.9rem);
+  }
+
+  .mobile-jump-btn {
+    width: clamp(2.35rem, 11.8dvh, 2.9rem);
+    height: clamp(2.35rem, 11.8dvh, 2.9rem);
   }
 
   .mobile-action-attack {
-    right: 0.45rem;
-    bottom: 0.45rem;
+    transform: none;
   }
 }
 
@@ -1017,6 +1085,60 @@ canvas {
    ────────────────────────────────────────────────────────────────────────── */
 html.touch-ui #lobbyMenu > div {
   flex-direction: column !important;          /* stack the lobby columns */
+}
+html.touch-ui,
+html.touch-ui body {
+  width: 100%;
+  min-height: 100dvh;
+  overflow: hidden;
+}
+html.touch-ui #lobbyMenu {
+  align-items: stretch !important;
+  justify-content: flex-start !important;
+  padding: max(0.5rem, env(safe-area-inset-top)) max(0.5rem, env(safe-area-inset-right)) max(0.5rem, env(safe-area-inset-bottom)) max(0.5rem, env(safe-area-inset-left)) !important;
+  overflow: hidden !important;
+}
+html.touch-ui #lobbyViewport,
+html.touch-ui #moduleShell,
+html.touch-ui #lobbyHub {
+  width: 100%;
+  max-height: calc(100dvh - max(1rem, calc(env(safe-area-inset-top) + env(safe-area-inset-bottom))));
+  min-height: 0;
+}
+html.touch-ui #lobbyViewport {
+  align-self: center;
+}
+html.touch-ui #lobbyTrack > .lobby-scr {
+  align-items: flex-start;
+}
+html.touch-ui #lobbyHub,
+html.touch-ui #moduleShell,
+html.touch-ui #moduleBody,
+html.touch-ui #shopBody,
+html.touch-ui #leaderboardBody {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+html.touch-ui #hubModules {
+  gap: 0.5rem !important;
+}
+html.touch-ui #hubModules button {
+  padding: 0.65rem !important;
+  min-height: 0;
+}
+html.touch-ui #hubModules .font-bold {
+  font-size: 0.9rem;
+}
+html.touch-ui #shopModal > div,
+html.touch-ui #leaderboardModal > div,
+html.touch-ui #roomCustomModal > div,
+html.touch-ui #motionEditor {
+  max-height: 100dvh;
+  overflow: hidden;
+}
+html.touch-ui #motionEditor > div,
+html.touch-ui #motionEditor .overflow-y-auto {
+  min-height: 0;
 }
 html.touch-ui #lobbyAccount,
 html.touch-ui #lobbyLeft,
@@ -1241,6 +1363,9 @@ html.touch-ui #weaponPanelBackdrop.open { display: block !important; } /* re-ena
 .opt-keys { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px 18px; }
 @media (max-width: 560px) { .opt-keys { grid-template-columns: 1fr 1fr; } }
 .opt-key { background: var(--med-chip); color: var(--med-parch); font-size: 11px; font-family: var(--font-mono); padding: 2px 8px; }
+.opt-keybind { min-width: 64px; border: 1px solid var(--med-wood); cursor: pointer; text-align: center; }
+.opt-keybind:hover { border-color: var(--med-gold); color: #fff3c4; }
+.opt-keybind.listening { border-color: var(--med-blood); color: var(--med-blood); background: #f4ecc8; }
 
 /* ===== [03] Create module ===== */
 .create-grid { display: grid; grid-template-columns: 1fr 232px; gap: 12px; align-items: start; }
@@ -1352,7 +1477,17 @@ html.touch-ui #weaponPanelBackdrop.open { display: block !important; } /* re-ena
    Only the track's transform animates (no reflow/repaint of content, no in-place
    innerHTML swap) → there is never a blank frame to flash. Both screens stay
    mounted; the incoming module is built while it sits off-screen. --- */
-#lobbyViewport { width: 100%; overflow: hidden; }
+#lobbyViewport {
+  width: 100%;
+  overflow: hidden;
+  margin-left: auto;
+  margin-right: auto;
+}
+#lobbyHub,
+#moduleShell {
+  margin-left: auto;
+  margin-right: auto;
+}
 #lobbyTrack {
   display: flex;
   width: 200%;

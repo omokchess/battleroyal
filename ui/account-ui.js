@@ -156,7 +156,10 @@ function clampFetched(w) {
   // Preserve V2 fields so 무기고에 추가 (importWorkshopWeapon) migrates them faithfully.
   if (Number(w.schemaVersion) === 2) { out.schemaVersion = 2; out.category = w.category; out.baseStats = w.baseStats; out.presets = w.presets; if (w.weaponVisual) out.weaponVisual = w.weaponVisual; }
   if (w.weaponImage) out.weaponImage = w.weaponImage;   // custom pixels → recipient's local store on import
+  if (w.offhandImage) out.offhandImage = w.offhandImage;
   if (w.hatImage) out.hatImage = w.hatImage;
+  if (Array.isArray(w.hatImages)) out.hatImages = w.hatImages.slice(0, 5);
+  if (Array.isArray(w.effectImages)) out.effectImages = w.effectImages.slice(0, 24);
   return out;
 }
 export function publishMyWorkshopWeapon(def) { return publishWorkshopWeapon(def, getUsername()); }
@@ -258,15 +261,35 @@ export async function reportMatch(stats) {
 
 async function handleSession(session) {
   if (session) {
-    profile = await fetchMyProfile();
-    // 코스튬 카탈로그/보유목록은 한 번만 받아두면 됨(상점 열 때 갱신)
-    if (!costumeCatalog.length) costumeCatalog = await fetchCostumes();
-    ownedIds = await fetchMyCostumeIds();
-    // 범용 카탈로그 + 보유 + 착용(전체 카테고리)
-    if (!itemCatalog.length) itemCatalog = await fetchItems();
-    ownedItemIds = await fetchMyItemIds();
-    equipped = await fetchMyEquipped();
-    isAdmin = await checkIsAdmin();
+    const user = session.user;
+    try {
+      profile = await fetchMyProfile();
+    } catch (error) {
+      console.error('[account-ui] profile load failed', error);
+      profile = {
+        id: user?.uid || 'local',
+        username: user?.displayName || user?.email?.split('@')[0] || 'Player',
+        coins: 0,
+        total_kills: 0,
+        total_deaths: 0,
+        games_played: 0,
+        equipped_costume: 'default',
+      };
+    }
+    // 로그인 후 로비 전환은 메타 데이터 로딩 실패와 분리한다. Firestore rules
+    // 배포 지연/부분 권한 오류가 있어도 인증된 유저를 로그인 화면에 가두지 않는다.
+    try { if (!costumeCatalog.length) costumeCatalog = await fetchCostumes(); }
+    catch (error) { console.error('[account-ui] costume catalog load failed', error); costumeCatalog = []; }
+    try { ownedIds = await fetchMyCostumeIds(); }
+    catch (error) { console.error('[account-ui] owned costumes load failed', error); ownedIds = new Set(['default']); }
+    try { if (!itemCatalog.length) itemCatalog = await fetchItems(); }
+    catch (error) { console.error('[account-ui] item catalog load failed', error); itemCatalog = []; }
+    try { ownedItemIds = await fetchMyItemIds(); }
+    catch (error) { console.error('[account-ui] owned items load failed', error); ownedItemIds = new Set(['costume:default']); }
+    try { equipped = await fetchMyEquipped(); }
+    catch (error) { console.error('[account-ui] equipped load failed', error); equipped = equippedFromProfile(profile); }
+    try { isAdmin = await checkIsAdmin(); }
+    catch (error) { console.error('[account-ui] admin check failed', error); isAdmin = false; }
     renderAccountBar();
     callbacks.onEnterLobby?.(profile);
   } else {

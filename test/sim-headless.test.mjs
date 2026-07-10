@@ -14,6 +14,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { Game, rebaseEffectSnapshot } from '../game/Game.js';
+import { GameSim } from '../game/sim/GameSim.js';
 import { Player } from '../game/Player.js';
 import { NullFx, RecordingFx, NULL_FX } from '../game/sim/Fx.js';
 import { makeRng, FixedClock, SystemClock } from '../game/sim/env.js';
@@ -236,10 +237,16 @@ test('the simulation knows nothing about a "local" player or a transport', () =>
     'requestWeaponChange', 'start', '_flushOutbox',
   ]);
 
+  // Inspect GameSim.prototype, not Game.prototype: after the split the sim
+  // methods live on the base class, so iterating Game's OWN properties would
+  // silently check nothing at all.
+  const names = Object.getOwnPropertyNames(GameSim.prototype);
+  assert.ok(names.length > 100, `expected the sim core on GameSim.prototype, saw ${names.length}`);
+
   const offenders = [];
-  for (const name of Object.getOwnPropertyNames(Game.prototype)) {
+  for (const name of names) {
     if (shell.has(name)) continue;
-    const fn = Game.prototype[name];
+    const fn = GameSim.prototype[name];
     if (typeof fn !== 'function') continue;
     const src = fn.toString();
     if (/this\.localPlayerId/.test(src)) offenders.push(`${name} reads localPlayerId`);

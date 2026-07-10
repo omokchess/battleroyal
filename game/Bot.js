@@ -73,8 +73,11 @@ function angLerp(from, to, t) {
 }
 
 export class BotBrain {
-  constructor(player, difficulty = 'normal') {
+  constructor(player, difficulty = 'normal', rng = Math.random) {
     this.player = player;
+    // The simulation injects its seeded rng so a match replays identically on a
+    // server (and in tests). Defaults to Math.random for standalone use.
+    this.rng = typeof rng === 'function' ? rng : Math.random;
     this.difficulty = BOT_DIFFICULTY[difficulty] ? difficulty : 'normal';
     this.cfg = BOT_DIFFICULTY[this.difficulty];
 
@@ -83,7 +86,7 @@ export class BotBrain {
     this.nextDecisionAt = 0;
     this.aimAngle = player.angle || 0;
     this.aimErr = 0;
-    this.wanderDir = Math.random() < 0.5 ? -1 : 1;
+    this.wanderDir = this.rng() < 0.5 ? -1 : 1;
     this.wanderUntil = 0;
 
     this.jumpHoldUntil = 0;   // keep the jump key held until this host-ms (variable height)
@@ -95,8 +98,8 @@ export class BotBrain {
 
   _rollDecision(now) {
     const [lo, hi] = this.cfg.decisionMs;
-    this.nextDecisionAt = now + lo + Math.random() * (hi - lo);
-    this.aimErr = (Math.random() * 2 - 1) * this.cfg.aimError;
+    this.nextDecisionAt = now + lo + this.rng() * (hi - lo);
+    this.aimErr = (this.rng() * 2 - 1) * this.cfg.aimError;
   }
 
   /**
@@ -153,8 +156,8 @@ export class BotBrain {
     } else {
       // No target: lazy patrol so idle bots still look alive.
       if (now >= this.wanderUntil) {
-        this.wanderUntil = now + 600 + Math.random() * 900;
-        this.wanderDir = Math.random() < 0.5 ? -1 : (Math.random() < 0.7 ? 1 : 0);
+        this.wanderUntil = now + 600 + this.rng() * 900;
+        this.wanderDir = this.rng() < 0.5 ? -1 : (this.rng() < 0.7 ? 1 : 0);
       }
       dir = this.wanderDir;
       this.state = 'wander';
@@ -195,20 +198,20 @@ export class BotBrain {
 
     // ---- One-shot actions: dash + skills --------------------------------
     if (target && now >= this.nextDashAt) {
-      this.nextDashAt = now + 520 + Math.random() * 700;
-      const r = Math.random();
+      this.nextDashAt = now + 520 + this.rng() * 700;
+      const r = this.rng();
       if (lowHp && r < this.cfg.dodgeChance) {
         intents.dash = { dx: target.x >= p.x ? -1 : 1, dy: 0 }; // dash away
       } else if (dist > 240 && r < this.cfg.dashChance) {
         intents.dash = { dx: target.x >= p.x ? 1 : -1, dy: 0 }; // dash in
       } else if (r < this.cfg.dodgeChance * 0.5) {
-        intents.dash = { dx: Math.random() < 0.5 ? -1 : 1, dy: 0 }; // juke
+        intents.dash = { dx: this.rng() < 0.5 ? -1 : 1, dy: 0 }; // juke
       }
     }
 
     if (target && now >= this.nextSkillAt && dist < 360 && !lowHp) {
-      this.nextSkillAt = now + 700 + Math.random() * 1100;
-      const r = Math.random();
+      this.nextSkillAt = now + 700 + this.rng() * 1100;
+      const r = this.rng();
       if (p.skillCdLeft <= 0 && r < this.cfg.skillChance) intents.skill = true;
       else if (p.altSkillCdLeft <= 0 && r < this.cfg.skillChance * 0.7) intents.altSkill = true;
     }
@@ -224,7 +227,7 @@ export class BotBrain {
     // Re-pick on a decision boundary or when the current target is gone.
     if (!valid(cur) || now >= this.nextDecisionAt - 1) {
       let best = null, bestScore = Infinity;
-      const wantLowest = Math.random() < 0.3; // sometimes focus the weakest
+      const wantLowest = this.rng() < 0.3; // sometimes focus the weakest
       for (const id in ctx.players) {
         const o = ctx.players[id];
         if (!valid(o)) continue;

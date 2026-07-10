@@ -58,7 +58,8 @@ export class BrowserFx extends NullFx {
     }
   }
 
-  announce(text) {
+  announce(text, playerId = null) {
+    if (!this._isLocal(playerId)) return;   // scoped to one player (e.g. "궁극기 준비!")
     const textEl = typeof document !== 'undefined' ? document.getElementById('announcementText') : null;
     if (!textEl) return;
     textEl.classList.remove('animate-announcement');
@@ -69,5 +70,11 @@ export class BrowserFx extends NullFx {
 
   killFeed(evt) {
     this.shell._pushKillFeed(evt);
+  }
+
+  weaponApplied(playerId) {
+    if (!this._isLocal(playerId)) return;
+    this.shell.pendingWeaponChoice = null;
+    this.shell.pendingWeaponChoiceLabel = '';
   }
 }

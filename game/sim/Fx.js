@@ -26,8 +26,11 @@ export class NullFx {
   shake(_mag, _ms, _playerId = null) {}
   hitstop(_ms, _playerId = null) {}
   vibrate(_pattern, _playerId = null) {}
-  announce(_text) {}
+  /** Banner text. `playerId` scopes it to one player (null = everyone sees it). */
+  announce(_text, _playerId = null) {}
   killFeed(_evt) {}
+  /** A queued weapon swap took effect — drop that player's pending UI hint. */
+  weaponApplied(_playerId) {}
 }
 
 /** Shared stateless default. Simulation code can always call `this.fx.*`. */
@@ -48,6 +51,10 @@ export class RecordingFx extends NullFx {
   shake(mag, ms, playerId = null) { this.calls.push({ type: 'shake', mag, ms, playerId }); }
   hitstop(ms, playerId = null) { this.calls.push({ type: 'hitstop', ms, playerId }); }
   vibrate(pattern, playerId = null) { this.calls.push({ type: 'vibrate', pattern, playerId }); }
-  announce(text) { this.calls.push({ type: 'announce', text }); }
+  announce(text, playerId = null) {
+    // Keep the common (global) shape stable for existing assertions.
+    this.calls.push(playerId == null ? { type: 'announce', text } : { type: 'announce', text, playerId });
+  }
   killFeed(evt) { this.calls.push({ type: 'killFeed', evt }); }
+  weaponApplied(playerId) { this.calls.push({ type: 'weaponApplied', playerId }); }
 }

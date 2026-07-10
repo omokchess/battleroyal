@@ -77,6 +77,12 @@ test('_creditKill runs headlessly and tags juice with the killer', () => {
 
   sim._creditKill(killer.id, victim, '검으로');
 
+  // The kill event is QUEUED, not broadcast: the sim owns no transport.
+  const out = sim.drainOutbox();
+  assert.equal(out.length, 1);
+  assert.equal(out[0].killerId, killer.id);
+  assert.deepEqual(sim.drainOutbox(), [], 'draining twice yields nothing');
+
   assert.equal(killer.kills, 1);
   // The sim must not decide who hears the cue — it only tags the owner.
   const tagged = fx.calls.filter(c => c.playerId !== undefined);
@@ -212,6 +218,42 @@ test('simulation methods never reach for ambient randomness or the wall clock', 
     assert.ok(!/Math\.random\(/.test(src), `${name} must use this.rng() instead of Math.random()`);
     assert.ok(!/Date\.now\(/.test(src), `${name} must use this.now() instead of Date.now()`);
   }
+});
+
+test('the simulation knows nothing about a "local" player or a transport', () => {
+  // On a server there is no local player and no peer connection. Any sim method
+  // that reads this.localPlayerId or this.networkManager would be a design bug.
+  const shell = new Set([
+    '_cameraFocusPoints', '_cleanupVisualSettingsPanel', '_consumeTargetCastWorld', '_gameLoop',
+    '_keyLabel', '_keyStrong', '_loadControlSettings', '_loadVisualSettings', '_onLocalDamaged',
+    '_pushKillFeed', '_renderFrame', '_renderKillFeed', '_resizeCanvas', '_resolveInputDashVector',
+    '_saveVisualSettings', '_sendLocalInput', '_setRowLabel', '_setupNetworkCallbacks',
+    '_setupVisualSettingsPanel', '_spawnDeathBurst', '_spawnHitSpark', '_trackDamagePopups',
+    '_trackSoundCues', '_triggerHitstop', '_triggerLocalBowSkillVibration',
+    '_triggerLocalBowSkillVibrations', '_triggerLocalSpearThrowFeedback',
+    '_triggerLocalSpearThrowFeedbacks', '_updateAbilityHud', '_updateClientInterpolations',
+    '_updateExtendedAbilityHud', '_updateHUD', '_vibrateDevice', 'constructor', 'quit',
+    'requestWeaponChange', 'start', '_flushOutbox',
+  ]);
+
+  const offenders = [];
+  for (const name of Object.getOwnPropertyNames(Game.prototype)) {
+    if (shell.has(name)) continue;
+    const fn = Game.prototype[name];
+    if (typeof fn !== 'function') continue;
+    const src = fn.toString();
+    if (/this\.localPlayerId/.test(src)) offenders.push(`${name} reads localPlayerId`);
+    if (/this\.networkManager/.test(src)) offenders.push(`${name} reads networkManager`);
+  }
+  assert.deepEqual(offenders, []);
+});
+
+test('_publish queues per instance rather than on a shared prototype array', () => {
+  const a = Object.create(Game.prototype);
+  const b = Object.create(Game.prototype);
+  a._publish({ x: 1 });
+  assert.deepEqual(b.drainOutbox(), [], 'one sim must not see another sim\'s messages');
+  assert.equal(a.drainOutbox().length, 1);
 });
 
 test('rebaseEffectSnapshot is a top-level helper and defaults without a `this`', () => {

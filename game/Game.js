@@ -87,7 +87,12 @@ export class Game {
     // countdown — reading the card must not cost the player match time (P2).
     this.matchHold = !!options.holdAtStart;
     this.countdownUntil = 0;
-    this.onMatchOver = typeof options.onMatchOver === 'function' ? options.onMatchOver : null;
+    // The sim ranks players but has no idea which one is "me" — the shell adds
+    // `isLocal` on the way out, so the result screen can highlight the player.
+    const onMatchOver = typeof options.onMatchOver === 'function' ? options.onMatchOver : null;
+    this.onMatchOver = onMatchOver
+      ? (results) => onMatchOver(results.map(r => ({ ...r, isLocal: r.id === this.localPlayerId })))
+      : null;
     this.matchOver = false;
 
     // Room custom settings (arena size / storm / cover / healing). The host owns
@@ -190,6 +195,13 @@ export class Game {
     this.serverTickTimer = 0;
     this.serverTickInterval = 1000 / 22; // ~22 ticks per second
 
+    // Messages the simulation wants delivered to other participants. The runner
+    // drains this; the sim never touches a transport (see _publish/drainOutbox).
+    this.outbox = [];
+    // True when this instance owns the simulation (offline host, or the server).
+    // Guests never tick the sim, so it stays false for them.
+    this.isAuthority = false;
+
     // Callback when game ends or disconnects
     this.onQuitCallback = null;
 
@@ -221,6 +233,9 @@ export class Game {
     this.lastInputSignature = '';
     
     this.localPlayerId = this.networkManager.localId;
+    // This instance owns the simulation only when it is the host. Guests never
+    // tick it; they render snapshots.
+    this.isAuthority = !!this.networkManager.isHost;
     this.lastFrameTime = performance.now();
     this.matchStartTime = Date.now(); // wall-clock match start (for telemetry duration)
 
@@ -475,8 +490,12 @@ export class Game {
       const holding = this.matchHold || now < this.countdownUntil;
       if (!this.matchOver && !holding) {
         this._updateHostPhysics(deltaTime, now);
-        this._updateHUD();   // shell-side; the sim tick must not touch the DOM
+        this._updateHUD();    // shell-side; the sim tick must not touch the DOM
       }
+      // Deliver whatever the sim queued (state ticks, kill events). Runs every
+      // frame, not just ticking ones: kills credited while handling a client
+      // action — or during the countdown/hold — must not be stranded.
+      this._flushOutbox();
 
       // Render frame
       this._renderFrame();
@@ -900,12 +919,12 @@ export class Game {
             p._applyWorkshopWeapon(p.pendingWorkshopWeapon);
             p.pendingWorkshopWeapon = null;
             p.pendingWeapon = null;
-            if (p.id === this.localPlayerId) { this.pendingWeaponChoice = null; this.pendingWeaponChoiceLabel = ''; }
+            this.fx.weaponApplied(p.id);   // clears that player's pending UI hint
           } else if (p.pendingWeapon && Weapons[p.pendingWeapon] && p.pendingWeapon !== p.weapon) {
             p.weapon = p.pendingWeapon;
             p.maxHp = Weapons[p.weapon].maxHp || 100;
             p.workshopWeapon = null;
-            if (p.id === this.localPlayerId) { this.pendingWeaponChoice = null; this.pendingWeaponChoiceLabel = ''; }
+            this.fx.weaponApplied(p.id);   // clears that player's pending UI hint
           }
           p.pendingWeapon = null;
           // An equipped workshop weapon's (clamped) maxHp wins on respawn.
@@ -998,7 +1017,7 @@ export class Game {
       .map(p => ({
         id: p.id, name: p.nickname, weapon: p.weapon,
         kills: p.kills || 0, deaths: p.deaths || 0,
-        isLocal: p.id === this.localPlayerId, isBot: !!p.isBot,
+        isBot: !!p.isBot,   // `isLocal` is added by the shell (see constructor)
         color: p.color
       }))
       .sort((a, b) => (b.kills - a.kills) || (a.deaths - b.deaths) || (a.isBot - b.isBot));
@@ -1112,8 +1131,8 @@ export class Game {
     if (gain <= 0) return;
     const before = Math.max(0, Math.min(100, Number(player.ultimateGauge) || 0));
     player.ultimateGauge = Math.max(0, Math.min(100, before + gain));
-    if (before < 100 && player.ultimateGauge >= 100 && player.id === this.localPlayerId) {
-      this._announce('궁극기 준비!');
+    if (before < 100 && player.ultimateGauge >= 100) {
+      this._announce('궁극기 준비!', player.id);   // scoped: only that player sees it
     }
   }
 
@@ -2771,7 +2790,7 @@ export class Game {
         killer.weapon, viaLabel,
         killer.title || null, target.title || null
       );
-      if (this.networkManager?.isHost) this.networkManager.broadcast(evt);
+      this._publish(evt);        // runner delivers it; offline it just drains empty
       this.fx.killFeed(evt);
 
       // Cosmetic kill effect at the victim (equipped kill-fx), synced to all.
@@ -3013,7 +3032,7 @@ export class Game {
   }
   _updateHealingItems(now) {
     if (typeof this.zone === 'undefined') return; // guard for partial mocks
-    if (!this.roomConfig.healing || !this.networkManager?.isHost) return;
+    if (!this.roomConfig.healing || !this.isAuthority) return;
 
     // Pickups: any live player overlapping an item heals 25% and consumes it.
     if (this.healingItems.length) {
@@ -3221,6 +3240,27 @@ export class Game {
     return this.clock.now();
   }
 
+  // ── Simulation outbound messages ──────────────────────────────────────────
+  // The sim does not own a transport. It queues Protocol messages here and the
+  // RUNNER delivers them: the browser host shell broadcasts over P2P, the game
+  // server broadcasts to that room's sockets. Nobody drains it offline, which is
+  // exactly right for a solo bot match.
+
+  /** Queue a message for every other participant. Lazily created so an instance
+   *  built straight off the prototype (server harness / test) still works — a
+   *  shared prototype array would leak messages between simulations. */
+  _publish(msg) {
+    (this.outbox || (this.outbox = [])).push(msg);
+  }
+
+  /** Take everything queued this tick (leaves the outbox empty). */
+  drainOutbox() {
+    if (!this.outbox || !this.outbox.length) return [];
+    const out = this.outbox;
+    this.outbox = [];
+    return out;
+  }
+
   // ── Simulation input entry points ─────────────────────────────────────────
   // The ONLY way movement keys / aim reach a player. Every player — the local
   // one included — goes through these, so the simulation never reads an input
@@ -3314,7 +3354,7 @@ export class Game {
     if ((Number(player.ultimateGauge) || 0) < 100) return;
     const hasUltimate = Boolean(player.workshopWeapon?.presetCombat?.ultimate);
     if (!hasUltimate) {
-      if (player.id === this.localPlayerId) this._announce('궁극기 스킬이 없습니다');
+      this._announce('궁극기 스킬이 없습니다', player.id);   // scoped to the presser
       return;
     }
     if (this._isMotionLocked(player, now)) return;
@@ -5912,7 +5952,7 @@ export class Game {
       this.firePatches.length ? this.firePatches : null
     );
 
-    this.networkManager.broadcast(payload);
+    this._publish(payload);   // queued; the runner delivers it (see drainOutbox)
   }
 
   /**
@@ -6360,10 +6400,20 @@ export class Game {
   /**
    * Display floating text notifications
    */
+  /** SHELL: deliver everything the simulation queued this tick over P2P. The
+   *  game server will do the same with its room's sockets. A solo/offline match
+   *  has no peers, so broadcast is a harmless no-op. */
+  _flushOutbox() {
+    const msgs = this.drainOutbox();
+    if (!msgs.length || !this.networkManager) return;
+    for (const msg of msgs) this.networkManager.broadcast(msg);
+  }
+
   /** Banner text. Routed through the presentation sink so simulation code that
-   *  announces (respawns, countdown, kills) stays free of the DOM. */
-  _announce(text) {
-    this.fx.announce(text);
+   *  announces (respawns, countdown, kills) stays free of the DOM. Pass a
+   *  playerId to scope the banner to that player; the sink decides if it's local. */
+  _announce(text, playerId = null) {
+    this.fx.announce(text, playerId);
   }
 
   /**

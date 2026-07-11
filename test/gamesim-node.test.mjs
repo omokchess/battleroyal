@@ -85,6 +85,18 @@ test('a bot match actually simulates: bodies move, bots attack, effects fire', (
   assert.ok(sim.effects.length > 0, 'the sim should raise visual effects');
 });
 
+test('a bot that remains stationary receives an escape movement input', () => {
+  const { sim } = newSim();
+  sim.beginMatch({ id: 'p1', nickname: 'Hero', weapon: 'sword' });
+  const bot = Object.values(sim.players).find(p => p.isBot);
+  bot.grounded = true;
+  bot.brain.think = () => { bot.keys = {}; return { dash: null, skill: false, altSkill: false }; };
+
+  for (let i = 0; i < 50; i++) sim._updateBots(1 / 60, 1_000_000 + i * 1000 / 60);
+  assert.equal(Boolean(bot.keys.a || bot.keys.d), true);
+  assert.equal(bot.keys.w, true);
+});
+
 test('offline bot-match players and bots can respawn repeatedly', () => {
   const { sim, clock } = newSim();
   const me = sim.beginMatch({ id: 'p1', nickname: 'Hero', weapon: 'sword' });

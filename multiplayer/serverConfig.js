@@ -11,6 +11,16 @@
  */
 
 const DEFAULT_PORT = 8787;
+const PRODUCTION_SERVER = 'wss://craftroyale-game-server.fly.dev';
+
+export function serverUrlFor(locationLike = null, configuredUrl = null) {
+  if (configuredUrl) return String(configuredUrl).replace(/\/+$/, '');
+  const hostname = String(locationLike?.hostname || '');
+  if (!hostname || hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
+    return `ws://localhost:${DEFAULT_PORT}`;
+  }
+  return PRODUCTION_SERVER;
+}
 
 /** Base ws(s):// URL of the game server. */
 export function gameServerUrl() {
@@ -21,13 +31,7 @@ export function gameServerUrl() {
       fromEnv = import.meta.env.VITE_GAME_SERVER || null;
     }
   } catch { /* import.meta unavailable (plain Node) */ }
-  if (fromEnv) return String(fromEnv).replace(/\/+$/, '');
-
-  if (typeof location !== 'undefined' && location.hostname) {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${location.hostname}:${DEFAULT_PORT}`;
-  }
-  return `ws://localhost:${DEFAULT_PORT}`;
+  return serverUrlFor(typeof location !== 'undefined' ? location : null, fromEnv);
 }
 
 /** Base http(s):// URL for the lobby list / health, derived from the ws URL. */

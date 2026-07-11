@@ -2512,6 +2512,7 @@ export class GameSim {
       const bot = brain.player;
       if (!bot || bot.isDead) { if (bot) bot.keys = {}; continue; }
       const intents = brain.think(dt, now, ctx);
+      this._unstickBot(bot, dt);
       if (intents.dash) this._tryDash(bot, intents.dash.dx, intents.dash.dy);
       if (intents.skill) this._handleSkillPressed(bot, now);
       if (intents.altSkill) {
@@ -2525,6 +2526,29 @@ export class GameSim {
         bot._botAltReleaseAt = 0;
       }
     }
+  }
+
+
+  _unstickBot(bot, dt) {
+    const lastX = Number.isFinite(bot._botWatchX) ? bot._botWatchX : bot.x;
+    const lastY = Number.isFinite(bot._botWatchY) ? bot._botWatchY : bot.y;
+    const moved = Math.hypot(bot.x - lastX, bot.y - lastY) > 0.5;
+    bot._botStillFor = moved ? 0 : (Number(bot._botStillFor) || 0) + Math.max(0, dt);
+    bot._botWatchX = bot.x;
+    bot._botWatchY = bot.y;
+    if (bot._botStillFor < 0.75 || bot.stunTimeLeft > 0 || bot.daggerQte) return;
+
+    let nearest = null;
+    let nearestDist = Infinity;
+    for (const target of Object.values(this.players)) {
+      if (!target || target.id === bot.id || target.isDead || target.isDummy) continue;
+      const dist = Math.hypot(target.x - bot.x, target.y - bot.y);
+      if (dist < nearestDist) { nearest = target; nearestDist = dist; }
+    }
+    const dir = nearest ? (nearest.x >= bot.x ? 1 : -1) : (bot._botEscapeDir || 1);
+    bot._botEscapeDir = dir;
+    bot.keys = { ...(bot.keys || {}), a: dir < 0, d: dir > 0 };
+    if (bot.grounded) bot.keys.w = true;
   }
 
 

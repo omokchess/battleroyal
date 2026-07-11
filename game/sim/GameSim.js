@@ -314,9 +314,6 @@ export class GameSim {
       if (p.wsSkillCd) {
         this._tickWorkshopCooldowns(p, deltaTime, now);
       }
-      if (p.sniperTeleportTargetUntil > 0 && now > p.sniperTeleportTargetUntil) {
-        p.sniperTeleportTargetUntil = 0;
-      }
       this._tickMagicCooldowns(p, deltaTime);
     });
 
@@ -3025,9 +3022,7 @@ export class GameSim {
     if (this._activateWorkshopSkill(player, 'skill2', now)) return;
     if (this._isMotionLocked(player, now)) return;
     this._triggerStickMotion(player, 'skill2', now);   // workshop weapon's E-skill motion (cosmetic)
-    if (player.weapon === 'sniper') {
-      this._handleTeleport(player, now);
-    } else if (player.weapon === 'magicstaff') {
+    if (player.weapon === 'magicstaff') {
       this._castMagicLifeboundSkill(player, now);
     } else if (player.weapon === 'katana') {
       this._startKatanaIaijutsuCharge(player, now);
@@ -3056,9 +3051,7 @@ export class GameSim {
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     const targetX = Math.max(0, Math.min(this.mapWidth, x));
     const targetY = Math.max(0, Math.min(this.mapHeight, y));
-    if (player.weapon === 'sniper' && player.sniperTeleportTargetUntil > now) {
-      this._sniperTeleportTo(player, now, targetX, targetY);
-    } else if (player.weapon === 'magicstaff') {
+    if (player.weapon === 'magicstaff') {
       this._castMagicIceSkill(player, now, targetX, targetY);
     } else {
       this._castAuxTargetSkill(player, now, targetX, targetY);
@@ -3331,7 +3324,6 @@ export class GameSim {
 
       if (qte.phase === 'lock' && now >= qte.actionAt) {
         const sk = SkillConfig.dagger;
-        this._placeBehindTarget(player, target, 34);
         player.angle = Math.atan2(target.y - player.y, target.x - player.x);
         qte.phase = 'window';
         qte.perfectAt = now + sk.perfectMs;
@@ -3445,16 +3437,6 @@ export class GameSim {
       }
     });
     return best;
-  }
-
-
-  _placeBehindTarget(player, target, distance = 34) {
-    const angle = (target.angle || 0) + Math.PI;
-    player.x = target.x + Math.cos(angle) * distance;
-    player.y = target.y + Math.sin(angle) * distance;
-    Collision.clampToMap(player, this.mapWidth, this.mapHeight);
-    this._resolveOutOfTerrain(player);
-    this._markPositionDiscontinuity(player);
   }
 
 
@@ -4295,44 +4277,6 @@ export class GameSim {
   _clearPendingSniperShotsFor(playerId) {
     if (!this.pendingSniperShots?.length) return;
     this.pendingSniperShots = this.pendingSniperShots.filter(s => s.playerId !== playerId);
-  }
-
-
-  // R key: arm a targeted blink. The next target-cast click/tap chooses a point
-  // inside a 400px-diameter circle around the sniper, then clamps it in-bounds.
-  _handleTeleport(player, now) {
-    if (!player || player.isDead || player.weapon !== 'sniper') return;
-    if (now < (player.teleportReadyAt || 0)) return;
-    const windowMs = SkillConfig.sniper?.teleportTargetWindowMs || 3500;
-    player.sniperTeleportTargetUntil = now + windowMs;
-  }
-
-
-  _sniperTeleportTo(player, now, targetX, targetY) {
-    const sk = SkillConfig.sniper;
-    const margin = (player.radius || 14) + 12;
-    const fromX = player.x, fromY = player.y;
-    const maxRadius = sk?.teleportRadius || 200;
-    let dx = targetX - fromX;
-    let dy = targetY - fromY;
-    const dist = Math.hypot(dx, dy);
-    if (dist > maxRadius) {
-      dx = (dx / dist) * maxRadius;
-      dy = (dy / dist) * maxRadius;
-    }
-    player.x = Math.max(margin, Math.min(this.mapWidth - margin, fromX + dx));
-    player.y = Math.max(margin, Math.min(this.mapHeight - margin, fromY + dy));
-    this._resolveOutOfTerrain(player);   // teleport: don't land inside terrain
-    this._markPositionDiscontinuity(player);
-    player.vy = 0;                        // cancel fall momentum on blink
-    // Teleport is discontinuous — don't let the next melee test sweep the jump.
-    player.prevX = player.x;
-    player.prevY = player.y;
-    player.sniperTeleportTargetUntil = 0;
-    player.teleportReadyAt = now + (sk?.teleportCooldownMs || 4000);
-    // Poof at the vacated spot and the arrival spot (world-anchored so they stay put).
-    this.effects.push({ attackerId: player.id, x: fromX, y: fromY, weapon: 'sniper', type: 'sniper_teleport', worldAnchored: true, progress: 0, timestamp: now, lifetime: 420 });
-    this.effects.push({ attackerId: player.id, x: player.x, y: player.y, weapon: 'sniper', type: 'sniper_teleport', worldAnchored: true, progress: 0, timestamp: now, lifetime: 420 });
   }
 
 

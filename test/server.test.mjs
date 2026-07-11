@@ -270,7 +270,7 @@ test('verified Firebase identity binds uid/nickname and records authoritative st
   } finally { await close(); }
 });
 
-test('invalid Firebase token is rejected before a player is seated', async () => {
+test('invalid Firebase token falls back to an unverified guest seat', async () => {
   const firebaseServices = {
     enabled: true,
     verifyIdToken: async () => { throw new Error('bad token'); },
@@ -280,8 +280,9 @@ test('invalid Firebase token is rejected before a player is seated', async () =>
   try {
     const a = await connect(port, 'HOTEL');
     a.send(Protocol.joinRoom('Nope', 'sword', null, false, null, { idToken: 'bad' }));
-    const error = await a.wait(MsgType.ERROR);
-    assert.equal(error.code, 'AUTH_INVALID');
-    assert.equal(rooms.rooms.size, 0);
+    const joined = await a.wait(MsgType.ROOM_JOINED);
+    assert.equal(joined.initialPlayers[joined.id].nickname, 'Nope');
+    assert.equal(rooms.rooms.size, 1);
+    a.send(Protocol.leaveRoom());
   } finally { await close(); }
 });

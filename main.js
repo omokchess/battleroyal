@@ -116,12 +116,12 @@ function registerPwa() {
 // Keep release communication in one place. Update this object whenever a
 // public build ships; the lobby notice renders it without duplicating markup.
 const LOBBY_PATCH = Object.freeze({
-  version: '2026.07.11 · 방 개설·봇전 설정 핫픽스',
+  version: '2026.07.11 · 서버 전투 안정화 핫픽스',
   items: [
-    '봇전 AI 수·난이도·플랫폼 설정 반영 수정',
-    '방 개설 시 서버 연결 대기 무한 정지 수정',
-    '공방 무기 이미지 네트워크 전송 용량 최적화',
-    'Firebase 인증 응답 지연 시 게스트 연결로 자동 계속',
+    '봇전·온라인 전투 반복 리스폰 서버 반영',
+    '만료된 로그인 인증으로 방 개설이 막히는 문제 수정',
+    '히트박스 없는 공방 궁극기 모션 재생 수정',
+    '봇전 AI 수·난이도·플랫폼 설정 반영',
   ],
 });
 

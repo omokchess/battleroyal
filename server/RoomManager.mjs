@@ -75,12 +75,11 @@ export class RoomManager {
         let identity = null;
         try {
           identity = data.idToken ? await this.auth.verifyIdToken(data.idToken) : null;
-          if (data.idToken && this.auth.enabled && !identity) throw new Error('invalid token');
         } catch {
-          try { ws.send(JSON.stringify({ type: MsgType.ERROR, code: 'AUTH_INVALID', message: '로그인 인증이 만료되었습니다.' })); } catch {}
-          try { ws.close(1008, 'invalid auth'); } catch {}
-          joining = false;
-          return;
+          // Guest play is explicitly supported. A stale/revoked Firebase token
+          // must not make room creation impossible; it only forfeits verified
+          // identity and authoritative account-stat writes for this session.
+          identity = null;
         }
         if (closed) return;
         if (identity?.name) data.nickname = identity.name;

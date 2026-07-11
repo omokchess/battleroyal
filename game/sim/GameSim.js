@@ -907,6 +907,21 @@ export class GameSim {
         combatKeys,
         presetKind: slot,
       });
+    } else if (motion) {
+      // A motion-only preset is still a valid authored skill. Previously these
+      // consumed the ultimate gauge but never advanced lastAttackTime, so the
+      // in-game animator stayed idle unless a hitbox/projectile was present.
+      this._startHitboxSwing(player, { ...motion, hitboxes: [] }, now, {
+        damage: combat.damage,
+        knockback: combat.knockback,
+        status: combat.status,
+        statusMs: combat.statusDurationMs,
+        airborneHeight: combat.airborneHeight,
+        motionTag: slot,
+        combat,
+        combatKeys,
+        presetKind: slot,
+      });
     }
     return true;   // slot is authored (motion + cooldown apply) even with no hitbox/projectile yet
   }

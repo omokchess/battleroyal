@@ -160,6 +160,28 @@ test('one skill activation awards ultimate gauge only on its first hitbox hit', 
   assert.equal(awards, 1);
 });
 
+test('motion-only workshop ultimate still starts its authored animation', () => {
+  const game = combatGame();
+  game._isMotionLocked = () => false;
+  const player = new Player('ult', 'Maker', 'sword', 100, 100);
+  const motion = { duration: 0.8, keyframes: [{ t: 0, pose: {} }, { t: 1, pose: {} }] };
+  player.workshopWeapon = {
+    presetCombat: { ultimate: { damage: 0, cooldownMs: 0, knockback: 0, status: 'none' } },
+    presetHitboxes: { ultimate: [] },
+    motionSet: { ultimate: motion },
+  };
+  game.players[player.id] = player;
+  player.ultimateGauge = 100;
+
+  game._handleUltimatePressed(player, 1000);
+
+  assert.equal(player.ultimateGauge, 0);
+  assert.equal(player.attackMotionTag, 'ultimate');
+  assert.equal(player.lastAttackMotionTag, 'ultimate');
+  assert.equal(player.lastAttackTime, 1000);
+  assert.equal(player._hbSwing.durMs, 800);
+});
+
 test('heavy combo fires after the configured number of basic attacks', () => {
   const game = combatGame();
   game._isMotionLocked = () => false;

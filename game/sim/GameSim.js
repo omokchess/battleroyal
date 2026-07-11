@@ -182,6 +182,65 @@ export class GameSim {
     this._updateHostPhysics(deltaTime, now);
   }
 
+  /**
+   * Seat a joining participant from an untrusted JOIN_ROOM payload. Transport
+   * free: both the browser host and the game server call this, then broadcast a
+   * PLAYER_JOINED themselves. Every wire field is sanitized here. Returns the
+   * seated Player, or null if the id is already taken.
+   */
+  addPlayer(id, joinPayload = {}) {
+    if (!id || this.players[id]) return null;
+    const spawnP = this._getRandomSpawnPoint();
+    const nickname = sanitizeNickname(joinPayload.nickname);
+    const weapon = Weapons[joinPayload.weapon] ? joinPayload.weapon : 'sword';
+    const costume = sanitizeCostume(joinPayload.costume);
+    const p = new Player(id, nickname, weapon, spawnP.x, spawnP.y, costume);
+    p.applyCosmetics(sanitizeCosmetics(joinPayload.costume?.cosmetics));
+    p.isMobile = !!joinPayload.isMobile;
+    p.mobileAimAssist = joinPayload.controls?.mobileAimAssist === undefined ? true : !!joinPayload.controls.mobileAimAssist;
+    p.automaticAttack = !!joinPayload.controls?.automaticAttack;
+    this._enforceWorkshopPolicy(p);
+    this.players[id] = p;
+    this._announce(`${p.nickname}님이 전장에 입장했습니다!`);
+    return p;
+  }
+
+  /** Remove a participant (disconnect / leave). Returns true when one was removed. */
+  removePlayer(id) {
+    if (!this.players[id]) return false;
+    delete this.players[id];
+    return true;
+  }
+
+  /** Serialize every player (the ROOM_JOINED initial snapshot). */
+  snapshotPlayers() {
+    const out = {};
+    for (const id of Object.keys(this.players)) out[id] = this.players[id].serialize();
+    return out;
+  }
+
+  /** Apply a queued weapon swap (WEAPON_SELECT) — accepted even while dead. */
+  applyWeaponSelect(id, data = {}) {
+    const p = this.players[id];
+    if (!p) return false;
+    if (typeof data.weapon === 'string' && data.weapon.startsWith('ws:') && data.workshopWeapon) {
+      p.pendingWorkshopWeapon = data.workshopWeapon;
+      p.pendingWeapon = null;
+    } else if (Weapons[data.weapon]) {
+      p.pendingWeapon = data.weapon;
+      p.pendingWorkshopWeapon = null;
+    }
+    return true;
+  }
+
+  /** Route a discrete PLAYER_ACTION for a live player (dash/skill/etc). */
+  applyAction(id, data, now = this.now()) {
+    const p = this.players[id];
+    if (!p || p.isDead) return false;
+    this._handlePlayerAction(p, data, now);
+    return true;
+  }
+
 
   /**
    * Host specific update routine
@@ -5468,4 +5527,69 @@ function angleDistance(a, b) {
   return Math.abs(delta);
 }
 
-export { clampSkillLabel, angleDistance, dirFromKeys, sanitizeInputKeys, positiveFinite, clamp01, zoneSnapshot, zoneRenderPayload, zoneIsDamaging, zoneIsOutside, hitboxDamageDivisor, damageTier };
+
+function sanitizeNickname(value) {
+  const nickname = String(value || '').trim().replace(/[^\p{L}\p{N}_ -]/gu, '').slice(0, 12);
+  return nickname || 'Gladiator';
+}
+
+// Validate a costume frame received from a peer — only allow safe CSS color
+// strings (hsl/rgb/#hex/names). Returns null to fall back to the hash colors.
+
+function sanitizeCostume(costume) {
+  if (!costume || typeof costume !== 'object') return null;
+  const safe = (c) => {
+    if (typeof c !== 'string') return null;
+    const s = c.trim().slice(0, 40);
+    return /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]+|(?:hsla?|rgba?)\([0-9.,%\s]+\))$/.test(s) ? s : null;
+  };
+  const color = safe(costume.color);
+  if (!color) return null;
+  const safeToken = (value, allowed) => {
+    if (typeof value !== 'string') return null;
+    const token = value.trim().slice(0, 24);
+    return allowed.has(token) ? token : null;
+  };
+  const decorations = new Set(['crest', 'wings', 'crown', 'halo', 'cape']);
+  const effects = new Set(['embers', 'leaves', 'sparkles', 'runes', 'shade']);
+  return {
+    color,
+    accentColor: safe(costume.accentColor) || color,
+    decoration: safeToken(costume.decoration, decorations),
+    effect: safeToken(costume.effect, effects)
+  };
+}
+
+// Validate a guest's cosmetic loadout (P2P → never trust the wire). Drops
+// anything malformed/unknown so it falls back to the default look. Cosmetic
+// only — nothing here can affect combat.
+
+function sanitizeCosmetics(cos) {
+  if (!cos || typeof cos !== 'object') return null;
+  const color = (c) => (typeof c === 'string' &&
+    /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]+|(?:hsla?|rgba?)\([0-9.,%\s]+\))$/.test(c.trim().slice(0, 40)))
+    ? c.trim().slice(0, 40) : null;
+  const out = {};
+  // weapon skins: per-weapon map { sword: 'ember', ... }
+  const VALID_WEAPONS = new Set(['axe','bow','chakram','crossbow','dagger','flamethrower','greatsword','guardian','hammer','harpoon','katana','magicstaff','rapier','scythe','sniper','spear','sword']);
+  const VALID_SKINS = new Set(['ember','frost','void']);
+  if (cos.weaponskins && typeof cos.weaponskins === 'object' && !Array.isArray(cos.weaponskins)) {
+    const ws = {};
+    for (const [wpn, sk] of Object.entries(cos.weaponskins)) {
+      if (VALID_WEAPONS.has(wpn) && VALID_SKINS.has(sk)) ws[wpn] = sk;
+    }
+    if (Object.keys(ws).length) out.weaponskins = ws;
+  }
+  if (color(cos.dashtrail?.data?.color)) out.dashtrail = { data: { color: color(cos.dashtrail.data.color) } };
+  if (color(cos.respawnfx?.data?.color)) out.respawnfx = { data: { color: color(cos.respawnfx.data.color) } };
+  const styles = new Set(['firework', 'skull', 'coins']);
+  if (styles.has(cos.killfx?.data?.style)) {
+    out.killfx = { data: { style: cos.killfx.data.style, color: color(cos.killfx.data.color) } };
+  }
+  if (typeof cos.title?.data?.text === 'string' && cos.title.data.text.trim()) {
+    out.title = { data: { text: cos.title.data.text.trim().slice(0, 12), color: color(cos.title.data.color) } };
+  }
+  return out;
+}
+
+export { sanitizeNickname, sanitizeCostume, sanitizeCosmetics, clampSkillLabel, angleDistance, dirFromKeys, sanitizeInputKeys, positiveFinite, clamp01, zoneSnapshot, zoneRenderPayload, zoneIsDamaging, zoneIsOutside, hitboxDamageDivisor, damageTier };

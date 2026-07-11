@@ -34,6 +34,7 @@ import { STATUS } from './Status.js';
 import { sampleCombatKeys } from './Workshop.js';
 import {
   GameSim,
+  sanitizeNickname, sanitizeCostume, sanitizeCosmetics,
   dirFromKeys, sanitizeInputKeys, positiveFinite, clamp01, zoneSnapshot, zoneRenderPayload, zoneIsDamaging, zoneIsOutside, hitboxDamageDivisor, damageTier,
 } from './sim/GameSim.js';
 
@@ -1480,43 +1481,22 @@ export class Game extends GameSim {
     this.networkManager.on('onPlayerJoined', (remoteId, joinPayload) => {
       if (!this.networkManager.isHost || !this.isRunning) return;
 
-      // 1. Double check capacity or duplicate IDs
-      if (this.players[remoteId]) return;
+      // Seat the newcomer through the shared, transport-free sim seam (the game
+      // server uses the exact same addPlayer). Null = duplicate id → ignore.
+      const guestPlayer = this.addPlayer(remoteId, joinPayload);
+      if (!guestPlayer) return;
 
-      // 2. Select elegant far coordinate to spawn newcomer
-      const spawnP = this._getRandomSpawnPoint();
-      const nickname = sanitizeNickname(joinPayload.nickname);
-      const weapon = Weapons[joinPayload.weapon] ? joinPayload.weapon : 'sword';
-      const costume = sanitizeCostume(joinPayload.costume);
-      const guestPlayer = new Player(remoteId, nickname, weapon, spawnP.x, spawnP.y, costume);
-      guestPlayer.applyCosmetics(sanitizeCosmetics(joinPayload.costume?.cosmetics));
-      guestPlayer.isMobile = !!joinPayload.isMobile; // touch players fire instantly
-      guestPlayer.mobileAimAssist = joinPayload.controls?.mobileAimAssist === undefined ? true : !!joinPayload.controls.mobileAimAssist;
-      guestPlayer.automaticAttack = !!joinPayload.controls?.automaticAttack;
-      this._enforceWorkshopPolicy(guestPlayer);
-      this.players[remoteId] = guestPlayer;
-
-      this._announce(`${guestPlayer.nickname}님이 전장에 입장했습니다!`);
-
-      // 3. Serialise existing player lists to supply to joining guest as initial context
-      const existingPlayers = {};
-      Object.keys(this.players).forEach(id => {
-        existingPlayers[id] = this.players[id].serialize();
-      });
-
-      // 4. Send hand-shake ROOM_JOINED acceptance packed specifically to the guest.
-      //    roomConfig rides along so late-joiners get the exact same arena/rules.
+      // Hand-shake ROOM_JOINED to the guest (existing players + arena + seed +
+      // canonical weapon defs), then tell everyone else a player joined.
       this.networkManager.sendTo(remoteId, Protocol.roomJoined(
         remoteId,
-        existingPlayers,
+        this.snapshotPlayers(),
         this.mapWidth,
         this.mapHeight,
         this.roomConfig,
         this.coverSeed,
         canonicalWeaponsSnapshot()   // host-authoritative canonical weapon defs (T1-F)
       ));
-
-      // 5. Broadcast to everyone else that a new player entered
       this.networkManager.broadcast({
         type: MsgType.PLAYER_JOINED,
         player: guestPlayer.serialize()
@@ -1539,13 +1519,7 @@ export class Game extends GameSim {
 
         // Weapon swaps are accepted even while dead (applied on next respawn).
         if (data.type === MsgType.WEAPON_SELECT) {
-          if (typeof data.weapon === 'string' && data.weapon.startsWith('ws:') && data.workshopWeapon) {
-            player.pendingWorkshopWeapon = data.workshopWeapon;
-            player.pendingWeapon = null;
-          } else if (Weapons[data.weapon]) {
-            player.pendingWeapon = data.weapon;
-            player.pendingWorkshopWeapon = null;
-          }
+          this.applyWeaponSelect(player.id, data);
           return;
         }
 
@@ -1556,7 +1530,7 @@ export class Game extends GameSim {
         } else if (data.type === MsgType.PLAYER_AIM) {
           this.applyAim(player.id, data.angle);
         } else if (data.type === MsgType.PLAYER_ACTION) {
-          this._handlePlayerAction(player, data, now);
+          this.applyAction(player.id, data, now);
         }
       }
       
@@ -1840,71 +1814,6 @@ export function rebaseEffectSnapshot(effectSnap, now = Date.now()) {
 }
 
 
-function sanitizeNickname(value) {
-  const nickname = String(value || '').trim().replace(/[^\p{L}\p{N}_ -]/gu, '').slice(0, 12);
-  return nickname || 'Gladiator';
-}
-
-// Validate a costume frame received from a peer — only allow safe CSS color
-// strings (hsl/rgb/#hex/names). Returns null to fall back to the hash colors.
-
-function sanitizeCostume(costume) {
-  if (!costume || typeof costume !== 'object') return null;
-  const safe = (c) => {
-    if (typeof c !== 'string') return null;
-    const s = c.trim().slice(0, 40);
-    return /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]+|(?:hsla?|rgba?)\([0-9.,%\s]+\))$/.test(s) ? s : null;
-  };
-  const color = safe(costume.color);
-  if (!color) return null;
-  const safeToken = (value, allowed) => {
-    if (typeof value !== 'string') return null;
-    const token = value.trim().slice(0, 24);
-    return allowed.has(token) ? token : null;
-  };
-  const decorations = new Set(['crest', 'wings', 'crown', 'halo', 'cape']);
-  const effects = new Set(['embers', 'leaves', 'sparkles', 'runes', 'shade']);
-  return {
-    color,
-    accentColor: safe(costume.accentColor) || color,
-    decoration: safeToken(costume.decoration, decorations),
-    effect: safeToken(costume.effect, effects)
-  };
-}
-
-// Validate a guest's cosmetic loadout (P2P → never trust the wire). Drops
-// anything malformed/unknown so it falls back to the default look. Cosmetic
-// only — nothing here can affect combat.
-
-function sanitizeCosmetics(cos) {
-  if (!cos || typeof cos !== 'object') return null;
-  const color = (c) => (typeof c === 'string' &&
-    /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]+|(?:hsla?|rgba?)\([0-9.,%\s]+\))$/.test(c.trim().slice(0, 40)))
-    ? c.trim().slice(0, 40) : null;
-  const out = {};
-  // weapon skins: per-weapon map { sword: 'ember', ... }
-  const VALID_WEAPONS = new Set(['axe','bow','chakram','crossbow','dagger','flamethrower','greatsword','guardian','hammer','harpoon','katana','magicstaff','rapier','scythe','sniper','spear','sword']);
-  const VALID_SKINS = new Set(['ember','frost','void']);
-  if (cos.weaponskins && typeof cos.weaponskins === 'object' && !Array.isArray(cos.weaponskins)) {
-    const ws = {};
-    for (const [wpn, sk] of Object.entries(cos.weaponskins)) {
-      if (VALID_WEAPONS.has(wpn) && VALID_SKINS.has(sk)) ws[wpn] = sk;
-    }
-    if (Object.keys(ws).length) out.weaponskins = ws;
-  }
-  if (color(cos.dashtrail?.data?.color)) out.dashtrail = { data: { color: color(cos.dashtrail.data.color) } };
-  if (color(cos.respawnfx?.data?.color)) out.respawnfx = { data: { color: color(cos.respawnfx.data.color) } };
-  const styles = new Set(['firework', 'skull', 'coins']);
-  if (styles.has(cos.killfx?.data?.style)) {
-    out.killfx = { data: { style: cos.killfx.data.style, color: color(cos.killfx.data.color) } };
-  }
-  if (typeof cos.title?.data?.text === 'string' && cos.title.data.text.trim()) {
-    out.title = { data: { text: cos.title.data.text.trim().slice(0, 12), color: color(cos.title.data.color) } };
-  }
-  return out;
-}
-
-
 function lerpAngle(current, target, amount) {
   if (!Number.isFinite(target)) return current;
 
@@ -1918,8 +1827,6 @@ function lerpAngle(current, target, amount) {
 function localCorrectDist(ax, ay, bx, by) {
   return Math.hypot(ax - bx, ay - by);
 }
-
-
 
 
 function deserializeMagicCooldowns(cooldowns = {}) {

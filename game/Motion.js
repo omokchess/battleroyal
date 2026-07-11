@@ -138,7 +138,11 @@ function sanitizeHitboxes(arr) {
     const frameTime = Number.isFinite(Number(hb.frameTime))
       ? clamp(Number(hb.frameTime), 0, 1)
       : clamp((aS + aE) / 2, 0, 1);
-    out.push({ ox, oy, w, h, activeStart: aS, activeEnd: aE, frameTime });
+    const item = { ox, oy, w, h, activeStart: aS, activeEnd: aE, frameTime };
+    // Per-frame authored damage rides along (allowGameplay only). Kept loose
+    // here; the workshop envelope re-clamps it to the real cap on publish.
+    if (Number.isFinite(Number(hb.damage))) item.damage = clamp(Number(hb.damage), 0, 100);
+    out.push(item);
   }
   return out;
 }

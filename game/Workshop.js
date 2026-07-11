@@ -281,6 +281,10 @@ function sanitizePreviewOffset(o) {
  *  image id (`custom:fx_*`); the image payload itself travels separately as
  *  effectImages when published.
  *  Time is NORMALIZED (0..1) — shared axis with motion/flip keyframes. */
+// Effect scale range. Frame effects are purely cosmetic (no hitbox), so a wide
+// ceiling lets authors make huge screen-filling bursts without gameplay risk.
+const EFFECT_SCALE = [0.1, 128];
+
 export function sanitizeEffects(list) {
   if (!Array.isArray(list)) return [];
   const out = [];
@@ -294,8 +298,8 @@ export function sanitizeEffects(list) {
       endTime,
       assetId: rawAssetId,
       x: clampNum(e.x, [-200, 200], 0), y: clampNum(e.y, [-200, 200], 0),
-      scaleX: clampNum(e.scaleX ?? e.scale, [0.1, 4], 1),
-      scaleY: clampNum(e.scaleY ?? e.scale, [0.1, 4], 1),
+      scaleX: clampNum(e.scaleX ?? e.scale, EFFECT_SCALE, 1),
+      scaleY: clampNum(e.scaleY ?? e.scale, EFFECT_SCALE, 1),
       rotation: clampNum(e.rotation, [-360, 360], 0),
       alpha: clampNum(e.alpha, [0, 1], 1),
       flipX: !!e.flipX,
@@ -310,8 +314,8 @@ export function sanitizeEffects(list) {
       byTime.set(kt, {
         time: kt,
         x: clampNum(key.x, [-200, 200], base.x), y: clampNum(key.y, [-200, 200], base.y),
-        scaleX: clampNum(key.scaleX ?? key.scale, [0.1, 4], base.scaleX),
-        scaleY: clampNum(key.scaleY ?? key.scale, [0.1, 4], base.scaleY),
+        scaleX: clampNum(key.scaleX ?? key.scale, EFFECT_SCALE, base.scaleX),
+        scaleY: clampNum(key.scaleY ?? key.scale, EFFECT_SCALE, base.scaleY),
         rotation: clampNum(key.rotation, [-360, 360], base.rotation),
         alpha: clampNum(key.alpha, [0, 1], base.alpha), flipX: key.flipX === undefined ? base.flipX : !!key.flipX,
         flipY: key.flipY === undefined ? base.flipY : !!key.flipY,

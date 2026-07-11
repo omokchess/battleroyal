@@ -39,7 +39,8 @@ import { NULL_FX } from './Fx.js';
 import { makeRng, randomSeed, SystemClock } from './env.js';
 
 // avoid the "blink and die again" loop from a 0.5s death turn.
-const RESPAWN_MS = 1500;
+// Exported: the client shell renders the respawn-countdown HUD against this.
+export const RESPAWN_MS = 1500;
 const RESPAWN_PROTECTION_MS = 2000;
 
 export class GameSim {

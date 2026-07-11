@@ -32,7 +32,7 @@ import { resolveMotion, weaponSetId, sanitizeMotionSetId, canonicalWeaponMotion,
 import { STATUS } from './Status.js';
 import { sampleCombatKeys } from './Workshop.js';
 import {
-  GameSim,
+  GameSim, RESPAWN_MS,
   sanitizeNickname, sanitizeCostume, sanitizeCosmetics,
   dirFromKeys, sanitizeInputKeys, positiveFinite, clamp01, zoneSnapshot, zoneRenderPayload, zoneIsDamaging, zoneIsOutside, hitboxDamageDivisor, damageTier,
 } from './sim/GameSim.js';

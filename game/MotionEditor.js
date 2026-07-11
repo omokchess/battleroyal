@@ -22,7 +22,7 @@ import { drawProjectileShape, drawFxShape } from './ProjectileArt.js';
 import { equippedStickLook, saveStickLook } from './StickLook.js';
 import { clampWorkshopStats, statCost, enforceBudget, clampWorkshopWeapon, POINT_BUDGET, toWorkshopWeaponV2, clampWorkshopWeaponV2, COMBAT_PRESET_KINDS, PRESET_LABELS, AUTHORING_PRESET_KEYS, FIXED_PRESET_DURATIONS, makeEmptyWeaponV2, makeEmptyPreset, statCostV2, baseStatsCost, combatCost, sanitizeCombat, sanitizeCombatKeys, sampleCombatKeys, sanitizeProjectile, sanitizeProjectileEvents, sanitizeTeleportEvents, sanitizeEffects, sampleEffectTransform, VALID_STATUS, sanitizeFlipKeys, sampleFlip } from './Workshop.js';
 import { saveWorkshopWeaponLocal, equipWorkshopWeaponLocal, v2ToV1Runtime } from './WorkshopStore.js';
-import { invalidateWeaponImage, shrinkDataUrlToBudget, WEAPON_IMAGE_BUDGET } from './WeaponImages.js';
+import { invalidateWeaponImage, shrinkDataUrlToBudget, WEAPON_IMAGE_BUDGET, saveCustomWeaponRecord } from './WeaponImages.js';
 // Local workshop storage + equip live in WorkshopStore now; re-export the
 // legacy-named helpers so existing import sites (main.js) keep working.
 export { equippedWorkshopWeapon, equipWorkshopWeapon, clearWorkshopWeapon, equippedWorkshopWeaponName } from './WorkshopStore.js';
@@ -1070,6 +1070,13 @@ export class MotionEditor {
       // V2-native: edit a whole weapon (baseStats + per-preset). openWorkshopV2
       // sets _pendingV2; the plain path creates a fresh empty weapon.
       this._editingV2 = this._pendingV2 || makeEmptyWeaponV2({});
+      // The editor resolves every image through the LOCAL library (customWeapons),
+      // but a weapon opened from the workshop carries its pixels EMBEDDED in the
+      // def (that's how recipients see them in-game). Seed those embedded images
+      // into the library first — otherwise `_customWeapon(imageId)` misses and
+      // the weapon silently falls back to the built-in sword glyph here while
+      // rendering fine in-game.
+      this._seedEmbeddedImages(this._editingV2);
       this._ensureAuthoringPresets();
       this._editingId = this._editingV2.id;
       this._activeKey = this._editingV2.presets[this._editingV2.equippedPresetKey]
@@ -2102,6 +2109,30 @@ export class MotionEditor {
     this._populateEffectSelect(document.getElementById('meEffectAsset')?.value || 'spark');
   }
   _customWeapon(id) { return this.customWeapons.find(c => c.id === id) || null; }
+  /**
+   * Copy a workshop def's embedded images (weapon/offhand/hats/effects) into
+   * the local image library, then reload it. Mirrors what Player does on
+   * equip — without this, weapons authored on another device (or restored
+   * from the workshop) open in the editor with no image.
+   */
+  _seedEmbeddedImages(w) {
+    if (!w) return;
+    const candidates = [
+      w.weaponImage, w.offhandImage, w.hatImage,
+      ...(Array.isArray(w.hatImages) ? w.hatImages : []),
+      ...(Array.isArray(w.effectImages) ? w.effectImages : []),
+    ];
+    let seeded = false;
+    for (const rec of candidates) {
+      if (!rec || !rec.id || !rec.src) continue;
+      if (this._customWeapon(rec.id)) continue;          // already in the library
+      try { if (saveCustomWeaponRecord(rec)) seeded = true; } catch {}
+    }
+    // Pick up anything Player seeded in-game since this editor was constructed,
+    // plus whatever we just wrote.
+    this.customWeapons = loadCustomWeapons();
+    if (seeded) this._wimgCache = {};                    // drop stale Image cache
+  }
   /** The (lazily loaded) Image for the current weapon, or null for a built-in. */
   _weaponImage() {
     const c = this._customWeapon(this.weapon); if (!c) return null;

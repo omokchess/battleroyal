@@ -176,14 +176,18 @@ export function clampWorkshopWeapon(raw) {
   // Motion set: cosmetic pose data + the attack's hitboxes (kept via allowGameplay),
   // then geometry re-clamped to the workshop envelope. Keys are the FIXED motion
   // tag vocabulary only — unknown slots are dropped (no smuggling arbitrary data).
-  const MOTION_STATES = ['attack', 'run', 'idle', 'jump', 'dash', 'skill', 'skill2', 'skill3', 'heavy', 'hurt'];
+  // NOTE: 'ultimate' must be listed here — dropping it silently ate the whole
+  // ultimate preset (motion, hitboxes, timeline events) on equip: the gauge
+  // drained but nothing played. v2ToV1Runtime emits it as its own slot.
+  const MOTION_STATES = ['attack', 'run', 'idle', 'jump', 'dash', 'skill', 'skill2', 'skill3', 'ultimate', 'heavy', 'hurt'];
+  const COMBAT_MOTION_STATES = ['attack', 'heavy', 'skill', 'skill2', 'skill3', 'ultimate'];
   const rawSet = (r.motionSet && typeof r.motionSet === 'object') ? r.motionSet : {};
   const motionSet = {};
   for (const state of MOTION_STATES) {
     if (!rawSet[state]) continue;
     const m = sanitizeMotion(rawSet[state], undefined, { allowGameplay: true });
-    // Attack/heavy/skill1-3 carry real hitboxes (they drive combat); rest cosmetic.
-    if (['attack', 'heavy', 'skill', 'skill2', 'skill3'].includes(state)) { if (Array.isArray(rawSet[state].hitboxes)) m.hitboxes = clampWorkshopHitboxes(rawSet[state].hitboxes); }
+    // Combat slots carry real hitboxes (they drive combat); the rest cosmetic.
+    if (COMBAT_MOTION_STATES.includes(state)) { if (Array.isArray(rawSet[state].hitboxes)) m.hitboxes = clampWorkshopHitboxes(rawSet[state].hitboxes); }
     else delete m.hitboxes;
     // Preserve the weapon flip timeline (sanitizeMotion drops it) — cosmetic.
     if (Array.isArray(rawSet[state].flipXKeys)) m.flipXKeys = sanitizeFlipKeys(rawSet[state].flipXKeys);
@@ -191,7 +195,7 @@ export function clampWorkshopWeapon(raw) {
     if (Array.isArray(rawSet[state].leftFlipXKeys)) m.leftFlipXKeys = sanitizeFlipKeys(rawSet[state].leftFlipXKeys);
     if (Array.isArray(rawSet[state].leftFlipYKeys)) m.leftFlipYKeys = sanitizeFlipKeys(rawSet[state].leftFlipYKeys);
     if (Array.isArray(rawSet[state].handSwapKeys)) m.handSwapKeys = sanitizeFlipKeys(rawSet[state].handSwapKeys);
-    if (['attack', 'heavy', 'skill', 'skill2', 'skill3'].includes(state)) {
+    if (COMBAT_MOTION_STATES.includes(state)) {
       m.projectileEvents = sanitizeProjectileEvents(rawSet[state].projectileEvents);
       m.teleportEvents = sanitizeTeleportEvents(rawSet[state].teleportEvents);
     }

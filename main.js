@@ -11,7 +11,7 @@ import { Renderer } from './game/Renderer.js';
 import { Player } from './game/Player.js';
 import { Projectile } from './game/Projectile.js';
 import { Protocol } from './multiplayer/Protocol.js';
-import { RoomRegistry } from './multiplayer/RoomRegistry.js';
+import { ServerLobby } from './multiplayer/ServerLobby.js';
 import * as accountUI from './ui/account-ui.js';
 import { isMobileDevice, isPhoneDevice } from './game/Device.js';
 import { normalizeRoomConfig, roomConfigBadges } from './game/RoomConfig.js';
@@ -106,7 +106,7 @@ function registerPwa() {
 }
 
 // Cross-device room presence (broker-backed, localStorage fallback).
-const roomRegistry = new RoomRegistry();
+const roomRegistry = new ServerLobby();   // server /rooms list (replaces MQTT)
 
 const UI_ICONS = {
   attack: '<path d="M14.5 3.5l6 6"/><path d="M2.5 21.5l7-7"/><path d="M8.5 13.5l2 2"/><path d="M12.5 9.5l2 2"/><path d="M9.5 14.5l5-5"/>',
@@ -1300,33 +1300,9 @@ function doHost(dummy = false) {
 
   hideError();
   closeRoomCustom();
-  if (btn) { btn.disabled = true; btn.textContent = 'P2P 세션 할당 중...'; }
+  if (btn) { btn.disabled = true; btn.textContent = dummy ? '연습장 준비 중...' : '서버 연결 중...'; }
 
-  // Instantiate network manager
   netManager = new NetworkManager();
-
-  netManager.on('onInit', (allocatedCode) => {
-    if (btn) { btn.disabled = false; btn.textContent = idleLabel; }
-
-    enterGameScreen(true);
-
-    // Run Game (apply the player's equipped costume colors + cosmetics + room settings)
-    activeGame = new Game(gameCanvas, netManager, localAppearance(), { dummyRoom: dummy, roomConfig });
-    activeGame.start((stats) => {
-      // Match ended / disconnected — award coins then return to lobby.
-      handleMatchEnd(stats);
-    });
-
-    // Advertise the room so other devices can find it in their list.
-    const weapon = document.querySelector('.weapon-card.selected')?.dataset.weapon || 'sword';
-    roomRegistry.startHosting(allocatedCode, () => ({
-      host: nickname,
-      weapon,
-      players: activeGame ? Object.values(activeGame.players).filter(p => !p.isDummy).length : 1,
-      dummy,
-      config: activeGame ? activeGame.roomConfig : roomConfig
-    }));
-  });
 
   netManager.on('onError', (err) => {
     if (btn) { btn.disabled = false; btn.textContent = idleLabel; }
@@ -1334,8 +1310,35 @@ function doHost(dummy = false) {
     netManager.stop();
   });
 
-  // Host the server
-  netManager.hostRoom(roomCode);
+  const chosenWeapon = document.querySelector('.weapon-card.selected')?.dataset.weapon || 'sword';
+
+  if (dummy) {
+    // 더미방 = OFFLINE practice: the browser is its own authoritative host and
+    // spawns training dummies. No server involved (LocalTransport → onInit).
+    netManager.on('onInit', () => {
+      if (btn) { btn.disabled = false; btn.textContent = idleLabel; }
+      enterGameScreen(true);
+      activeGame = new Game(gameCanvas, netManager, localAppearance(), { dummyRoom: true, roomConfig });
+      activeGame.start((stats) => handleMatchEnd(stats));
+    });
+    netManager.hostLocal(roomCode);
+    return;
+  }
+
+  // A real online room: create it ON THE SERVER by being the first to join. The
+  // server is authoritative, so we join as a GUEST; the creator carries the
+  // arena settings in its payload for the server to build the room with.
+  const joinPayload = Protocol.joinRoom(nickname, chosenWeapon, localAppearance(), isMobileDevice(), readControls());
+  joinPayload.roomConfig = roomConfig;
+
+  netManager.on('onConnected', () => {
+    if (btn) { btn.disabled = false; btn.textContent = idleLabel; }
+    enterGameScreen(false);   // guest render path — the server drives the sim
+    activeGame = new Game(gameCanvas, netManager, localAppearance(), { roomConfig });
+    activeGame.start((stats) => handleMatchEnd(stats));
+  });
+
+  netManager.hostRoom(roomCode, joinPayload);
 }
 
 hostBtn.addEventListener('click', () => doHost(false));

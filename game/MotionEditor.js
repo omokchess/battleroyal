@@ -22,7 +22,7 @@ import { drawProjectileShape, drawFxShape } from './ProjectileArt.js';
 import { equippedStickLook, saveStickLook } from './StickLook.js';
 import { clampWorkshopStats, statCost, enforceBudget, clampWorkshopWeapon, POINT_BUDGET, toWorkshopWeaponV2, clampWorkshopWeaponV2, COMBAT_PRESET_KINDS, PRESET_LABELS, AUTHORING_PRESET_KEYS, FIXED_PRESET_DURATIONS, makeEmptyWeaponV2, makeEmptyPreset, statCostV2, baseStatsCost, combatCost, sanitizeCombat, sanitizeCombatKeys, sampleCombatKeys, sanitizeProjectile, sanitizeProjectileEvents, sanitizeTeleportEvents, sanitizeEffects, sampleEffectTransform, VALID_STATUS, sanitizeFlipKeys, sampleFlip } from './Workshop.js';
 import { saveWorkshopWeaponLocal, equipWorkshopWeaponLocal, v2ToV1Runtime } from './WorkshopStore.js';
-import { invalidateWeaponImage, shrinkDataUrlToBudget, WEAPON_IMAGE_BUDGET, saveCustomWeaponRecord } from './WeaponImages.js';
+import { getCustomWeaponRecord, invalidateWeaponImage, shrinkDataUrlToBudget, WEAPON_IMAGE_BUDGET, saveCustomWeaponRecord } from './WeaponImages.js';
 // Local workshop storage + equip live in WorkshopStore now; re-export the
 // legacy-named helpers so existing import sites (main.js) keep working.
 export { equippedWorkshopWeapon, equipWorkshopWeapon, clearWorkshopWeapon, equippedWorkshopWeaponName } from './WorkshopStore.js';
@@ -156,6 +156,14 @@ const HANDLES = [
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const DEG = Math.PI / 180;
+
+export function previewPelvisTarget(W, H, root = { x: 0, y: 0 }, tp = { x: 0, y: 0 }, cameraTp = { x: 0, y: 0 }) {
+  const offsetScale = (H * 0.1) / 14;
+  return {
+    x: W / 2 + ((root.x || 0) + (tp.x || 0) - (cameraTp.x || 0)) * offsetScale,
+    y: H * 0.58 + ((root.y || 0) + (tp.y || 0) - (cameraTp.y || 0)) * offsetScale
+  };
+}
 
 /**
  * Load + re-register every stored motion set (call once at app start). localStorage
@@ -2108,7 +2116,7 @@ export class MotionEditor {
     this._populateProjectileSelect(document.getElementById('pj_imageId')?.value || 'arrow');
     this._populateEffectSelect(document.getElementById('meEffectAsset')?.value || 'spark');
   }
-  _customWeapon(id) { return this.customWeapons.find(c => c.id === id) || null; }
+  _customWeapon(id) { return this.customWeapons.find(c => c.id === id) || getCustomWeaponRecord(id); }
   /**
    * Copy a workshop def's embedded images (weapon/offhand/hats/effects) into
    * the local image library, then reload it. Mirrors what Player does on
@@ -2130,7 +2138,30 @@ export class MotionEditor {
     }
     // Pick up anything Player seeded in-game since this editor was constructed,
     // plus whatever we just wrote.
-    this.customWeapons = loadCustomWeapons();
+    const merged = new Map(loadCustomWeapons().map(rec => [rec.id, rec]));
+    const referencedIds = new Set([
+      w.weaponVisual?.imageId,
+      w.weaponVisual?.offhand?.imageId,
+      w.weaponVisual?.hat?.imageId,
+      ...(Array.isArray(w.weaponVisual?.hats) ? w.weaponVisual.hats.map(h => h?.imageId) : []),
+    ].filter(Boolean));
+    for (const preset of Object.values(w.presets || {})) {
+      if (preset?.projectile?.imageId) referencedIds.add(preset.projectile.imageId);
+      for (const event of (preset?.projectileEvents || [])) {
+        if (event?.projectile?.imageId) referencedIds.add(event.projectile.imageId);
+        if (event?.imageId) referencedIds.add(event.imageId);
+      }
+      for (const effect of (preset?.effects || [])) if (effect?.assetId) referencedIds.add(effect.assetId);
+    }
+    for (const rec of candidates) {
+      const shared = rec?.id ? getCustomWeaponRecord(rec.id) : null;
+      if (shared) merged.set(shared.id, shared);
+    }
+    for (const id of referencedIds) {
+      const shared = getCustomWeaponRecord(id);
+      if (shared) merged.set(shared.id, shared);
+    }
+    this.customWeapons = [...merged.values()];
     if (seeded) this._wimgCache = {};                    // drop stale Image cache
   }
   /** The (lazily loaded) Image for the current weapon, or null for a built-in. */
@@ -3007,14 +3038,8 @@ export class MotionEditor {
     if (d > 4 && this._pinch.dist > 4) this._setPreviewZoom(this._pinch.zoom * (d / this._pinch.dist));
     e.preventDefault();
   }
-  _previewPelvisTarget(W, H, W2E, root = { x: 0, y: 0 }, tp = { x: 0, y: 0 }) {
-    // Zoom around the authored pelvis, not around the canvas origin. Root and
-    // teleport offsets keep a stable screen scale while the character grows.
-    const offsetScale = (H * 0.1) / 14;
-    return {
-      x: W / 2 + ((root.x || 0) + (tp.x || 0)) * offsetScale,
-      y: H * 0.58 + ((root.y || 0) + (tp.y || 0)) * offsetScale
-    };
+  _previewPelvisTarget(W, H, W2E, root = { x: 0, y: 0 }, tp = { x: 0, y: 0 }, cameraTp = { x: 0, y: 0 }) {
+    return previewPelvisTarget(W, H, root, tp, cameraTp);
   }
   _previewOriginForPelvis(pose, scale, pelvis) {
     const probe = solveStickman(pose, scale, 0, 0, 1, { rawNearArm: true, weapon: this.weapon, offhandWeapon: this._offhandId() });
@@ -3039,7 +3064,7 @@ export class MotionEditor {
     const root = this._currentRootOffset(tNow);
     const tp = this._teleportPreviewOffset(tNow);
     const pose = this._displayPose();
-    const pelvisTarget = this._previewPelvisTarget(W, H, W2E, root, tp);
+    const pelvisTarget = this._previewPelvisTarget(W, H, W2E, root, tp, tp);
     const currentOrigin = this._previewOriginForPelvis(pose, scale, pelvisTarget);
     const cx = currentOrigin.x;
     const cyCenter = currentOrigin.y;
@@ -3069,7 +3094,7 @@ export class MotionEditor {
         const prevRoot = sampleRootOffset(this.motion, prev.t);
         const prevTp = this._teleportPreviewOffset(prev.t);
         const prevPose = { ...STICK_NEUTRAL, ...prev.pose };
-        const prevPelvis = this._previewPelvisTarget(W, H, W2E, prevRoot, prevTp);
+        const prevPelvis = this._previewPelvisTarget(W, H, W2E, prevRoot, prevTp, tp);
         const prevOrigin = this._previewOriginForPelvis(prevPose, scale, prevPelvis);
         const pj = solveStickman(prevPose, scale, prevOrigin.x, prevOrigin.y, 1, { rawNearArm: true, weapon: this.weapon, offhandWeapon: offId });
         const prevHats = this._hatListAt(prev.t);

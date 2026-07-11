@@ -219,6 +219,22 @@ test('workshop skill activation shows the authored skill name beside the caster'
   assert.equal(game.effects[0].text, '번개 베기');
 });
 
+test('workshop skill cooldown starts decreasing only after its motion ends', () => {
+  const game = combatGame();
+  game._isMotionLocked = () => false;
+  const player = new Player('cooldown', 'Maker', 'sword', 100, 100);
+  player.workshopWeapon = {
+    presetCombat: { skill: { damage: 10, cooldownMs: 1000, knockback: 0, status: 'none' } },
+    motionSet: { skill: { duration: 0.8, keyframes: [] } }
+  };
+
+  game._activateWorkshopSkill(player, 'skill', 1000);
+  game._tickWorkshopCooldowns(player, 0.5, 1500);
+  assert.equal(player.wsSkillCd.skill, 1);
+  game._tickWorkshopCooldowns(player, 0.1, 1800);
+  assert.ok(Math.abs(player.wsSkillCd.skill - 0.9) < 0.001);
+});
+
 test('sword skill releases timed swordwaves without a spin effect', () => {
   const game = combatGame();
   const player = new Player('p4', 'Blade', 'sword', 100, 100);

@@ -689,6 +689,7 @@ export class Player {
     this.altSkillCdLeft = 0;
     this.targetSkillCdLeft = 0;
     this.wsSkillCd = {};
+    this.wsSkillCdHoldUntil = {};
     this._basicCombo = 0;
     this.arrowStacks = 0;
     this.greatswordChargeStart = 0;
@@ -883,6 +884,7 @@ export class Player {
     this.altSkillCdLeft = Math.max(0, (data.altSkillCdMs || 0) / 1000);
     this.targetSkillCdLeft = Math.max(0, (data.targetSkillCdMs || 0) / 1000);
     this.wsSkillCd = deserializeWorkshopCooldowns(data.wsSkillCdMs);
+    this.wsSkillCdHoldUntil = {};
     this.ultimateGauge = Math.max(0, Math.min(100, Math.round(Number(data.ultimateGauge) || 0)));
     this.motionLockUntil = data.motionLockMs > 0 ? Date.now() + data.motionLockMs : 0;
     this.motionRootUntil = data.rootMotionMs > 0 ? Date.now() + data.rootMotionMs : 0;

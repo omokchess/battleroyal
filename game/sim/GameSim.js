@@ -312,7 +312,7 @@ export class GameSim {
       if (p.altSkillCdLeft > 0) p.altSkillCdLeft = Math.max(0, p.altSkillCdLeft - deltaTime);
       if (p.targetSkillCdLeft > 0) p.targetSkillCdLeft = Math.max(0, p.targetSkillCdLeft - deltaTime);
       if (p.wsSkillCd) {
-        for (const key in p.wsSkillCd) if (p.wsSkillCd[key] > 0) p.wsSkillCd[key] = Math.max(0, p.wsSkillCd[key] - deltaTime);
+        this._tickWorkshopCooldowns(p, deltaTime, now);
       }
       if (p.sniperTeleportTargetUntil > 0 && now > p.sniperTeleportTargetUntil) {
         p.sniperTeleportTargetUntil = 0;
@@ -898,6 +898,10 @@ export class GameSim {
     player.wsSkillCd[slot] = slot === 'ultimate' ? 0 : (Number.isFinite(combat.cooldownMs) ? combat.cooldownMs : 1000) / 1000;
     this._showSkillCallout(player, slot, slot === 'ultimate' ? '궁극기' : '스킬', now);
     const motion = ws.motionSet && ws.motionSet[slot];
+    if (!player.wsSkillCdHoldUntil) player.wsSkillCdHoldUntil = {};
+    player.wsSkillCdHoldUntil[slot] = slot === 'ultimate'
+      ? 0
+      : now + Math.max(80, Math.round(((motion && motion.duration) || 0.42) * 1000));
     const hasTimelineEvents = !!(motion && ((motion.projectileEvents && motion.projectileEvents.length) || (motion.teleportEvents && motion.teleportEvents.length)));
     const ranged = ws.presetRanged && ws.presetRanged[slot];
     if (ranged && !hasTimelineEvents) { this._fireWorkshopPresetProjectile(player, ranged, combat, now, slot); return true; }
@@ -931,6 +935,16 @@ export class GameSim {
       });
     }
     return true;   // slot is authored (motion + cooldown apply) even with no hitbox/projectile yet
+  }
+
+  _tickWorkshopCooldowns(player, deltaTime, now) {
+    if (!player?.wsSkillCd) return;
+    const holds = player.wsSkillCdHoldUntil || {};
+    for (const key in player.wsSkillCd) {
+      if (player.wsSkillCd[key] <= 0 || now < (holds[key] || 0)) continue;
+      player.wsSkillCd[key] = Math.max(0, player.wsSkillCd[key] - deltaTime);
+      if (player.wsSkillCd[key] <= 0) delete holds[key];
+    }
   }
 
 

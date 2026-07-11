@@ -177,11 +177,14 @@
         </div>
 
         <!-- Notice strip -->
-        <div class="med-panel relative overflow-hidden px-3 py-2">
+        <div class="med-panel relative px-3 py-2">
           <div class="flex items-center justify-between gap-3">
-            <div class="font-mono text-[11px] whitespace-nowrap min-w-0 overflow-hidden" style="color:var(--med-gold)">
-              <span style="color:var(--med-blood)">⚔ 공지</span>
-              <span class="med-notice-flavor" style="color:var(--med-parch)"> · 창작 무기 중심 전투 · 플랫폼 커스텀 · 워크샵 공유 · 시즌 02 갱신</span>
+            <div id="lobbyPatchNotice" class="font-mono text-[10px] sm:text-[11px] min-w-0 leading-relaxed" style="color:var(--med-gold)">
+              <div class="flex flex-wrap items-center gap-x-2">
+                <span style="color:var(--med-blood)">⚔ 패치 공지</span>
+                <span id="lobbyPatchVersion" class="font-bold" style="color:#ffe680"></span>
+              </div>
+              <div id="lobbyPatchItems" class="med-notice-flavor mt-0.5 whitespace-normal break-keep" style="color:var(--med-parch)"></div>
             </div>
             <button id="lobbyTutorialReplay" type="button" class="med-btn font-mono text-[10px] px-2.5 py-1 shrink-0">튜토리얼 다시보기</button>
           </div>

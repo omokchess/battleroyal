@@ -98,12 +98,41 @@ function registerPwa() {
   const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
   if (!window.isSecureContext && !isLocalhost) return;
 
+  let reloadingForUpdate = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloadingForUpdate) return;
+    reloadingForUpdate = true;
+    window.location.reload();
+  });
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' }).catch(err => {
-      console.warn('PWA service worker registration failed', err);
-    });
+    navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' })
+      .then(registration => registration.update())
+      .catch(err => {
+        console.warn('PWA service worker registration failed', err);
+      });
   });
 }
+
+// Keep release communication in one place. Update this object whenever a
+// public build ships; the lobby notice renders it without duplicating markup.
+const LOBBY_PATCH = Object.freeze({
+  version: '2026.07.11 · 서버 권위 안정화 핫픽스',
+  items: [
+    '봇전 플레이어·AI 반복 부활 수정',
+    '방 개설 버튼 및 서버 방 목록 수정',
+    '지형·물 시스템 제거',
+    '공방 이펙트 자유 비율 크기 조절',
+    '워크샵 무기 추가 저장 용량 오류 수정',
+  ],
+});
+
+function renderLobbyPatchNotice() {
+  const version = document.getElementById('lobbyPatchVersion');
+  const items = document.getElementById('lobbyPatchItems');
+  if (version) version.textContent = LOBBY_PATCH.version;
+  if (items) items.textContent = LOBBY_PATCH.items.map(item => `· ${item}`).join('  ');
+}
+renderLobbyPatchNotice();
 
 // Cross-device room presence (broker-backed, localStorage fallback).
 const roomRegistry = new ServerLobby();   // server /rooms list (replaces MQTT)

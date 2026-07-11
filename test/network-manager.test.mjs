@@ -1,191 +1,138 @@
+/**
+ * Phase 2: the client's transport abstraction.
+ *
+ * NetworkManager is now a thin facade over a pluggable transport. These tests
+ * cover the offline LocalTransport and the online WsTransport (driven against a
+ * REAL game server over a real WebSocket, in plain Node — no PeerJS, no browser).
+ */
+
+import test from 'node:test';
 import assert from 'node:assert/strict';
-import { afterEach, beforeEach, test } from 'node:test';
+
 import { NetworkManager } from '../multiplayer/NetworkManager.js';
+import { LocalTransport } from '../multiplayer/LocalTransport.js';
+import { WsTransport } from '../multiplayer/WsTransport.js';
 import { MsgType, Protocol } from '../multiplayer/Protocol.js';
+import { createServer } from '../server/index.mjs';
 
-class FakeEmitter {
-  constructor() {
-    this.handlers = new Map();
-  }
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-  on(event, handler) {
-    if (!this.handlers.has(event)) {
-      this.handlers.set(event, []);
-    }
-    this.handlers.get(event).push(handler);
-  }
+// ── facade ────────────────────────────────────────────────────────────────
 
-  emit(event, ...args) {
-    for (const handler of this.handlers.get(event) || []) {
-      handler(...args);
-    }
-  }
-}
-
-class FakeConnection extends FakeEmitter {
-  constructor(peerId) {
-    super();
-    this.peer = peerId;
-    this.open = false;
-    this.sent = [];
-    this.closed = false;
-  }
-
-  send(payload) {
-    if (!this.open) {
-      throw new Error('connection is not open');
-    }
-    this.sent.push(payload);
-  }
-
-  close() {
-    if (this.closed) return;
-    this.closed = true;
-    this.open = false;
-    this.emit('close');
-  }
-}
-
-class FakePeer extends FakeEmitter {
-  static instances = [];
-
-  constructor(id) {
-    super();
-    this.id = id || `peer-${FakePeer.instances.length + 1}`;
-    this.destroyed = false;
-    this.disconnected = false;
-    this.lastConnection = null;
-    this.lastConnectId = null;
-    this.reconnectCount = 0;
-    FakePeer.instances.push(this);
-  }
-
-  connect(peerId) {
-    this.lastConnectId = peerId;
-    this.lastConnection = new FakeConnection(peerId);
-    return this.lastConnection;
-  }
-
-  reconnect() {
-    this.reconnectCount++;
-    this.disconnected = false;
-  }
-
-  disconnect() {
-    this.disconnected = true;
-  }
-
-  destroy() {
-    this.destroyed = true;
-  }
-}
-
-beforeEach(() => {
-  FakePeer.instances = [];
-  globalThis.window = { Peer: FakePeer };
+test('every registered listener for an event fires', () => {
+  const nm = new NetworkManager();
+  let a = 0, b = 0;
+  nm.on('onConnected', () => a++);
+  nm.on('onConnected', () => b++);
+  nm._emit('onConnected');
+  assert.equal(a, 1);
+  assert.equal(b, 1);
 });
 
-afterEach(() => {
-  delete globalThis.window;
+test('off() removes a listener; unknown events are ignored', () => {
+  const nm = new NetworkManager();
+  let n = 0;
+  const stop = nm.on('onData', () => n++);
+  nm._emit('onData'); stop(); nm._emit('onData');
+  assert.equal(n, 1);
+  assert.doesNotThrow(() => nm.on('nope', () => {})());
 });
 
-test('emits all registered listeners for the same event', () => {
-  const network = new NetworkManager();
-  const errors = [];
+// ── LocalTransport (offline bot match) ──────────────────────────────────────
 
-  network.on('onError', (message) => errors.push(`first:${message}`));
-  network.on('onError', (message) => errors.push(`second:${message}`));
+test('hostLocal makes the client its own authoritative host, no network', async () => {
+  const nm = new NetworkManager();
+  const events = [];
+  nm.on('onInit', (code) => events.push(['onInit', code]));
+  nm.on('onConnected', () => events.push(['onConnected']));
 
-  network.hostRoom('AB');
+  nm.hostLocal('SOLO');
+  assert.ok(nm.transport instanceof LocalTransport);
+  assert.equal(nm.isHost, true, 'offline host is authoritative');
 
-  assert.deepEqual(errors, [
-    'first:Room code must be at least 3 characters.',
-    'second:Room code must be at least 3 characters.'
-  ]);
+  await sleep(5);   // onInit/onConnected are deferred a tick
+  assert.deepEqual(events, [['onInit', 'SOLO'], ['onConnected']]);
+  assert.ok(String(nm.localId).startsWith('local-'));
+
+  // No peers → messaging is a harmless no-op.
+  assert.equal(nm.sendToHost({ type: 'x' }), false);
+  assert.doesNotThrow(() => nm.broadcast({ type: 'x' }));
+  nm.stop();
 });
 
-test('joining a missing room fails instead of waiting forever', () => {
-  const network = new NetworkManager();
-  const errors = [];
+test('a stopped LocalTransport never emits', async () => {
+  const nm = new NetworkManager();
+  let fired = 0;
+  nm.on('onInit', () => fired++);
+  nm.hostLocal('SOLO');
+  nm.stop();          // before the deferred emit runs
+  await sleep(5);
+  assert.equal(fired, 0);
+});
 
-  network.on('onError', (message) => errors.push(message));
-  network.joinRoom('ghost', Protocol.joinRoom('Guest', 'sword'));
+// ── WsTransport (online, against the real server) ───────────────────────────
 
-  const peer = FakePeer.instances.at(-1);
-  peer.emit('open', 'guest-peer');
-  assert.equal(peer.lastConnectId, 'ais-br-bg-room-GHOST');
+async function boot() {
+  const server = createServer({ port: 0, silent: true });
+  const addr = await server.listen();
+  return { url: `ws://localhost:${addr.port}`, close: () => server.close(), rooms: server.rooms };
+}
 
-  const originalWarn = console.warn;
-  console.warn = () => {};
+test('joinRoom connects to the server as a guest and completes the handshake', async () => {
+  const { url, close } = await boot();
   try {
-    peer.emit('error', { type: 'peer-not-found', message: 'Could not connect to peer' });
-  } finally {
-    console.warn = originalWarn;
-  }
+    const nm = new NetworkManager({ serverUrl: url });
+    const seen = [];
+    nm.on('onConnected', () => seen.push('connected'));
+    nm.on('onData', (from, data) => seen.push([from, data.type]));
 
-  assert.equal(network.stopped, true);
-  assert.equal(Object.keys(network.connections).length, 0);
-  assert.match(errors.at(-1), /not found/i);
+    nm.joinRoom('ALPHA', Protocol.joinRoom('Hero', 'sword'));
+    assert.ok(nm.transport instanceof WsTransport);
+    assert.equal(nm.isHost, false, 'online client is a guest; the server is authoritative');
+
+    for (let i = 0; i < 100 && !seen.some(e => Array.isArray(e) && e[1] === MsgType.ROOM_JOINED); i++) await sleep(10);
+
+    assert.ok(seen.includes('connected'), 'onConnected fired on open');
+    assert.ok(seen.some(e => Array.isArray(e) && e[0] === 'server' && e[1] === MsgType.ROOM_JOINED), 'ROOM_JOINED relayed via onData');
+    assert.ok(nm.localId, 'the server assigned a player id');
+    nm.stop();
+  } finally { await close(); }
 });
 
-test('unicode room codes are encoded into stable PeerJS-safe ids', () => {
-  const network = new NetworkManager();
+test('sendToHost reaches the server and drives the authoritative sim', async () => {
+  const { url, close, rooms } = await boot();
+  try {
+    const nm = new NetworkManager({ serverUrl: url });
+    let joinedId = null;
+    nm.on('onData', (_from, data) => { if (data.type === MsgType.ROOM_JOINED) joinedId = data.id; });
+    nm.joinRoom('BRAVO', Protocol.joinRoom('Mover', 'sword'));
 
-  network.joinRoom('한글방', Protocol.joinRoom('손님', 'sword'));
+    for (let i = 0; i < 100 && !joinedId; i++) await sleep(10);
+    assert.ok(joinedId, 'joined');
 
-  const peer = FakePeer.instances.at(-1);
-  peer.emit('open', 'guest-peer');
+    const room = rooms.rooms.get('BRAVO');
+    const x0 = room.sim.players[joinedId].x;
+    for (let i = 0; i < 40; i++) { nm.sendToHost(Protocol.clientInput({ d: true })); await sleep(15); }
+    const x1 = room.sim.players[joinedId].x;
+    assert.ok(x1 > x0 + 20, `input forwarded to server moved the player (${x0} -> ${x1})`);
 
-  assert.equal(peer.lastConnectId, 'ais-br-bg-room-u-ed959ceab880ebb0a9');
-  network.stop({ notifyGuests: false });
+    nm.stop();
+  } finally { await close(); }
 });
 
-test('host accepts join packets and responds to client pings', () => {
-  const network = new NetworkManager();
-  let joinedPlayer = null;
+test('stop() closes the socket and the server drops the player', async () => {
+  const { url, close, rooms } = await boot();
+  try {
+    const nm = new NetworkManager({ serverUrl: url });
+    let id = null;
+    nm.on('onData', (_f, d) => { if (d.type === MsgType.ROOM_JOINED) id = d.id; });
+    nm.joinRoom('CHARLIE', Protocol.joinRoom('Solo', 'sword'));
+    for (let i = 0; i < 100 && !id; i++) await sleep(10);
 
-  network.on('onPlayerJoined', (remoteId, payload) => {
-    joinedPlayer = { remoteId, payload };
-  });
-
-  network.hostRoom('arena');
-  const peer = FakePeer.instances.at(-1);
-  peer.emit('open', 'ais-br-bg-room-ARENA');
-
-  const conn = new FakeConnection('guest-peer');
-  conn.open = true;
-  peer.emit('connection', conn);
-  conn.emit('data', Protocol.joinRoom('Guest', 'bow'));
-  conn.emit('data', { type: MsgType.PING, seq: 7 });
-
-  assert.equal(joinedPlayer.remoteId, 'guest-peer');
-  assert.equal(joinedPlayer.payload.weapon, 'bow');
-  assert.deepEqual(conn.sent.at(-1), { type: MsgType.PONG, seq: 7 });
-
-  network.stop({ notifyGuests: false });
-});
-
-test('client marks the room as joined only after ROOM_JOINED arrives', () => {
-  const network = new NetworkManager();
-  const received = [];
-
-  network.on('onData', (fromId, data) => received.push({ fromId, data }));
-  network.joinRoom('arena', Protocol.joinRoom('Guest', 'sword'));
-
-  const peer = FakePeer.instances.at(-1);
-  peer.emit('open', 'guest-peer');
-
-  const conn = peer.lastConnection;
-  conn.open = true;
-  conn.emit('open');
-
-  assert.equal(network.hasConnectedToHost, true);
-  assert.equal(network.hasJoinedRoom, false);
-
-  conn.emit('data', Protocol.roomJoined('guest-peer', {}, 700, 700));
-
-  assert.equal(network.hasJoinedRoom, true);
-  assert.equal(received.at(-1).data.type, MsgType.ROOM_JOINED);
-
-  network.stop({ notifyGuests: false });
+    const room = rooms.rooms.get('CHARLIE');
+    assert.equal(room.clients.size, 1);
+    nm.stop();
+    await sleep(120);
+    assert.equal(room.clients.size, 0, 'server removed the player after stop()');
+  } finally { await close(); }
 });

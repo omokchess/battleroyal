@@ -1524,6 +1524,12 @@ export class GameSim {
       this.fx.attackSfx(weaponConfig, player.id);
       return true;
     }
+    // 강공격 combo: evaluated for EVERY workshop weapon that authored a heavy
+    // preset — melee OR ranged — BEFORE the ranged/melee basic branches below, so
+    // a ranged (or event-based) basic no longer skips the heavy entirely. Returns
+    // true when this hit converted into the heavy (consuming the attack).
+    if (this._tryHeavyCombo(player, now)) return true;
+
     const basicMotion = player.workshopWeapon?.motionSet?.attack;
     const basicHasEvents = !!(basicMotion && ((basicMotion.projectileEvents && basicMotion.projectileEvents.length) || (basicMotion.teleportEvents && basicMotion.teleportEvents.length)));
     if (player.workshopWeapon && player.workshopWeapon.ranged && player.workshopWeapon.projectile && !basicHasEvents) {
@@ -1532,42 +1538,57 @@ export class GameSim {
     }
     const hbMotion = this._canonicalHitboxMotion(player);
     if (hbMotion) {
-      // 강공격 = authored basic combo finisher. Default remains the old 3-hit
-      // behavior, but workshop weapons can set 1..5 hits on the heavy preset.
-      const ws = player.workshopWeapon;
-      const heavyCombat = ws && ws.presetCombat && ws.presetCombat.heavy;
-      const heavyHb = ws && ws.presetHitboxes && ws.presetHitboxes.heavy;
-      const heavyMotion = ws && ws.motionSet && ws.motionSet.heavy;
-      const heavyHasEvents = !!(heavyMotion && ((heavyMotion.projectileEvents && heavyMotion.projectileEvents.length) || (heavyMotion.teleportEvents && heavyMotion.teleportEvents.length)));
-      const heavyReady = heavyCombat && ((Array.isArray(heavyHb) && heavyHb.length) || heavyHasEvents);
-      if (heavyReady) {
-        const heavyAfter = Math.max(1, Math.min(5, Math.round(Number(ws.heavyAfter) || 3)));
-        if (!player._basicComboAt || (now - player._basicComboAt) > 1400) player._basicCombo = 0;
-        player._basicComboAt = now;
-        if ((player._basicCombo || 0) >= heavyAfter) {
-          player._basicCombo = 0;
-          const motion = heavyMotion;
-          const swingMotion = motion ? { ...motion, hitboxes: (Array.isArray(motion.hitboxes) ? motion.hitboxes : heavyHb) || [] } : { duration: 0.5, hitboxes: heavyHb || [] };
-          this._startHitboxSwing(player, swingMotion, now, {
-            damage: Number.isFinite(heavyCombat.damage) ? heavyCombat.damage : Math.round((ws.stats?.damage || 12) * 1.6),
-            knockback: heavyCombat.knockback,
-            status: heavyCombat.status, statusMs: heavyCombat.statusDurationMs, airborneHeight: heavyCombat.airborneHeight,
-            projectile: ws.presetRanged?.heavy || null,
-            motionTag: 'heavy',
-            ultimateGain: 10,
-            combat: heavyCombat,
-            combatKeys: ws.presetCombatKeys?.heavy || [],
-            presetKind: 'heavy',
-          });
-          return true;
-        }
-        player._basicCombo = (player._basicCombo || 0) + 1;
-      }
       this._startHitboxSwing(player, hbMotion, now, { projectile: player.workshopWeapon?.projectile || null });
       return true;
     }
     this._performAutomaticAttack(player, weaponConfig, now);
     return true;
+  }
+
+  /**
+   * The 강공격 (heavy) basic-combo finisher. Counts consecutive basic attacks and,
+   * once the authored threshold is reached, converts the NEXT basic into the
+   * heavy preset (matching the editor's "N basics → next hit is heavy" wording).
+   *
+   * Weapon-type agnostic: it runs for melee, ranged, and event-based basics, so
+   * "some weapons never get a heavy" can't happen — previously it was nested
+   * under the melee hitbox branch and behind the ranged early-return.
+   *
+   * Returns true when it fired the heavy (the caller must not also do a basic).
+   */
+  _tryHeavyCombo(player, now) {
+    const ws = player.workshopWeapon;
+    if (!ws) return false;
+    const heavyCombat = ws.presetCombat && ws.presetCombat.heavy;
+    if (!heavyCombat) return false;
+    const heavyHb = ws.presetHitboxes && ws.presetHitboxes.heavy;
+    const heavyMotion = ws.motionSet && ws.motionSet.heavy;
+    const heavyHasEvents = !!(heavyMotion && ((heavyMotion.projectileEvents && heavyMotion.projectileEvents.length) || (heavyMotion.teleportEvents && heavyMotion.teleportEvents.length)));
+    const heavyReady = (Array.isArray(heavyHb) && heavyHb.length) || heavyHasEvents;
+    if (!heavyReady) return false;
+
+    const heavyAfter = Math.max(1, Math.min(5, Math.round(Number(ws.heavyAfter) || 3)));
+    if (!player._basicComboAt || (now - player._basicComboAt) > 1400) player._basicCombo = 0;
+    player._basicComboAt = now;
+    if ((player._basicCombo || 0) >= heavyAfter) {
+      player._basicCombo = 0;
+      const motion = heavyMotion;
+      const swingMotion = motion ? { ...motion, hitboxes: (Array.isArray(motion.hitboxes) ? motion.hitboxes : heavyHb) || [] } : { duration: 0.5, hitboxes: heavyHb || [] };
+      this._startHitboxSwing(player, swingMotion, now, {
+        damage: Number.isFinite(heavyCombat.damage) ? heavyCombat.damage : Math.round((ws.stats?.damage || 12) * 1.6),
+        knockback: heavyCombat.knockback,
+        status: heavyCombat.status, statusMs: heavyCombat.statusDurationMs, airborneHeight: heavyCombat.airborneHeight,
+        projectile: ws.presetRanged?.heavy || null,
+        motionTag: 'heavy',
+        ultimateGain: 10,
+        combat: heavyCombat,
+        combatKeys: ws.presetCombatKeys?.heavy || [],
+        presetKind: 'heavy',
+      });
+      return true;
+    }
+    player._basicCombo = (player._basicCombo || 0) + 1;
+    return false;
   }
 
 

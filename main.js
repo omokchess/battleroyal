@@ -116,13 +116,12 @@ function registerPwa() {
 // Keep release communication in one place. Update this object whenever a
 // public build ships; the lobby notice renders it without duplicating markup.
 const LOBBY_PATCH = Object.freeze({
-  version: '2026.07.11 · 서버 권위 안정화 핫픽스',
+  version: '2026.07.11 · 방 개설·봇전 설정 핫픽스',
   items: [
-    '봇전 플레이어·AI 반복 부활 수정',
-    '방 개설 버튼 및 서버 방 목록 수정',
-    '지형·물 시스템 제거',
-    '공방 이펙트 자유 비율 크기 조절',
-    '워크샵 무기 추가 저장 용량 오류 수정',
+    '봇전 AI 수·난이도·플랫폼 설정 반영 수정',
+    '방 개설 시 서버 연결 대기 무한 정지 수정',
+    '공방 무기 이미지 네트워크 전송 용량 최적화',
+    'Firebase 인증 응답 지연 시 게스트 연결로 자동 계속',
   ],
 });
 
@@ -1104,6 +1103,17 @@ let roomCustomMode = 'host';
 function activeRoomConfigRoot() {
   return document.querySelector('[data-room-config-root="active"]') || roomCustomModal;
 }
+
+function activeRoomConfigState() {
+  const raw = activeRoomConfigRoot()?.dataset.roomConfigState;
+  if (!raw) return {};
+  try {
+    const value = JSON.parse(raw);
+    return value && typeof value === 'object' ? value : {};
+  } catch {
+    return {};
+  }
+}
 function openRoomCustom(mode = 'host') {
   if (!roomCustomModal) return;
   // The modal is declared inside the legacy lobby panel, which can be hidden
@@ -1150,7 +1160,9 @@ if (roomCustomModal) roomCustomModal.addEventListener('click', (e) => {
 /** Read the currently selected room settings out of the modal. */
 function readRoomConfig() {
   const root = activeRoomConfigRoot();
+  const state = activeRoomConfigState();
   const pick = (group, fallback) => {
+    if (state[group] != null) return state[group];
     const el = root?.querySelector(`[data-config-group="${group}"] .cfg-opt.selected`)
       || root?.querySelector(`.create-pill.on[data-g="${group}"]`);
     return el ? el.dataset.value : fallback;
@@ -1169,7 +1181,8 @@ function readRoomConfig() {
 
 function readBotCount() {
   const root = activeRoomConfigRoot();
-  const raw = root?.querySelector('[data-config-group="botCount"] .cfg-opt.selected')?.dataset.value
+  const raw = activeRoomConfigState().botCount
+    || root?.querySelector('[data-config-group="botCount"] .cfg-opt.selected')?.dataset.value
     || root?.querySelector('.create-pill.on[data-g="botCount"]')?.dataset.value;
   const n = Number(raw);
   return Number.isFinite(n) ? Math.max(0, Math.min(8, Math.round(n))) : 3;
@@ -1177,7 +1190,8 @@ function readBotCount() {
 
 function readBotDifficulty() {
   const root = activeRoomConfigRoot();
-  const raw = root?.querySelector('[data-config-group="botDifficulty"] .cfg-opt.selected')?.dataset.value
+  const raw = activeRoomConfigState().botDifficulty
+    || root?.querySelector('[data-config-group="botDifficulty"] .cfg-opt.selected')?.dataset.value
     || root?.querySelector('.create-pill.on[data-g="botDifficulty"]')?.dataset.value
     || 'normal';
   return ['easy', 'normal', 'hard'].includes(raw) ? raw : 'normal';
@@ -1252,6 +1266,15 @@ function localAppearance() {
   });
 }
 
+async function networkAppearance() {
+  const appearance = localAppearance();
+  if (!appearance.workshopWeapon) return appearance;
+  return {
+    ...appearance,
+    workshopWeapon: await workshopWeaponAccountPayload(appearance.workshopWeapon),
+  };
+}
+
 function runtimeWorkshopWeaponForBot(raw) {
   try {
     const rt = v2ToV1Runtime(toWorkshopWeaponV2(raw));
@@ -1309,7 +1332,7 @@ async function loadBotWorkshopWeapons() {
 /**
  * 3. Match Hosting workflow
  */
-function doHost(dummy = false, triggerBtn = null) {
+async function doHost(dummy = false, triggerBtn = null) {
   const nickname = nicknameInput.value.trim();
   const roomCode = hostRoomInput.value.trim();
   const btn = triggerBtn || (dummy ? dummyBtn : hostBtn);
@@ -1355,7 +1378,13 @@ function doHost(dummy = false, triggerBtn = null) {
   // A real online room: create it ON THE SERVER by being the first to join. The
   // server is authoritative, so we join as a GUEST; the creator carries the
   // arena settings in its payload for the server to build the room with.
-  const joinPayload = Protocol.joinRoom(nickname, chosenWeapon, localAppearance(), isMobileDevice(), readControls());
+  let appearance;
+  try {
+    appearance = await networkAppearance();
+  } catch {
+    appearance = localAppearance();
+  }
+  const joinPayload = Protocol.joinRoom(nickname, chosenWeapon, appearance, isMobileDevice(), readControls());
   joinPayload.roomConfig = roomConfig;
 
   netManager.on('onConnected', () => {
@@ -1680,7 +1709,7 @@ document.getElementById('matchLeaveBtn')?.addEventListener('click', () => {
 /**
  * 4. Match Joining workflow (shared by the Join button and room-list clicks)
  */
-function startJoin(rawCode, triggerBtn = joinBtn) {
+async function startJoin(rawCode, triggerBtn = joinBtn) {
   const nickname = nicknameInput.value.trim();
   const roomCode = String(rawCode || '').trim();
   const chosenWeapon = document.querySelector('.weapon-card.selected')?.dataset.weapon || 'sword';
@@ -1711,7 +1740,13 @@ function startJoin(rawCode, triggerBtn = joinBtn) {
 
   // Create registration payload frame (carry costume so the host paints us
   // correctly, and isMobile so the host gives touch players instant-fire).
-  const joinPayload = Protocol.joinRoom(nickname, chosenWeapon, localAppearance(), isMobileDevice(), readControls());
+  let appearance;
+  try {
+    appearance = await networkAppearance();
+  } catch {
+    appearance = localAppearance();
+  }
+  const joinPayload = Protocol.joinRoom(nickname, chosenWeapon, appearance, isMobileDevice(), readControls());
 
   netManager.on('onConnected', () => {
     setJoinBusy(false);
@@ -3560,6 +3595,13 @@ function buildCreateInto(body, mode = 'host') {
   const GROUPS = isQuickplay
     ? [['botCount', 'AI 수'], ['botDifficulty', 'AI 난이도'], ['platforms', '플랫폼'], ['platformShape', '플랫폼 모양'], ['cover', '엄폐물'], ['healing', '회복 아이템']]
     : [['platforms', '플랫폼'], ['platformShape', '플랫폼 모양'], ['cover', '엄폐물'], ['healing', '회복 아이템']];
+  const stateGroups = new Set([...GROUPS.map(([g]) => g), 'healingRate']);
+  for (const group of stateGroups) {
+    const selected = selectedOf(group);
+    if (selected) state[group] = selected.value;
+  }
+  const persistState = () => { body.dataset.roomConfigState = JSON.stringify(state); };
+  persistState();
   const ONOFF = new Set(['healing']);
   const healingOn = () => selectedOf('healing')?.value === 'on';
   const PLATFORM_COUNT = { none: 0, few: 2, some: 4, many: 6 };
@@ -3693,11 +3735,12 @@ function buildCreateInto(body, mode = 'host') {
 
   body.addEventListener('click', (e) => {
     const pill = e.target.closest('.create-pill');
-    if (pill) { pickHidden(pill.dataset.g, pill.dataset.v); syncControls(false); return; }
+    if (pill) { pickHidden(pill.dataset.g, pill.dataset.v); persistState(); syncControls(false); return; }
     const sw = e.target.closest('.med-switch');
     if (sw?.dataset.g) {
       const on = selectedOf(sw.dataset.g)?.value === 'on';
       pickHidden(sw.dataset.g, on ? 'off' : 'on');
+      persistState();
       syncControls(false);
       // The healing-rate segment may have just un-hidden → place its indicator.
       requestAnimationFrame(() => placeIndicator(body.querySelector('#createHealRate .create-seg'), true));

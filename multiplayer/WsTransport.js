@@ -23,6 +23,7 @@ import { MsgType } from './Protocol.js';
 const CONNECT_TIMEOUT_MS = 10000;
 const PING_INTERVAL_MS = 2500;
 const RECONNECT_GRACE_MS = 25000;
+const AUTH_TOKEN_TIMEOUT_MS = 1500;
 
 export class WsTransport {
   /**
@@ -84,7 +85,12 @@ export class WsTransport {
     ws.onopen = async () => {
       if (this._stopped) return;
       let idToken = '';
-      try { idToken = await this.getAuthToken?.() || ''; } catch { /* guest fallback */ }
+      try {
+        idToken = await Promise.race([
+          Promise.resolve(this.getAuthToken?.()).catch(() => ''),
+          new Promise((resolve) => setTimeout(() => resolve(''), AUTH_TOKEN_TIMEOUT_MS)),
+        ]) || '';
+      } catch { /* guest fallback */ }
       if (this._stopped || ws !== this.ws) return;
       const payload = { ...this._joinPayload };
       if (idToken) payload.idToken = idToken;

@@ -116,12 +116,12 @@ function registerPwa() {
 // Keep release communication in one place. Update this object whenever a
 // public build ships; the lobby notice renders it without duplicating markup.
 const LOBBY_PATCH = Object.freeze({
-  version: '2026.07.11 · 서버 전투 안정화 핫픽스',
+  version: '2026.07.11 · 네트워크 롤백 완화 패치',
   items: [
-    '봇전·온라인 전투 반복 리스폰 서버 반영',
-    '만료된 로그인 인증으로 방 개설이 막히는 문제 수정',
-    '히트박스 없는 공방 궁극기 모션 재생 수정',
-    '봇전 AI 수·난이도·플랫폼 설정 반영',
+    '전용 서버 시뮬레이션 30Hz → 60Hz 상향',
+    '서버 위치 스냅샷 30Hz 안정 전송',
+    '핑 기반 위치 선행 예측으로 후진·롤백 완화',
+    '입력 유지 신호 주기 100ms → 50ms 단축',
   ],
 });
 

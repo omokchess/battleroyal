@@ -23,7 +23,7 @@ import { MsgType, Protocol } from '../multiplayer/Protocol.js';
 import { canonicalWeaponsSnapshot } from '../game/Motion.js';
 import { randomUUID } from 'node:crypto';
 
-const TICK_HZ = 30;
+const TICK_HZ = 60;
 const TICK_MS = 1000 / TICK_HZ;
 export const RECONNECT_GRACE_MS = 25_000;
 

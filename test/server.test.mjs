@@ -161,6 +161,20 @@ test('two clients share a room: each is told about the other, both get state', a
   } finally { await close(); }
 });
 
+test('server publishes close to 30 authoritative snapshots per second', async () => {
+  const { port, close } = await boot();
+  try {
+    const a = await connect(port, 'SNAPRATE');
+    a.send(Protocol.joinRoom('Ticker', 'sword'));
+    await a.wait(MsgType.ROOM_JOINED);
+    const start = Date.now();
+    while (Date.now() - start < 550) await sleep(10);
+    const snapshots = a.frames.filter(f => f.type === MsgType.GAME_STATE).length;
+    assert.ok(snapshots >= 12, `expected >=12 snapshots in 550ms, received ${snapshots}`);
+    a.close();
+  } finally { await close(); }
+});
+
 test('server is authoritative: input moves only the sender, not the peer', async () => {
   const { port, close, rooms } = await boot();
   try {

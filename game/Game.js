@@ -720,7 +720,7 @@ export class Game extends GameSim {
       aimAngle.toFixed(3)
     ].join('');
 
-    if (signature === this.lastInputSignature && now - this.lastInputSentAt < 100) {
+    if (signature === this.lastInputSignature && now - this.lastInputSentAt < 50) {
       return;
     }
 
@@ -1606,15 +1606,20 @@ export class Game extends GameSim {
               this.players[id] = p;
             }
 
+            const isLocalSnapshot = id === this.localPlayerId;
+            const wasDead = !!p.isDead;
+
             p.kills = snap.kills;
             p.isDead = snap.isDead;
             p.nickname = snap.nickname || p.nickname;
             p.weapon = Weapons[snap.weapon] ? snap.weapon : p.weapon;
             p.maxHp = positiveFinite(snap.maxHp) ? snap.maxHp : (Weapons[p.weapon]?.maxHp || p.maxHp || 100);
             p.hp = Number.isFinite(snap.hp) ? Math.min(snap.hp, p.maxHp) : p.maxHp;
-            if (Number.isFinite(snap.vx)) p.vx = snap.vx;
-            if (Number.isFinite(snap.vy)) p.vy = snap.vy;
-            p.grounded = Boolean(snap.grounded);
+            if (!isLocalSnapshot) {
+              if (Number.isFinite(snap.vx)) p.vx = snap.vx;
+              if (Number.isFinite(snap.vy)) p.vy = snap.vy;
+              p.grounded = Boolean(snap.grounded);
+            }
             p.respawnRemainingMs = snap.respawnRemainingMs || 0;
             p.iframeTimeLeft = (snap.iframeMs || 0) / 1000;
             p.buffType = snap.buffType || null;
@@ -1674,23 +1679,35 @@ export class Game extends GameSim {
             }
             p.applyCosmeticsSnapshot(snap.cos);
 
-            if (id !== this.localPlayerId) {
+            if (!isLocalSnapshot) {
               // Soft buffer coordinates for smooth client interpolation
               p.targetX = snap.x;
               p.targetY = snap.y;
               p.targetAngle = snap.angle;
             } else {
-              // Reconcile local prediction toward the host WITHOUT teleporting:
-              // moderate drift is corrected a fraction at a time (spread across
-              // ticks, invisible), and only a big desync — knockback, respawn or
-              // a lag spike — hard-snaps.
-              const correctionDistance = localCorrectDist(p.x, p.y, snap.x, snap.y);
-              if (p.isDead || correctionDistance > 120) {
+              // The snapshot is roughly half an RTT old when it arrives. Compare
+              // local prediction against a short velocity projection instead of
+              // dragging the player back to that stale position every packet.
+              const projected = projectServerSnapshot(snap, this.networkManager.latency);
+              const rawDistance = localCorrectDist(p.x, p.y, snap.x, snap.y);
+              const correctionDistance = localCorrectDist(p.x, p.y, projected.x, projected.y);
+              const respawned = wasDead && !p.isDead;
+              if (p.isDead || respawned || rawDistance > 240) {
                 p.x = snap.x;
                 p.y = snap.y;
-              } else if (correctionDistance > 6) {
-                p.x += (snap.x - p.x) * 0.25;
-                p.y += (snap.y - p.y) * 0.25;
+                if (Number.isFinite(snap.vx)) p.vx = snap.vx;
+                if (Number.isFinite(snap.vy)) p.vy = snap.vy;
+                p.grounded = Boolean(snap.grounded);
+              } else {
+                if (correctionDistance > 8) {
+                  const correction = correctionDistance > 90 ? 0.18 : 0.08;
+                  p.x += (projected.x - p.x) * correction;
+                  p.y += (projected.y - p.y) * correction;
+                }
+                if (Number.isFinite(snap.vx)) p.vx += (snap.vx - p.vx) * 0.12;
+                if (Number.isFinite(snap.vy)) p.vy += (snap.vy - p.vy) * 0.12;
+                if (!snap.grounded) p.grounded = false;
+                else if (Math.abs(p.y - snap.y) < 14) p.grounded = true;
               }
               if (p.isDead && Number.isFinite(snap.angle)) {
                 p.angle = snap.angle;
@@ -1841,6 +1858,16 @@ function lerpAngle(current, target, amount) {
 
 function localCorrectDist(ax, ay, bx, by) {
   return Math.hypot(ax - bx, ay - by);
+}
+
+
+export function projectServerSnapshot(snapshot, roundTripMs = 0) {
+  const oneWayMs = Math.max(0, Math.min(120, (Number(roundTripMs) || 0) * 0.5 + (1000 / 60)));
+  const seconds = oneWayMs / 1000;
+  return {
+    x: (Number(snapshot?.x) || 0) + (Number(snapshot?.vx) || 0) * seconds,
+    y: (Number(snapshot?.y) || 0) + (Number(snapshot?.vy) || 0) * seconds,
+  };
 }
 
 

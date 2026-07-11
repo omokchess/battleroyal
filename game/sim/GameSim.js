@@ -116,7 +116,10 @@ export class GameSim {
 
     // Snapshot broadcast cadence (~22 Hz), driven from the physics tick.
     this.serverTickTimer = 0;
-    this.serverTickInterval = 1000 / 22;
+    // The dedicated server runs at 60Hz and publishes every other tick. Keeping
+    // this an exact divisor avoids the old 30Hz/22Hz accumulator aliasing down
+    // to an effective ~15Hz snapshot stream.
+    this.serverTickInterval = 1000 / 30;
 
     // Outbound Protocol messages; the runner drains these (see _publish).
     this.outbox = [];
@@ -595,7 +598,10 @@ export class GameSim {
     // 6. Broadcast state ticks to guests
     this.serverTickTimer += deltaTime * 1000;
     if (this.serverTickTimer >= this.serverTickInterval) {
-      this.serverTickTimer = 0;
+      // Preserve the fractional remainder. Resetting to zero aliases a 60Hz
+      // timer against real-world 15-17ms ticks and can collapse 30Hz output to
+      // roughly 20Hz whenever two ticks land just short of the threshold.
+      this.serverTickTimer %= this.serverTickInterval;
       this._broadcastState();
     }
 

@@ -46,6 +46,15 @@ test('manual wheel zoom API is removed', () => {
   assert.equal(cam.userZoom, undefined);
 });
 
+test('action camera can snap to an authoritative spawn before easing', () => {
+  const cam = new Camera();
+  cam.snapAction([{ x: 1420, y: 760 }], VW, VH, LEVEL);
+  assert.ok(cam.x > 0 && cam.y > 0);
+  assert.ok(Math.abs(cam.x - 1420) < 1e-6);
+  assert.ok(Math.abs(cam.y - 760) < 1e-6);
+  assert.equal(cam.tracking, true);
+});
+
 test('platformer camera no longer takes aim lookahead arguments', () => {
   const base = new Camera();
   assert.equal(Camera.prototype.updatePlatformer.length, 5);

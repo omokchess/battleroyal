@@ -90,10 +90,6 @@ export class WsTransport {
       if (idToken) payload.idToken = idToken;
       if (this.sessionToken) payload.sessionToken = this.sessionToken;
       this._send(payload);
-      if (!this._everOpened) {
-        this._everOpened = true;
-        this.emit('onConnected');
-      }
       this._startPing();
     };
 
@@ -106,12 +102,21 @@ export class WsTransport {
 
       if (data.type === MsgType.PONG) { this._onPong(data); return; }
       if (data.type === MsgType.ROOM_JOINED) {
+        const firstJoin = !this._joined;
         this._joined = true;
         this.localId = data.id;
         if (data.sessionToken) this.sessionToken = data.sessionToken;
         this._reconnectStartedAt = 0;
         this._attempt = 0;
         clearTimeout(this._connectTimer);
+        // "Connected" means the server accepted the room join, not merely that
+        // the TCP/WebSocket handshake opened. Emit synchronously before onData
+        // so main.js can construct the Game shell, which then receives this same
+        // ROOM_JOINED frame below.
+        if (firstJoin && !this._everOpened) {
+          this._everOpened = true;
+          this.emit('onConnected');
+        }
       }
       if (data.type === MsgType.SERVER_SHUTDOWN) {
         this.emit('onData', 'server', data);

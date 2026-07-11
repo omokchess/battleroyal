@@ -92,8 +92,10 @@ test('joinRoom connects to the server as a guest and completes the handshake', a
 
     for (let i = 0; i < 100 && !seen.some(e => Array.isArray(e) && e[1] === MsgType.ROOM_JOINED); i++) await sleep(10);
 
-    assert.ok(seen.includes('connected'), 'onConnected fired on open');
+    assert.ok(seen.includes('connected'), 'onConnected fired after room acceptance');
     assert.ok(seen.some(e => Array.isArray(e) && e[0] === 'server' && e[1] === MsgType.ROOM_JOINED), 'ROOM_JOINED relayed via onData');
+    assert.ok(seen.indexOf('connected') < seen.findIndex(e => Array.isArray(e) && e[1] === MsgType.ROOM_JOINED),
+      'the shell can install its onData listener between acceptance and ROOM_JOINED delivery');
     assert.ok(nm.localId, 'the server assigned a player id');
     nm.stop();
   } finally { await close(); }

@@ -84,6 +84,28 @@ export class Camera {
     this.y += (fy - this.y) * 0.13;
   }
 
+  /** Place the action camera on valid arena coordinates before its first lerp. */
+  snapAction(points, vw, vh, level) {
+    if (!points || !points.length) return;
+    const valid = points.filter(p => p && Number.isFinite(p.x) && Number.isFinite(p.y));
+    if (!valid.length) return;
+    const minX = Math.min(...valid.map(p => p.x));
+    const maxX = Math.max(...valid.map(p => p.x));
+    const minY = Math.min(...valid.map(p => p.y));
+    const maxY = Math.max(...valid.map(p => p.y));
+    const viewW = Math.max(560, Math.min(1650, maxX - minX + 500));
+    const viewH = Math.max(400, Math.min(1040, maxY - minY + 400));
+    this.zoom = Math.max(0.1, Math.min(3, Math.min(vw / viewW, vh / viewH) * (this.userZoom || 1)));
+    const halfW = vw / (2 * this.zoom);
+    const halfH = vh / (2 * this.zoom);
+    const lw = level?.width || vw;
+    const lh = level?.height || vh;
+    this.x = clampRange((minX + maxX) / 2, halfW, lw - halfW, lw / 2);
+    this.y = clampRange((minY + maxY) / 2, halfH, lh - halfH, lh / 2);
+    this.tracking = true;
+    this.screenOffsetY = 0;
+  }
+
   /**
    * Move the camera toward its focus with smooth inertia.
    *

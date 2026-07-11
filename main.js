@@ -1354,6 +1354,18 @@ async function doBotMatch() {
   let nickname = nicknameInput.value.trim();
   if (!nickname) { nickname = '용사'; nicknameInput.value = nickname; }
 
+  // Read every quick-play control while its module is still mounted. Closing
+  // the module removes the active room-config root, which used to make bot
+  // matches silently fall back to defaults.
+  const demoConfig = normalizeRoomConfig({
+    ...readRoomConfig(),
+    arenaSize: 'medium',
+    storm: false,
+    allowWorkshop: true
+  });
+  const botCount = readBotCount();
+  const botDifficulty = readBotDifficulty();
+
   hideError();
   closeRoomCustom();
   const btn = document.getElementById('quickPlayBtn');
@@ -1361,14 +1373,6 @@ async function doBotMatch() {
   if (btn) { btn.disabled = true; btn.textContent = '전장 준비 중...'; }
   if (startBtn) { startBtn.disabled = true; startBtn.textContent = '전장 준비 중...'; }
 
-  const demoConfig = normalizeRoomConfig({
-    ...readRoomConfig(),
-    arenaSize: 'medium',
-    storm: false,
-    allowWorkshop: true   // practice/bot match → let players try their workshop weapons
-  });
-  const botCount = readBotCount();
-  const botDifficulty = readBotDifficulty();
   const botWorkshopWeapons = await loadBotWorkshopWeapons();
 
   netManager = new NetworkManager({ getAuthToken: accountUI.getAuthToken });

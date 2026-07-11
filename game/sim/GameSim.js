@@ -250,6 +250,11 @@ export class GameSim {
    * Host specific update routine
    */
   _updateHostPhysics(deltaTime, now) {
+    // Respawn is a lifecycle concern, not an attack-system tail step. Process it
+    // first so a dead player always advances even when later combat subsystems
+    // have no live targets or a weapon-specific queue is busy.
+    this._updateRespawns(now);
+
     // 0. Synthesize bot input first so their freshly-set keys/aim are consumed
     //    by the same physics + auto-attack pass as every other player.
     this._updateBots(deltaTime, now);
@@ -590,7 +595,21 @@ export class GameSim {
     const alivePlayers = Object.values(this.players).filter(p => !p.isDead);
     this.remainingPlayersCount = alivePlayers.length;
 
-    // Process resurrection/respawn times for dead competitors
+    // 6. Broadcast state ticks to guests
+    this.serverTickTimer += deltaTime * 1000;
+    if (this.serverTickTimer >= this.serverTickInterval) {
+      this.serverTickTimer = 0;
+      this._broadcastState();
+    }
+
+    // Round end (demo bot match): time limit or kill target reached.
+    this._checkMatchEnd(now);
+    // NOTE: the HUD is refreshed by the shell right after this tick — the
+    // simulation must not touch it (it also runs on a headless server).
+  }
+
+
+  _updateRespawns(now) {
     Object.keys(this.players).forEach(id => {
       const p = this.players[id];
       if (p.isDead) {
@@ -654,18 +673,6 @@ export class GameSim {
         p.respawnRemainingMs = 0;
       }
     });
-
-    // 6. Broadcast state ticks to guests
-    this.serverTickTimer += deltaTime * 1000;
-    if (this.serverTickTimer >= this.serverTickInterval) {
-      this.serverTickTimer = 0;
-      this._broadcastState();
-    }
-
-    // Round end (demo bot match): time limit or kill target reached.
-    this._checkMatchEnd(now);
-    // NOTE: the HUD is refreshed by the shell right after this tick — the
-    // simulation must not touch it (it also runs on a headless server).
   }
 
 

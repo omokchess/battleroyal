@@ -1566,6 +1566,15 @@ export class Game extends GameSim {
             p.deserialize(snap);
             this.players[id] = p;
           });
+          // The guest shell spent its connection time at the camera default
+          // (0,0). Snap once to the authoritative spawn before normal easing so
+          // a newly created/joined room never opens pinned to the arena corner.
+          this.camera.snapAction?.(
+            this._cameraFocusPoints(),
+            this.canvas.width,
+            this.canvas.height,
+            this.level
+          );
 
           this._announce('전투가 시작되었습니다!');
         } 

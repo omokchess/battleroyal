@@ -90,6 +90,53 @@ test('a client joins a server room and gets ROOM_JOINED with the arena', async (
   } finally { await close(); }
 });
 
+test('the room list exposes creator settings as soon as the join is accepted', async () => {
+  const { port, close } = await boot();
+  try {
+    const a = await connect(port, 'CONFIGURED');
+    const join = Protocol.joinRoom('Builder', 'sword');
+    join.roomConfig = { platforms: 'many', platformShape: 'stairs', cover: 'few', healing: false };
+    a.send(join);
+    await a.wait(MsgType.ROOM_JOINED);
+
+    const rooms = await (await fetch(`http://localhost:${port}/rooms`, { cache: 'no-store' })).json();
+    const listed = rooms.find(r => r.code === 'CONFIGURED');
+    assert.ok(listed, 'accepted room is advertised');
+    assert.equal(listed.config.platforms, 'many');
+    assert.equal(listed.config.platformShape, 'stairs');
+    assert.equal(listed.config.cover, 'few');
+    assert.equal(listed.config.healing, false);
+    a.close();
+  } finally { await close(); }
+});
+
+test('a dead server-authoritative player respawns and the client receives it', async () => {
+  const { port, close, rooms } = await boot();
+  try {
+    const a = await connect(port, 'RESPAWN');
+    a.send(Protocol.joinRoom('Phoenix', 'sword'));
+    const joined = await a.wait(MsgType.ROOM_JOINED);
+    const room = rooms.rooms.get('RESPAWN');
+    const player = room.sim.players[joined.id];
+    player.hp = 0;
+    player.isDead = true;
+
+    const deadline = Date.now() + 3000;
+    let aliveSnapshot = null;
+    while (Date.now() < deadline && !aliveSnapshot) {
+      aliveSnapshot = a.frames.find(f => f.type === MsgType.GAME_STATE
+        && f.players?.[joined.id]?.isDead === false
+        && f.players[joined.id].hp > 0);
+      if (!aliveSnapshot) await sleep(25);
+    }
+    assert.ok(aliveSnapshot, 'authoritative state announces the respawn');
+    assert.equal(player.isDead, false);
+    assert.equal(player.hp, player.maxHp);
+    assert.equal(player.respawnTime, 0);
+    a.close();
+  } finally { await close(); }
+});
+
 test('two clients share a room: each is told about the other, both get state', async () => {
   const { port, close } = await boot();
   try {

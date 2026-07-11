@@ -21,19 +21,22 @@ import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { RoomManager } from './RoomManager.mjs';
+import { createFirebaseServices } from './FirebaseAdmin.mjs';
 
 const PORT = Number(process.env.PORT) || 8787;
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
-export function createServer({ port = PORT, silent = false } = {}) {
-  const rooms = new RoomManager({ log: silent ? () => {} : log });
+export function createServer({ port = PORT, silent = false, firebaseServices = null } = {}) {
+  const serverLog = silent ? () => {} : log;
+  const firebase = firebaseServices || createFirebaseServices({ log: serverLog });
+  const rooms = new RoomManager({ log: serverLog, auth: firebase, recordMatch: firebase.recordMatch });
 
   const httpServer = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
     res.setHeader('Access-Control-Allow-Origin', '*');
     if (url.pathname === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, ...rooms.stats() }));
+      res.end(JSON.stringify({ ok: true, authEnabled: !!firebase.enabled, ...rooms.stats() }));
     } else if (url.pathname === '/rooms') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(rooms.list()));
@@ -45,7 +48,9 @@ export function createServer({ port = PORT, silent = false } = {}) {
     }
   });
 
-  const wss = new WebSocketServer({ server: httpServer });
+  // A workshop loadout may include several bounded data-URL assets. Gameplay
+  // frames are tiny; this ceiling exists only for the initial/swap payload.
+  const wss = new WebSocketServer({ server: httpServer, maxPayload: 12 * 1024 * 1024 });
   let seq = 0;
 
   wss.on('connection', (ws, req) => {
@@ -80,7 +85,13 @@ const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv
 if (isMain) {
   const server = createServer();
   server.listen();
-  const bye = async () => { log('[server] shutting down'); await server.close(); process.exit(0); };
+  const bye = async () => {
+    log('[server] graceful shutdown requested');
+    for (const room of server.rooms.rooms.values()) room.notifyShutdown(3000);
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    await server.close();
+    process.exit(0);
+  };
   process.on('SIGINT', bye);
   process.on('SIGTERM', bye);
 }

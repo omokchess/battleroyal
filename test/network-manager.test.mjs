@@ -136,3 +136,23 @@ test('stop() closes the socket and the server drops the player', async () => {
     assert.equal(room.clients.size, 0, 'server removed the player after stop()');
   } finally { await close(); }
 });
+
+test('WsTransport reconnects into the same server seat after a forced drop', async () => {
+  const { url, close, rooms } = await boot();
+  try {
+    const nm = new NetworkManager({ serverUrl: url });
+    const joined = [];
+    nm.on('onData', (_f, d) => { if (d.type === MsgType.ROOM_JOINED) joined.push(d.id); });
+    nm.joinRoom('REJOIN', Protocol.joinRoom('Returner', 'sword'));
+    for (let i = 0; i < 100 && joined.length < 1; i++) await sleep(10);
+    const room = rooms.rooms.get('REJOIN');
+    const serverSocket = [...room.clients.values()][0].ws;
+    serverSocket.terminate();
+
+    for (let i = 0; i < 300 && joined.length < 2; i++) await sleep(10);
+    assert.equal(joined.length, 2, 'transport completed a reconnect handshake');
+    assert.equal(joined[1], joined[0], 'server restored the original player id');
+    assert.equal(room.playerCount, 1);
+    nm.stop();
+  } finally { await close(); }
+});

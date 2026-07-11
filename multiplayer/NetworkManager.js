@@ -27,6 +27,7 @@ const EVENTS = [
   'onInit',
   'onError',
   'onConnected',
+  'onReconnecting',
   'onPlayerJoined',
   'onPlayerLeft',
   'onData',
@@ -39,6 +40,7 @@ export class NetworkManager {
     EVENTS.forEach(event => { this.callbacks[event] = new Set(); });
     // Overridable for tests (Node) that point at an ephemeral local server.
     this.serverUrl = options.serverUrl || null;
+    this.getAuthToken = typeof options.getAuthToken === 'function' ? options.getAuthToken : null;
     this.transport = null;
   }
 
@@ -90,13 +92,13 @@ export class NetworkManager {
   /** Create an online room on the server. Same as joinRoom — the server creates
    *  the room on the first join; the creator's payload carries roomConfig. */
   hostRoom(roomCode, joinPayload = {}) {
-    const t = this._useTransport(new WsTransport(this._emit.bind(this), this._wsUrl()));
+    const t = this._useTransport(new WsTransport(this._emit.bind(this), this._wsUrl(), { getAuthToken: this.getAuthToken }));
     t.start(roomCode, joinPayload);
   }
 
   /** Join an online room on the server (guest — the server is authoritative). */
   joinRoom(roomCode, joinPayload = {}) {
-    const t = this._useTransport(new WsTransport(this._emit.bind(this), this._wsUrl()));
+    const t = this._useTransport(new WsTransport(this._emit.bind(this), this._wsUrl(), { getAuthToken: this.getAuthToken }));
     t.start(roomCode, joinPayload);
   }
 

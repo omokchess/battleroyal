@@ -1426,7 +1426,8 @@ export class Game extends GameSim {
       weapon: local?.weapon || 'sword',
       durationMs: Math.max(0, Date.now() - (this.matchStartTime || Date.now())),
       // Practice & offline bot matches are never reported to the server (no rank/coins).
-      dummy: !!this.dummyRoom || !!this.botMatch
+      dummy: !!this.dummyRoom || !!this.botMatch,
+      serverAuthoritative: !this.networkManager?.isHost
     };
 
     this._hasQuit = true;
@@ -1581,6 +1582,15 @@ export class Game extends GameSim {
         
         else if (data.type === MsgType.KILL_EVENT) {
           this._pushKillFeed(data);
+        }
+
+        else if (data.type === MsgType.HOST_CHANGED) {
+          this.roomHostId = data.hostId || null;
+          if (this.roomHostId === this.localPlayerId) this._announce('방 설정 권한을 이어받았습니다.');
+        }
+
+        else if (data.type === MsgType.SERVER_SHUTDOWN) {
+          this._announce(data.message || '게임 서버가 재시작됩니다.');
         }
 
         else if (data.type === MsgType.GAME_STATE) {
@@ -1768,6 +1778,12 @@ export class Game extends GameSim {
       }
     });
 
+    // A transient drop keeps the match shell alive while WsTransport retries.
+    this.networkManager.on('onReconnecting', ({ remainingMs } = {}) => {
+      const seconds = Math.max(1, Math.ceil((remainingMs || 0) / 1000));
+      this._announce(`서버 재연결 중... ${seconds}초`);
+    });
+
     // GUEST COLD DROP
     this.networkManager.on('onDisconnected', (reason) => {
       const errMsg = reason || '매치메이킹 서버와의 연결이 끊어졌습니다.';
@@ -1846,4 +1862,3 @@ function deserializeWorkshopCooldowns(cooldowns = {}) {
     ultimate: Math.max(0, (cooldowns.ultimate || 0) / 1000)
   };
 }
-

@@ -46,7 +46,7 @@ export const VALID_STATUS = new Set(['none', 'slow', 'bleed', 'burn', 'stun', 'a
 export const POINT_BUDGET = 100;
 const BUDGET_COST_MULT = 1.5;
 const COOLDOWN_BUDGET_BASE_MS = 600;
-const COOLDOWN_BUDGET_COST_STEP_MS = 300;
+const COOLDOWN_BUDGET_COST_STEP_MS = 100;
 const COOLDOWN_BUDGET_REFUND_STEP_MS = 500;
 
 const clampNum = (v, [lo, hi], dflt) => (Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : dflt);
@@ -285,7 +285,7 @@ export function sanitizeEffects(list) {
     const time = clampNum(e.time, [0, 1], 0);
     const endTime = clampNum(e.endTime, [time, 1], Math.min(1, time + 0.12));
     const rawAssetId = sanitizeText(e.assetId, 128) || 'spark';
-    out.push({
+    const base = {
       time,
       endTime,
       assetId: rawAssetId,
@@ -295,10 +295,44 @@ export function sanitizeEffects(list) {
       alpha: clampNum(e.alpha, [0, 1], 1),
       flipX: !!e.flipX,
       flipY: !!e.flipY,
-      followBone: FOLLOW_BONES.has(e.followBone) ? e.followBone : null,
-    });
+    };
+    const rawKeys = Array.isArray(e.keys) ? e.keys : [];
+    const byTime = new Map();
+    byTime.set(time, { time, x: base.x, y: base.y, scale: base.scale, rotation: base.rotation, alpha: base.alpha, flipX: base.flipX, flipY: base.flipY });
+    for (const key of rawKeys.slice(0, 64)) {
+      if (!key || typeof key !== 'object') continue;
+      const kt = Math.round(clampNum(key.time, [time, endTime], time) * 1000) / 1000;
+      byTime.set(kt, {
+        time: kt,
+        x: clampNum(key.x, [-200, 200], base.x), y: clampNum(key.y, [-200, 200], base.y),
+        scale: clampNum(key.scale, [0.1, 4], base.scale), rotation: clampNum(key.rotation, [-360, 360], base.rotation),
+        alpha: clampNum(key.alpha, [0, 1], base.alpha), flipX: key.flipX === undefined ? base.flipX : !!key.flipX,
+        flipY: key.flipY === undefined ? base.flipY : !!key.flipY,
+      });
+    }
+    base.keys = [...byTime.values()].sort((a, b) => a.time - b.time);
+    out.push(base);
   }
   return out.sort((a, b) => a.time - b.time);
+}
+
+export function sampleEffectTransform(effect, time = 0) {
+  const e = sanitizeEffects([effect])[0];
+  if (!e) return { x: 0, y: 0, scale: 1, rotation: 0, alpha: 1, flipX: false, flipY: false };
+  const keys = e.keys || [];
+  if (!keys.length || time <= keys[0].time) return { ...keys[0] };
+  let a = keys[0], b = keys[keys.length - 1];
+  for (let i = 1; i < keys.length; i++) {
+    if (time <= keys[i].time) { a = keys[i - 1]; b = keys[i]; break; }
+    a = keys[i];
+  }
+  const u = b.time === a.time ? 0 : Math.max(0, Math.min(1, (time - a.time) / (b.time - a.time)));
+  const lerp = (x, y) => x + (y - x) * u;
+  return {
+    time, x: lerp(a.x, b.x), y: lerp(a.y, b.y), scale: lerp(a.scale, b.scale),
+    rotation: lerp(a.rotation, b.rotation), alpha: lerp(a.alpha, b.alpha),
+    flipX: u < 1 ? a.flipX : b.flipX, flipY: u < 1 ? a.flipY : b.flipY,
+  };
 }
 
 /** Projectile config for a ranged combat preset (imageId only; hitbox separate). */
@@ -363,13 +397,14 @@ export function sanitizeTeleportEvents(list) {
 
 /** Per-preset combat stats. Range is kept only for legacy payload compatibility;
  *  authored hitboxes/projectiles define reach in the current workshop model. */
-export function sanitizeCombat(c) {
+export function sanitizeCombat(c, kind = null) {
   const r = (c && typeof c === 'object') ? c : {};
+  const ultimate = kind === 'ultimate';
   const status = VALID_STATUS.has(r.status) ? r.status : 'none';
   return {
-    damage: Math.round(clampNum(r.damage, [0, 60], 18)),
+    damage: Math.round(clampNum(r.damage, [0, ultimate ? 100 : 60], 18)),
     range: 0,
-    cooldownMs: Math.round(clampNum(r.cooldownMs, ENVELOPE.cooldownMs, 600)),
+    cooldownMs: ultimate ? 0 : Math.round(clampNum(r.cooldownMs, ENVELOPE.cooldownMs, 600)),
     knockback: Math.round(clampNum(r.knockback, ENVELOPE.knockback, 0)),
     status,
     statusDurationMs: status === 'none' ? 0 : Math.round(clampNum(r.statusDurationMs, ENVELOPE.statusDurationMs, 0)),
@@ -379,7 +414,7 @@ export function sanitizeCombat(c) {
   };
 }
 
-export function sanitizeCombatKeys(keys, fallbackCombat = null) {
+export function sanitizeCombatKeys(keys, fallbackCombat = null, kind = null) {
   if (!Array.isArray(keys)) return [];
   const byTime = new Map();
   for (const k of keys.slice(0, 64)) {
@@ -387,15 +422,15 @@ export function sanitizeCombatKeys(keys, fallbackCombat = null) {
     const rawTime = Number.isFinite(Number(k.time)) ? Number(k.time) : Number(k.t);
     const time = Math.round(clampNum(rawTime, [0, 1], 0) * 1000) / 1000;
     const rawCombat = (k.combat && typeof k.combat === 'object') ? k.combat : k;
-    byTime.set(time, sanitizeCombat({ ...(fallbackCombat || {}), ...rawCombat }));
+    byTime.set(time, sanitizeCombat({ ...(fallbackCombat || {}), ...rawCombat }, kind));
   }
   return [...byTime.entries()].sort((a, b) => a[0] - b[0]).slice(0, 64)
     .map(([time, combat]) => ({ time, combat }));
 }
 
-export function sampleCombatKeys(keys, fallbackCombat = null, time = 0) {
-  const base = sanitizeCombat(fallbackCombat);
-  const list = sanitizeCombatKeys(keys, base);
+export function sampleCombatKeys(keys, fallbackCombat = null, time = 0, kind = null) {
+  const base = sanitizeCombat(fallbackCombat, kind);
+  const list = sanitizeCombatKeys(keys, base, kind);
   if (!list.length) return base;
   const t = clampNum(time, [0, 1], 0);
   let out = list[0].combat;
@@ -403,7 +438,7 @@ export function sampleCombatKeys(keys, fallbackCombat = null, time = 0) {
     if (k.time <= t) out = k.combat;
     else break;
   }
-  return sanitizeCombat({ ...base, ...out });
+  return sanitizeCombat({ ...base, ...out }, kind);
 }
 
 const sanitizeBlocksData = (b) => (b && typeof b === 'object' && Array.isArray(b.events)) ? b : null;
@@ -436,8 +471,8 @@ export function sanitizePreset(raw, key) {
     blocks: null,
   };
   if (isCombatKind(kind)) {
-    out.combat = sanitizeCombat(r.combat);
-    out.combatKeys = sanitizeCombatKeys(r.combatKeys, out.combat);
+    out.combat = sanitizeCombat(r.combat, kind);
+    out.combatKeys = sanitizeCombatKeys(r.combatKeys, out.combat, kind);
     out.hitboxes = clampWorkshopHitboxes(r.hitboxes);
     out.ranged = !!r.ranged;
     out.projectile = sanitizeProjectile(r.projectile);
@@ -460,20 +495,23 @@ export function baseStatsCost(bs = {}) {
   const spdSteps = Math.max(0, Math.round(((Number(bs.moveSpeed) || 1) - 1) * 100));
   return Math.round((hp + spdSteps * 2) * BUDGET_COST_MULT);
 }
-export function combatCost(combat) {
+export function combatCost(combat, kind = null) {
   const c = combat || {};
-  const damage = Math.max(0, Math.min(60, Number(c.damage) || 0));
+  const isUltimate = kind === 'ultimate';
+  const damage = Math.max(0, Math.min(isUltimate ? 100 : 60, Number(c.damage) || 0));
   const cooldownMs = Math.max(ENVELOPE.cooldownMs[0], Math.min(ENVELOPE.cooldownMs[1], Number(c.cooldownMs) || COOLDOWN_BUDGET_BASE_MS));
   const cooldownDelta = COOLDOWN_BUDGET_BASE_MS - cooldownMs;
-  const cooldown = cooldownDelta >= 0
+  const cooldown = isUltimate ? 0 : (cooldownDelta >= 0
     ? Math.floor(cooldownDelta / COOLDOWN_BUDGET_COST_STEP_MS)
-    : -Math.floor(Math.abs(cooldownDelta) / COOLDOWN_BUDGET_REFUND_STEP_MS);
+    : -Math.floor(Math.abs(cooldownDelta) / COOLDOWN_BUDGET_REFUND_STEP_MS));
   const knockback = Math.round(Math.abs((Number(c.knockback) || 60) - 60) / 5) * 2;
   const dur = Math.max(0, Number(c.statusDurationMs) || 0);
   const statusMul = c.status === 'slow' ? 1 : (c.status === 'bleed' || c.status === 'burn' ? 2 : (c.status === 'stun' ? 3 : (c.status === 'airborne' ? 4 : 0)));
   const status = Math.ceil(dur / 100) * statusMul;
   const ultimate = Math.max(0, Math.round(((Number(c.ultimateGain) || 10) - 10) / 5) * 3);
-  return Math.round((damage + knockback + status + ultimate) * BUDGET_COST_MULT + cooldown);
+  return isUltimate
+    ? Math.round(damage + (knockback + status) * BUDGET_COST_MULT)
+    : Math.round((damage + knockback + status + ultimate) * BUDGET_COST_MULT + cooldown);
 }
 export function statCostV2(weapon) {
   const w = weapon || {};
@@ -481,9 +519,9 @@ export function statCostV2(weapon) {
   for (const key of PRIMARY_PRESET_KEYS) {
     const p = w.presets && w.presets[key];
     if (p && isCombatKind(p.kind)) {
-      cost = Math.max(cost, combatCost(p.combat));
-      for (const ck of sanitizeCombatKeys(p.combatKeys, p.combat)) {
-        cost = Math.max(cost, combatCost(ck.combat));
+      cost = Math.max(cost, combatCost(p.combat, key));
+      for (const ck of sanitizeCombatKeys(p.combatKeys, p.combat, key)) {
+        cost = Math.max(cost, combatCost(ck.combat, key));
       }
     }
   }
@@ -504,18 +542,18 @@ export function enforceBudgetV2(weapon) {
     for (const key of PRIMARY_PRESET_KEYS) {
       const p = w.presets[key];
       if (!p || !isCombatKind(p.kind)) continue;
-      const candidates = [{ get combat() { return p.combat; }, set combat(v) { p.combat = v; } }];
+      const candidates = [{ kind: key, get combat() { return p.combat; }, set combat(v) { p.combat = v; } }];
       if (Array.isArray(p.combatKeys)) {
-        for (const ck of p.combatKeys) candidates.push({ get combat() { return ck.combat; }, set combat(v) { ck.combat = v; } });
+        for (const ck of p.combatKeys) candidates.push({ kind: key, get combat() { return ck.combat; }, set combat(v) { ck.combat = v; } });
       }
       for (const c of candidates) {
-        const cost = combatCost(c.combat);
+        const cost = combatCost(c.combat, c.kind);
         if (cost > POINT_BUDGET && cost > bestCost) { best = c; bestCost = cost; }
       }
     }
     if (best && best.combat.statusDurationMs > 0) { best.combat.statusDurationMs = Math.max(0, best.combat.statusDurationMs - 100); continue; }
     if (best && best.combat.ultimateGain > 10) { best.combat.ultimateGain = Math.max(10, best.combat.ultimateGain - 5); continue; }
-    if (best && best.combat.cooldownMs < ENVELOPE.cooldownMs[1]) { best.combat.cooldownMs = Math.min(ENVELOPE.cooldownMs[1], best.combat.cooldownMs + COOLDOWN_BUDGET_REFUND_STEP_MS); continue; }
+    if (best && best.kind !== 'ultimate' && best.combat.cooldownMs < ENVELOPE.cooldownMs[1]) { best.combat.cooldownMs = Math.min(ENVELOPE.cooldownMs[1], best.combat.cooldownMs + COOLDOWN_BUDGET_REFUND_STEP_MS); continue; }
     if (best && best.combat.damage > 0) { best.combat.damage -= 1; continue; }
     if (best && best.combat.knockback !== 60) { best.combat.knockback += best.combat.knockback > 60 ? -5 : 5; continue; }
     break;

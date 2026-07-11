@@ -2850,25 +2850,23 @@ export class Renderer {
   }
 
   _drawWorkshopFrameFx(ctx, scr, e, alpha, zoom) {
-    const progress = clamp01(e.progress);
     const baseAlpha = Number.isFinite(e.alpha) ? e.alpha : 1;
-    const pulse = 0.85 + Math.sin(progress * Math.PI) * 0.35;
     ctx.save();
     ctx.translate(scr.x, scr.y);
     if (Number.isFinite(e.angle)) ctx.rotate(e.angle);
     if (e.flipX || e.flipY) ctx.scale(e.flipX ? -1 : 1, e.flipY ? -1 : 1);
-    ctx.globalAlpha = Math.max(0, Math.min(1, alpha * baseAlpha * (1 - progress * 0.35)));
+    ctx.globalAlpha = Math.max(0, Math.min(1, alpha * baseAlpha));
     const rec = resolveWeaponImage(e.assetId || '');
     const img = rec && rec.img;
     if (img && img.complete && img.naturalWidth) {
-      const size = 36 * (Number(e.scale) || 1) * zoom * pulse;
+      const size = 36 * (Number(e.scale) || 1) * zoom;
       const aspect = img.naturalWidth / Math.max(1, img.naturalHeight);
       const w = aspect >= 1 ? size : size * aspect;
       const h = aspect >= 1 ? size / aspect : size;
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(img, -w / 2, -h / 2, w, h);
     } else {
-      drawFxShape(ctx, e.assetId || 'spark', 18 * (Number(e.scale) || 1) * zoom * pulse);
+      drawFxShape(ctx, e.assetId || 'spark', 18 * (Number(e.scale) || 1) * zoom);
     }
     ctx.restore();
   }

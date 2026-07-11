@@ -10,12 +10,16 @@ export const MsgType = {
   ROOM_JOINED: 'ROOM_JOINED',
   PLAYER_JOINED: 'PLAYER_JOINED',
   PLAYER_LEFT: 'PLAYER_LEFT',
+  HOST_CHANGED: 'HOST_CHANGED',
   PLAYER_INPUT: 'PLAYER_INPUT',
   PLAYER_AIM: 'PLAYER_AIM',
   PLAYER_ACTION: 'PLAYER_ACTION',
   WEAPON_SELECT: 'WEAPON_SELECT',
   GAME_STATE: 'GAME_STATE',
   KILL_EVENT: 'KILL_EVENT',
+  LEAVE_ROOM: 'LEAVE_ROOM',
+  SERVER_SHUTDOWN: 'SERVER_SHUTDOWN',
+  MATCH_RECORDED: 'MATCH_RECORDED',
   PING: 'PING',
   PONG: 'PONG',
   ERROR: 'ERROR'
@@ -28,8 +32,11 @@ export const Protocol = {
   // Client registration frame. `costume` (optional) carries the purchased
   // skin colors { color, accentColor } so the host paints this player for everyone.
   // `isMobile` lets the host give touch players the instant-fire sniper/matchlock.
-  joinRoom(nickname, weapon, costume = null, isMobile = false, controls = null) {
-    return { type: MsgType.JOIN_ROOM, nickname, weapon, costume, isMobile: !!isMobile, controls };
+  joinRoom(nickname, weapon, costume = null, isMobile = false, controls = null, identity = null) {
+    const msg = { type: MsgType.JOIN_ROOM, nickname, weapon, costume, isMobile: !!isMobile, controls };
+    if (identity?.idToken) msg.idToken = String(identity.idToken);
+    if (identity?.sessionToken) msg.sessionToken = String(identity.sessionToken);
+    return msg;
   },
 
   // Handshake registration acceptance frame. roomConfig carries the arena-size /
@@ -38,8 +45,8 @@ export const Protocol = {
   // the exact same arena/rules. weaponMotions carries the host's CANONICAL weapon
   // definitions (incl. hitboxes) so every peer simulates/renders with the same
   // host-authoritative set (T1-F); clients re-sanitize before use.
-  roomJoined(id, initialPlayers, mapWidth, mapHeight, roomConfig = null, coverSeed = 0, weaponMotions = null) {
-    return { type: MsgType.ROOM_JOINED, id, initialPlayers, mapWidth, mapHeight, roomConfig, coverSeed, weaponMotions };
+  roomJoined(id, initialPlayers, mapWidth, mapHeight, roomConfig = null, coverSeed = 0, weaponMotions = null, sessionToken = '', hostId = '') {
+    return { type: MsgType.ROOM_JOINED, id, initialPlayers, mapWidth, mapHeight, roomConfig, coverSeed, weaponMotions, sessionToken, hostId };
   },
 
   // Notify clients of a newcomer
@@ -77,6 +84,10 @@ export const Protocol = {
     if (workshopWeapon && typeof workshopWeapon === 'object') msg.workshopWeapon = workshopWeapon;
     if (label) msg.label = String(label).slice(0, 32);
     return msg;
+  },
+
+  leaveRoom() {
+    return { type: MsgType.LEAVE_ROOM };
   },
 
   // System snapshot state. zone (storm) + healingItems are dynamic and ride

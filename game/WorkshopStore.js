@@ -210,7 +210,8 @@ export function v2ToV1Runtime(w) {
     if (!Array.isArray(motionSet[key]?.combatKeys) || !motionSet[key].combatKeys.length) continue;
     rt.motionSet = rt.motionSet || {};
     rt.motionSet[key] = rt.motionSet[key] || {};
-    rt.motionSet[key].combatKeys = sanitizeCombatKeys(motionSet[key].combatKeys, key === 'attack' ? stats : null);
+    const presetKind = key === 'attack' ? 'basic' : key;
+    rt.motionSet[key].combatKeys = sanitizeCombatKeys(motionSet[key].combatKeys, key === 'attack' ? stats : null, presetKind);
   }
   // V1's legacy clamp only knows skill/skill2/skill3. Preserve the new Y
   // ultimate slot after clamping so the animator can play the authored motion.
@@ -252,8 +253,8 @@ export function v2ToV1Runtime(w) {
     const sp = w.presets[presetKey];
     if (!sp || !sp.combat) continue;
     const slot = abilitySlots[presetKey];
-    presetCombat[slot] = sanitizeCombat(sp.combat);              // re-clamp defensively
-    presetCombatKeys[slot] = sanitizeCombatKeys(sp.combatKeys, sp.combat);
+    presetCombat[slot] = sanitizeCombat(sp.combat, presetKey);              // re-clamp defensively
+    presetCombatKeys[slot] = sanitizeCombatKeys(sp.combatKeys, sp.combat, presetKey);
     presetHitboxes[slot] = clampWorkshopHitboxes(sp.hitboxes);   // re-clamp defensively
     presetNames[slot] = String(sp.displayName || sp.label || '').slice(0, 24);
     if (sp.ranged && sp.projectile) presetRanged[slot] = sp.projectile;

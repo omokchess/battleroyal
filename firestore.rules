@@ -73,7 +73,11 @@ service cloud.firestore {
 
     match /profiles/{userId} {
       allow read: if true;
-      allow create, update: if isOwner(userId);
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId)
+                    && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+                      'total_kills', 'total_deaths', 'games_played', 'last_match_at'
+                    ]);
       allow delete: if false;
 
       match /user_items/{itemId} {
@@ -90,7 +94,7 @@ service cloud.firestore {
 
       match /match_logs/{logId} {
         allow read: if isOwner(userId);
-        allow create: if isOwner(userId);
+        allow create: if false;
         allow update, delete: if false;
       }
 

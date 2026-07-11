@@ -15,6 +15,7 @@ import {
   linkGoogle,
   hasGoogleLinked,
   updateUsername,
+  getIdToken,
 } from '../firebase/account.js';
 import {
   fetchLeaderboard,
@@ -40,6 +41,8 @@ import {
   reportWorkshopWeapon,
   setWorkshopWeaponStatus,
 } from '../firebase/game-api.js';
+
+export const getAuthToken = () => getIdToken(false);
 import { ASSET_VERSION } from '../game/SpriteAtlas.js';
 import { clampWorkshopWeapon } from '../game/Workshop.js';
 import { WEAPON_LIST, WEAPON_SKIN_DEFS } from '../firebase/catalog.js';

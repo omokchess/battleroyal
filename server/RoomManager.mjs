@@ -9,6 +9,7 @@
 
 import { GameRoom } from './GameRoom.mjs';
 import { MsgType } from '../multiplayer/Protocol.js';
+import { MessageGate } from './Security.mjs';
 
 const IDLE_ROOM_MS = 5 * 60 * 1000;   // an empty room is swept after 5 min
 
@@ -16,6 +17,8 @@ export class RoomManager {
   constructor(opts = {}) {
     this.log = opts.log || (() => {});
     this.botWorkshopWeapons = opts.botWorkshopWeapons || [];
+    this.auth = opts.auth || { enabled: false, verifyIdToken: async () => null };
+    this.recordMatch = opts.recordMatch || (async () => null);
     this.rooms = new Map();   // code -> GameRoom
     this._sweep = setInterval(() => this._reap(), 60 * 1000);
     if (this._sweep.unref) this._sweep.unref();
@@ -33,6 +36,7 @@ export class RoomManager {
         roomConfig: roomConfig || {},
         botWorkshopWeapons: this.botWorkshopWeapons,
         log: this.log,
+        recordMatch: this.recordMatch,
       });
       this.rooms.set(key, room);
       this.log(`[rooms] created ${key} (${this.rooms.size} total)`);
@@ -52,24 +56,52 @@ export class RoomManager {
    */
   attach(socketId, ws, roomCodeHint) {
     let room = null;
+    let closed = false;
+    let joining = false;
+    let rejected = 0;
+    const gate = new MessageGate();
 
-    const onMessage = (raw) => {
+    const onMessage = async (raw) => {
       let data;
       try { data = JSON.parse(raw); } catch { return; }
-      if (!data || typeof data.type !== 'string') return;
+      if (!gate.accept(data)) {
+        if (++rejected >= 20) try { ws.close(1008, 'rate limit'); } catch {}
+        return;
+      }
 
       if (data.type === MsgType.JOIN_ROOM) {
-        if (room) return;   // already seated — ignore a second join
+        if (room || joining || closed) return;
+        joining = true;
+        let identity = null;
+        try {
+          identity = data.idToken ? await this.auth.verifyIdToken(data.idToken) : null;
+          if (data.idToken && this.auth.enabled && !identity) throw new Error('invalid token');
+        } catch {
+          try { ws.send(JSON.stringify({ type: MsgType.ERROR, code: 'AUTH_INVALID', message: '로그인 인증이 만료되었습니다.' })); } catch {}
+          try { ws.close(1008, 'invalid auth'); } catch {}
+          joining = false;
+          return;
+        }
+        if (closed) return;
+        if (identity?.name) data.nickname = identity.name;
         const code = this._normalizeCode(data.room || roomCodeHint);
         room = this.getOrCreate(code, data.roomConfig);
-        const assigned = room.join(socketId, ws, data);
-        if (!assigned) { room = null; return; }
+        const assigned = room.join(socketId, ws, data, identity);
+        if (!assigned) {
+          try { ws.send(JSON.stringify({ type: MsgType.ERROR, code: 'JOIN_REJECTED', message: '이 방의 기존 세션과 충돌했습니다.' })); } catch {}
+          room = null;
+          joining = false;
+          return;
+        }
+        joining = false;
         return;
       }
       if (room) room.handle(socketId, data);
     };
 
     const onClose = () => {
+      if (closed) return;
+      closed = true;
       if (room) room.leave(socketId);
       if (room && room.isEmpty) this._maybeReap(room);
       room = null;
@@ -106,7 +138,10 @@ export class RoomManager {
 
   shutdown() {
     clearInterval(this._sweep);
-    for (const r of this.rooms.values()) r.destroy();
+    for (const r of this.rooms.values()) {
+      r.notifyShutdown();
+      r.destroy();
+    }
     this.rooms.clear();
   }
 }

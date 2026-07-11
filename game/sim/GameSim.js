@@ -35,7 +35,7 @@ import { buildLevel, PHYS } from '../Level.js';
 import { BotBrain, BOT_DIFFICULTY } from '../Bot.js';
 import { resolveMotion, weaponSetId, sanitizeMotionSetId, canonicalWeaponMotion, canonicalWeaponsSnapshot, setCanonicalWeapon } from '../Motion.js';
 import { STATUS } from '../Status.js';
-import { sampleCombatKeys } from '../Workshop.js';
+import { sampleCombatKeys, sampleEffectTransform } from '../Workshop.js';
 import { NULL_FX } from './Fx.js';
 import { makeRng, randomSeed, SystemClock } from './env.js';
 
@@ -71,6 +71,7 @@ export class GameSim {
     this.killTarget = Number.isFinite(options.killTarget) ? options.killTarget : 0;
     this.matchHold = !!options.holdAtStart;
     this.countdownUntil = 0;
+    this._countdownStep = 0;
     this.onMatchOver = typeof options.onMatchOver === 'function' ? options.onMatchOver : null;
     this.matchOver = false;
     this.matchStartTime = 0;
@@ -179,6 +180,7 @@ export class GameSim {
 
   /** Advance the simulation one step. The runner supplies dt and the clock time. */
   tick(deltaTime, now = this.now()) {
+    this._updateCountdown(now);
     this._updateHostPhysics(deltaTime, now);
   }
 
@@ -224,6 +226,8 @@ export class GameSim {
     const p = this.players[id];
     if (!p) return false;
     if (typeof data.weapon === 'string' && data.weapon.startsWith('ws:') && data.workshopWeapon) {
+      // Installation on respawn calls Player._applyWorkshopWeapon inside the
+      // authority, which re-clamps gameplay while preserving bounded images.
       p.pendingWorkshopWeapon = data.workshopWeapon;
       p.pendingWeapon = null;
     } else if (Weapons[data.weapon]) {
@@ -459,7 +463,7 @@ export class GameSim {
             // A workshop ranged basic attack: weapon-damage direct hit + status.
             const owner = this.players[proj.ownerId];
             const died = target.takeDamage(proj.damage || 0, owner ? owner.nickname : '');
-            if (owner) this._awardUltimateGauge(owner, proj.wsUltimateGain ?? 10);
+            if (owner) this._awardUltimateGaugeOnce(owner, proj.wsUltimateGain ?? 10, proj.wsGaugeActivation);
             if (proj.wsStatus && proj.wsStatus !== 'none') this._applyStatusEffect(target, proj.ownerId, proj.wsStatus, proj.wsStatusMs || 0, now, proj.wsAirborneHeight);
             else if (owner) this._applyWorkshopStatus(owner, target, now);
             if (died) this._creditKill(proj.ownerId, target);
@@ -471,7 +475,7 @@ export class GameSim {
             // (not the basic swing's) — see _fireWorkshopPresetProjectile.
             const owner = this.players[proj.ownerId];
             const died = target.takeDamage(proj.damage || 0, owner ? owner.nickname : '');
-            if (owner) this._awardUltimateGauge(owner, proj.wsUltimateGain ?? 10);
+            if (owner) this._awardUltimateGaugeOnce(owner, proj.wsUltimateGain ?? 10, proj.wsGaugeActivation);
             if (proj.wsStatus) this._applyStatusEffect(target, proj.ownerId, proj.wsStatus, proj.wsStatusMs || 0, now, proj.wsAirborneHeight);
             if (died) this._creditKill(proj.ownerId, target);
             if (!proj.piercing) proj.isDead = true;
@@ -568,6 +572,17 @@ export class GameSim {
     this.effects.forEach(e => {
       const elapsed = now - e.timestamp;
       e.progress = Math.min(elapsed / e.lifetime, 1);
+      if (e.type === 'workshop_frame_fx' && e.effectDef) {
+        const authoredTime = e.effectStart + (e.effectEnd - e.effectStart) * e.progress;
+        const state = sampleEffectTransform(e.effectDef, authoredTime);
+        e.x = e.effectOriginX + state.x * e.effectFacing;
+        e.y = e.effectOriginY + state.y;
+        e.angle = (Number(state.rotation) || 0) * Math.PI / 180;
+        e.scale = Number(state.scale) || 1;
+        e.alpha = Number.isFinite(state.alpha) ? state.alpha : 1;
+        e.flipX = !!state.flipX;
+        e.flipY = !!state.flipY;
+      }
     });
     this.effects = this.effects.filter(e => e.progress < 1);
 
@@ -673,11 +688,18 @@ export class GameSim {
     this.matchHold = false;
     const now = this.now();
     this.countdownUntil = now + 3000;
+    this._countdownStep = 3;
     this.matchStartTime = this.countdownUntil; // 2:00 starts when the fight does
     this._announce('3');
-    setTimeout(() => { if (!this.matchOver) this._announce('2'); }, 1000);
-    setTimeout(() => { if (!this.matchOver) this._announce('1'); }, 2000);
-    setTimeout(() => { if (!this.matchOver) this._announce('⚔ 전투 시작!'); }, 3000);
+  }
+
+  _updateCountdown(now) {
+    if (!this.countdownUntil || this.matchOver || this._countdownStep <= 0) return;
+    const remaining = this.countdownUntil - now;
+    const next = remaining > 2000 ? 3 : remaining > 1000 ? 2 : remaining > 0 ? 1 : 0;
+    if (next === this._countdownStep) return;
+    this._countdownStep = next;
+    this._announce(next > 0 ? String(next) : '⚔ 전투 시작!');
   }
 
 
@@ -757,7 +779,7 @@ export class GameSim {
   }
 
 
-  _spawnWorkshopProjectile(player, pj, combat = {}, now = this.now(), tagSuffix = 'evt') {
+  _spawnWorkshopProjectile(player, pj, combat = {}, now = this.now(), tagSuffix = 'evt', activationId = null) {
     if (!player || !pj) return;
     const ang = this._projectileAngle(player, pj);
     const speed = pj.speed || 600;
@@ -777,6 +799,7 @@ export class GameSim {
     proj.wsStatusMs = combat.statusDurationMs || 0;
     proj.wsAirborneHeight = combat.airborneHeight || 120;
     proj.wsSlot = tagSuffix;
+    proj.wsGaugeActivation = activationId || `ws_${player.id}_${this._wsActivationSeq = (this._wsActivationSeq || 0) + 1}`;
     proj.wsUltimateGain = tagSuffix === 'basic'
       ? 10
       : Math.max(10, Math.min(35, Math.round((Number(combat.ultimateGain) || 10) / 5) * 5));
@@ -827,6 +850,13 @@ export class GameSim {
     }
   }
 
+  _awardUltimateGaugeOnce(player, amount = 10, activationId = null) {
+    if (!activationId) { this._awardUltimateGauge(player, amount); return; }
+    if (player._ultimateGaugeActivation === activationId) return;
+    player._ultimateGaugeActivation = activationId;
+    this._awardUltimateGauge(player, amount);
+  }
+
 
   /** Fire a ranged skill preset's projectile (skill1/2/3) — same shape as the
    *  basic workshop projectile but carries ITS OWN damage/status so hits apply
@@ -851,11 +881,11 @@ export class GameSim {
     const baseCombat = ws && ws.presetCombat && ws.presetCombat[slot];
     if (!baseCombat) return false;
     const combatKeys = ws && ws.presetCombatKeys && ws.presetCombatKeys[slot];
-    const combat = sampleCombatKeys(combatKeys, baseCombat, 0);
+    const combat = sampleCombatKeys(combatKeys, baseCombat, 0, slot);
     if (this._isMotionLocked(player, now)) return true;
     if (!player.wsSkillCd) player.wsSkillCd = {};
     if ((player.wsSkillCd[slot] || 0) > 0) return true;   // on cooldown — button consumed, nothing fires
-    player.wsSkillCd[slot] = (Number.isFinite(combat.cooldownMs) ? combat.cooldownMs : 1000) / 1000;
+    player.wsSkillCd[slot] = slot === 'ultimate' ? 0 : (Number.isFinite(combat.cooldownMs) ? combat.cooldownMs : 1000) / 1000;
     this._showSkillCallout(player, slot, slot === 'ultimate' ? '궁극기' : '스킬', now);
     const motion = ws.motionSet && ws.motionSet[slot];
     const hasTimelineEvents = !!(motion && ((motion.projectileEvents && motion.projectileEvents.length) || (motion.teleportEvents && motion.teleportEvents.length)));
@@ -872,6 +902,7 @@ export class GameSim {
         ultimateGain: combat.ultimateGain,
         combat,
         combatKeys,
+        presetKind: slot,
       });
     }
     return true;   // slot is authored (motion + cooldown apply) even with no hitbox/projectile yet
@@ -906,6 +937,9 @@ export class GameSim {
       statusMs: opts.statusMs || 0,
       airborneHeight: opts.airborneHeight || 120,
       ultimateGain: Number.isFinite(Number(opts.ultimateGain)) ? Number(opts.ultimateGain) : null,
+      presetKind: opts.presetKind || null,
+      ultimateAwarded: false,
+      activationId: `ws_${player.id}_${this._wsActivationSeq = (this._wsActivationSeq || 0) + 1}`,
       hit: new Set(),
     };
     this.fx.attackSfx(getEffectiveWeapon(player.weapon, player.buffType), player.id);
@@ -952,7 +986,7 @@ export class GameSim {
         statusDurationMs: sw.statusMs || 0,
         airborneHeight: sw.airborneHeight || 120,
         ultimateGain: Number.isFinite(Number(sw.ultimateGain)) ? sw.ultimateGain : 10,
-      }, phase);
+      }, phase, sw.presetKind);
       // Swing-specific override (heavy finisher) → workshop damage → base weapon.
       const dmg = (Number.isFinite(phaseCombat.damage) ? phaseCombat.damage : (Number.isFinite(sw.damage) ? sw.damage : (p.workshopWeapon?.stats?.damage))) || wcfg.damage || 10;
       const perHitDamage = dmg / Math.max(1, Number(sw.damageDivisor) || hitboxDamageDivisor(sw.hitboxes));
@@ -981,7 +1015,10 @@ export class GameSim {
           if (kb) this._displace(t, facing * kb, 0);
           const hbDamage = Number.isFinite(Number(hb.damage)) ? Math.max(0, Number(hb.damage)) : perHitDamage;
           const died = t.takeDamage(hbDamage, p.nickname);
-          this._awardUltimateGauge(p, Number.isFinite(Number(phaseCombat.ultimateGain)) ? phaseCombat.ultimateGain : 10);
+          if (!sw.ultimateAwarded) {
+            this._awardUltimateGauge(p, Number.isFinite(Number(phaseCombat.ultimateGain)) ? phaseCombat.ultimateGain : 10);
+            sw.ultimateAwarded = true;
+          }
           const status = phaseCombat.status && phaseCombat.status !== 'none' ? phaseCombat.status : sw.status;
           const statusMs = Number.isFinite(phaseCombat.statusDurationMs) ? phaseCombat.statusDurationMs : sw.statusMs;
           if (status) this._applyStatusEffect(t, p.id, status, statusMs, now, phaseCombat.airborneHeight || sw.airborneHeight);
@@ -1011,13 +1048,13 @@ export class GameSim {
       statusDurationMs: sw.statusMs || 0,
       airborneHeight: sw.airborneHeight || 120,
       ultimateGain: Number.isFinite(Number(sw.ultimateGain)) ? sw.ultimateGain : 10,
-    }, phase);
+    }, phase, sw.presetKind);
     for (let i = 0; i < (sw.projectileEvents || []).length; i++) {
       if (sw.firedProjectileEvents.has(i)) continue;
       const ev = sw.projectileEvents[i];
       if (phase < ev.time) continue;
       sw.firedProjectileEvents.add(i);
-      this._spawnWorkshopProjectile(player, ev.projectile || sw.eventProjectile || player.workshopWeapon?.projectile, combat, now, `evt${i}`);
+      this._spawnWorkshopProjectile(player, ev.projectile || sw.eventProjectile || player.workshopWeapon?.projectile, combat, now, `evt${i}`, sw.activationId);
     }
     for (let i = 0; i < (sw.teleportEvents || []).length; i++) {
       if (sw.firedTeleportEvents.has(i)) continue;
@@ -1041,40 +1078,34 @@ export class GameSim {
 
   _spawnWorkshopFrameEffect(player, ev = {}, now = this.now(), motionDurMs = 420) {
     if (!player) return;
-    const angle = (player.angle || 0) + ((Number(ev.rotation) || 0) * Math.PI / 180);
-    const forward = Math.cos(player.angle || 0) >= 0 ? 1 : -1;
-    const xOff = Number(ev.x) || 0;
-    const yOff = Number(ev.y) || 0;
-    let bx = player.x;
-    let by = player.y - (player.halfH || 20) * 0.35;
-    if (ev.followBone === 'weaponTip') {
-      bx += Math.cos(player.angle || 0) * ((player.radius || 14) + 28);
-      by += Math.sin(player.angle || 0) * ((player.radius || 14) + 28);
-    } else if (ev.followBone === 'handN' || ev.followBone === 'handR') {
-      bx += Math.cos(player.angle || 0) * ((player.radius || 14) + 10);
-      by += Math.sin(player.angle || 0) * ((player.radius || 14) + 10);
-    } else if (ev.followBone === 'head') {
-      by -= (player.halfH || 20) * 0.85;
-    } else if (ev.followBone === 'root') {
-      by = player.y;
-    }
     const startTime = Number(ev.time) || 0;
+    const endTime = Number.isFinite(Number(ev.endTime)) ? Math.max(startTime, Number(ev.endTime)) : Math.min(1, startTime + 0.12);
+    const state = sampleEffectTransform(ev, startTime);
+    const forward = Math.cos(player.angle || 0) >= 0 ? 1 : -1;
+    const originX = player.x;
+    const originY = player.y;
     const lifeMs = Number.isFinite(Number(ev.endTime))
-      ? Math.round(Math.max(0.04, Number(ev.endTime) - startTime) * (Number(motionDurMs) || 420))
+      ? Math.round(Math.max(0.04, endTime - startTime) * (Number(motionDurMs) || 420))
       : 420;
     this.effects.push({
       attackerId: player.id,
-      x: bx + xOff * forward,
-      y: by + yOff,
-      angle,
+      x: originX + state.x * forward,
+      y: originY + state.y,
+      angle: (Number(state.rotation) || 0) * Math.PI / 180,
       weapon: player.weapon,
       type: 'workshop_frame_fx',
       worldAnchored: true,
       assetId: ev.assetId || 'spark',
-      scale: Number(ev.scale) || 1,
-      alpha: Number.isFinite(ev.alpha) ? ev.alpha : 1,
-      flipX: !!ev.flipX,
-      flipY: !!ev.flipY,
+      scale: Number(state.scale) || 1,
+      alpha: Number.isFinite(state.alpha) ? state.alpha : 1,
+      flipX: !!state.flipX,
+      flipY: !!state.flipY,
+      effectDef: ev,
+      effectStart: startTime,
+      effectEnd: endTime,
+      effectOriginX: originX,
+      effectOriginY: originY,
+      effectFacing: forward,
       progress: 0,
       timestamp: now,
       lifetime: Math.max(80, Math.min(30000, lifeMs))
@@ -1471,8 +1502,7 @@ export class GameSim {
         const heavyAfter = Math.max(1, Math.min(5, Math.round(Number(ws.heavyAfter) || 3)));
         if (!player._basicComboAt || (now - player._basicComboAt) > 1400) player._basicCombo = 0;
         player._basicComboAt = now;
-        player._basicCombo = (player._basicCombo || 0) + 1;
-        if (player._basicCombo >= heavyAfter) {
+        if ((player._basicCombo || 0) >= heavyAfter) {
           player._basicCombo = 0;
           const motion = heavyMotion;
           const swingMotion = motion ? { ...motion, hitboxes: (Array.isArray(motion.hitboxes) ? motion.hitboxes : heavyHb) || [] } : { duration: 0.5, hitboxes: heavyHb || [] };
@@ -1485,9 +1515,11 @@ export class GameSim {
             ultimateGain: 10,
             combat: heavyCombat,
             combatKeys: ws.presetCombatKeys?.heavy || [],
+            presetKind: 'heavy',
           });
           return true;
         }
+        player._basicCombo = (player._basicCombo || 0) + 1;
       }
       this._startHitboxSwing(player, hbMotion, now, { projectile: player.workshopWeapon?.projectile || null });
       return true;
@@ -2388,27 +2420,23 @@ export class GameSim {
    */
   _spawnBots(count, difficulty = 'normal') {
     const n = Math.max(0, Math.min(12, Math.floor(count) || 0));
-    if (!this.botWorkshopWeapons.length) {
-      console.warn('[bots] no workshop weapons available; bots were not spawned');
-      return;
-    }
-    const loadout = Array.from({ length: n }, () => this._pickBotWorkshopWeapon()).filter(Boolean);
-    if (loadout.length < n) {
-      console.warn('[bots] failed to assign workshop weapons to every bot; bots were not spawned');
-      return;
-    }
+    const hasWorkshopPool = this.botWorkshopWeapons.length > 0;
+    const loadout = hasWorkshopPool
+      ? Array.from({ length: n }, () => this._pickBotWorkshopWeapon())
+      : Array(n).fill(null);
     const NAMES = ['글라디우스', '레기온', '발로르', '모르가나', '카이저', '도르', '벨라', '녹스', '아레스', '루멘', '가레스', '세라핌'];
     for (let i = 0; i < n; i++) {
       const workshopWeapon = loadout[i];
       const spawnP = this._getRandomSpawnPoint();
       const id = `bot_${this._botSeq++}`;
       const name = NAMES[i % NAMES.length];
-      const bot = new Player(id, `🤖${name}`, 'sword', spawnP.x, spawnP.y, { workshopWeapon });
-      if (!bot.workshopWeapon) {
+      const fallbackWeapon = i % 2 === 0 ? 'sword' : 'greatsword';
+      const bot = new Player(id, `🤖${name}`, fallbackWeapon, spawnP.x, spawnP.y, workshopWeapon ? { workshopWeapon } : null);
+      if (workshopWeapon && !bot.workshopWeapon) {
         bot._applyWorkshopWeapon(workshopWeapon);
         bot.hp = bot.maxHp;
       }
-      if (!bot.workshopWeapon) continue;
+      if (workshopWeapon && !bot.workshopWeapon) continue;
       bot.isBot = true;
       bot.keys = {};
       bot.brain = new BotBrain(bot, difficulty, this.rng);   // seeded: the match must replay

@@ -35,11 +35,13 @@ function botSpawnGame(botWorkshopWeapons = []) {
   return game;
 }
 
-test('bots require workshop weapons instead of falling back to sword loadout', () => {
+test('bots fall back to sword/greatsword when no workshop pool exists', () => {
   const empty = botSpawnGame([]);
   empty._spawnBots(2, 'normal');
-  assert.equal(Object.keys(empty.players).length, 0);
-  assert.equal(empty._bots.length, 0);
+  const fallbackBots = Object.values(empty.players);
+  assert.equal(fallbackBots.length, 2);
+  assert.equal(empty._bots.length, 2);
+  assert.deepEqual(new Set(fallbackBots.map(p => p.weapon)), new Set(['sword', 'greatsword']));
 
   const weapon = {
     id: 'ws-bot-blade',
@@ -137,6 +139,44 @@ test('workshop frame hitboxes can override damage per authored frame', () => {
   assert.equal(target.hp, target.maxHp - 3);
   game._updateHitboxSwings(1600);
   assert.equal(target.hp, target.maxHp - 17);
+});
+
+test('one skill activation awards ultimate gauge only on its first hitbox hit', () => {
+  const game = combatGame();
+  let awards = 0;
+  game._awardUltimateGauge = () => { awards++; };
+  const attacker = new Player('atk', 'Maker', 'sword', 100, 100);
+  const target = new Player('tar', 'Target', 'sword', 130, 100);
+  attacker.angle = 0;
+  attacker.workshopWeapon = { stats: { damage: 20 } };
+  game.players[attacker.id] = attacker;
+  game.players[target.id] = target;
+  game._startHitboxSwing(attacker, { duration: 1, hitboxes: [
+    { ox: 30, oy: 0, w: 60, h: 40, frameTime: 0.2 },
+    { ox: 30, oy: 0, w: 60, h: 40, frameTime: 0.6 },
+  ] }, 1000, { damage: 20, ultimateGain: 25, presetKind: 'skill1' });
+  game._updateHitboxSwings(1200);
+  game._updateHitboxSwings(1600);
+  assert.equal(awards, 1);
+});
+
+test('heavy combo fires after the configured number of basic attacks', () => {
+  const game = combatGame();
+  game._isMotionLocked = () => false;
+  game._canonicalHitboxMotion = () => ({ duration: 0.2, hitboxes: [{ ox: 1, oy: 0, w: 10, h: 10, frameTime: 0.5 }] });
+  const tags = [];
+  game._startHitboxSwing = (_p, _m, _now, opts = {}) => tags.push(opts.motionTag || 'basic');
+  const player = {
+    id: 'combo', weapon: 'sword', buffType: null, canAttack: () => true,
+    workshopWeapon: {
+      stats: { damage: 10 }, heavyAfter: 3,
+      presetCombat: { heavy: { damage: 20, knockback: 0, status: 'none', cooldownMs: 600 } },
+      presetHitboxes: { heavy: [{ ox: 1, oy: 0, w: 10, h: 10, frameTime: 0.5 }] },
+      motionSet: { heavy: { duration: 0.3, hitboxes: [{ ox: 1, oy: 0, w: 10, h: 10, frameTime: 0.5 }] } },
+    },
+  };
+  for (let i = 0; i < 4; i++) game._performBasicAttack(player, Weapons.sword, 1000 + i * 200);
+  assert.deepEqual(tags, ['basic', 'basic', 'basic', 'heavy']);
 });
 
 test('workshop skill activation shows the authored skill name beside the caster', () => {

@@ -22,13 +22,14 @@ import { MsgType } from './Protocol.js';
 
 const CONNECT_TIMEOUT_MS = 10000;
 const PING_INTERVAL_MS = 2500;
+const RECONNECT_GRACE_MS = 25000;
 
 export class WsTransport {
   /**
    * @param {(event:string, ...args:any[]) => void} emit the manager's emitter
    * @param {string} url base ws(s):// server URL
    */
-  constructor(emit, url) {
+  constructor(emit, url, options = {}) {
     this.emit = emit;
     this.url = url;
     this.isHost = false;          // the SERVER is the host
@@ -42,6 +43,13 @@ export class WsTransport {
     this._pingTimer = null;
     this._pingSeq = 0;
     this._pendingPings = new Map();
+    this.getAuthToken = typeof options.getAuthToken === 'function' ? options.getAuthToken : null;
+    this.sessionToken = '';
+    this._joinPayload = null;
+    this._everOpened = false;
+    this._reconnectStartedAt = 0;
+    this._retryTimer = null;
+    this._attempt = 0;
   }
 
   /**
@@ -50,6 +58,11 @@ export class WsTransport {
    */
   start(roomCode, joinPayload = {}) {
     this.roomCode = String(roomCode || '').trim().toUpperCase();
+    this._joinPayload = { ...joinPayload };
+    this._connect();
+  }
+
+  _connect() {
     const sep = this.url.includes('?') ? '&' : '?';
     const full = `${this.url}${sep}room=${encodeURIComponent(this.roomCode)}`;
 
@@ -68,10 +81,19 @@ export class WsTransport {
       this.stop();
     }, CONNECT_TIMEOUT_MS);
 
-    ws.onopen = () => {
+    ws.onopen = async () => {
       if (this._stopped) return;
-      this._send(joinPayload);
-      this.emit('onConnected');   // Game shell builds the (guest) match here
+      let idToken = '';
+      try { idToken = await this.getAuthToken?.() || ''; } catch { /* guest fallback */ }
+      if (this._stopped || ws !== this.ws) return;
+      const payload = { ...this._joinPayload };
+      if (idToken) payload.idToken = idToken;
+      if (this.sessionToken) payload.sessionToken = this.sessionToken;
+      this._send(payload);
+      if (!this._everOpened) {
+        this._everOpened = true;
+        this.emit('onConnected');
+      }
       this._startPing();
     };
 
@@ -86,7 +108,15 @@ export class WsTransport {
       if (data.type === MsgType.ROOM_JOINED) {
         this._joined = true;
         this.localId = data.id;
+        if (data.sessionToken) this.sessionToken = data.sessionToken;
+        this._reconnectStartedAt = 0;
+        this._attempt = 0;
         clearTimeout(this._connectTimer);
+      }
+      if (data.type === MsgType.SERVER_SHUTDOWN) {
+        this.emit('onData', 'server', data);
+        this._finishDisconnect(data.message || '게임 서버가 재시작됩니다.');
+        return;
       }
       if (data.type === MsgType.ERROR) {
         this.emit('onError', data.message || '서버 오류.');
@@ -101,13 +131,12 @@ export class WsTransport {
       if (this._stopped) return;
       clearTimeout(this._connectTimer);
       this._stopPing();
-      if (this._joined) this.emit('onDisconnected', '게임 서버 연결이 끊어졌습니다.');
-      else this.emit('onError', '게임 서버 연결이 종료되었습니다.');
+      this._scheduleReconnect();
     };
 
     ws.onerror = () => {
-      if (this._stopped || this._joined) return;
-      this.emit('onError', '게임 서버 연결 오류.');
+      // close follows error in browser and Node WebSocket implementations;
+      // the close path owns retry/final failure so UI is not torn down early.
     };
   }
 
@@ -116,9 +145,11 @@ export class WsTransport {
   sendTo() { return false; }
 
   stop() {
+    if (!this._stopped) this._send({ type: MsgType.LEAVE_ROOM });
     this._stopped = true;
     this._stopPing();
     clearTimeout(this._connectTimer);
+    clearTimeout(this._retryTimer);
     if (this.ws) {
       try { this.ws.onopen = this.ws.onmessage = this.ws.onclose = this.ws.onerror = null; this.ws.close(); } catch { /* already closing */ }
       this.ws = null;
@@ -153,5 +184,29 @@ export class WsTransport {
     if (!sentAt) return;
     this._pendingPings.delete(data.seq);
     this.latency = Date.now() - sentAt;
+  }
+
+  _scheduleReconnect() {
+    if (this._stopped) return;
+    if (!this._reconnectStartedAt) this._reconnectStartedAt = Date.now();
+    const elapsed = Date.now() - this._reconnectStartedAt;
+    if (elapsed >= RECONNECT_GRACE_MS) {
+      this._finishDisconnect('게임 서버 재연결 시간이 초과되었습니다.');
+      return;
+    }
+    const delay = Math.min(2500, 300 * (2 ** Math.min(this._attempt++, 4)));
+    this.emit('onReconnecting', { attempt: this._attempt, remainingMs: RECONNECT_GRACE_MS - elapsed });
+    clearTimeout(this._retryTimer);
+    this._retryTimer = setTimeout(() => this._connect(), delay);
+  }
+
+  _finishDisconnect(reason) {
+    if (this._stopped) return;
+    this._stopped = true;
+    this._stopPing();
+    clearTimeout(this._connectTimer);
+    clearTimeout(this._retryTimer);
+    try { this.ws?.close(); } catch {}
+    this.emit('onDisconnected', reason);
   }
 }

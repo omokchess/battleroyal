@@ -21,6 +21,12 @@ async function boot() {
   return { port: addr.port, close: () => server.close(), rooms: server.rooms };
 }
 
+async function bootWithFirebase(firebaseServices) {
+  const server = createServer({ port: 0, silent: true, firebaseServices });
+  const addr = await server.listen();
+  return { port: addr.port, close: () => server.close(), rooms: server.rooms };
+}
+
 /** A tiny client: connect, collect frames by type, send Protocol messages. */
 async function connect(port, room) {
   const ws = new WebSocket(`ws://localhost:${port}/?room=${room}`);
@@ -134,7 +140,7 @@ test('server is authoritative: input moves only the sender, not the peer', async
   } finally { await close(); }
 });
 
-test('a disconnect removes the player and empties the room', async () => {
+test('a disconnect keeps the seat during grace, then expiry removes it', async () => {
   const { port, close, rooms } = await boot();
   try {
     const a = await connect(port, 'DELTA');
@@ -147,9 +153,88 @@ test('a disconnect removes the player and empties the room', async () => {
     a.close();
     await sleep(120);
     assert.equal(room.clients.size, 0, 'client removed on disconnect');
-    assert.equal(room.isEmpty, true);
-    // The loop stopped, so the lobby no longer advertises it.
-    const list = rooms.list();
-    assert.equal(list.length, 0);
+    assert.equal(room.isEmpty, false, 'seat remains reconnectable during grace');
+    assert.ok(room.sim.players[Object.keys(room.sim.players)[0]], 'server-side character remains');
+
+    const token = [...room.sessions.keys()][0];
+    room._expireSession(token);
+    assert.equal(room.isEmpty, true, 'seat is removed after grace expires');
+    assert.equal(rooms.list().length, 0);
+  } finally { await close(); }
+});
+
+test('a client reconnects with the same opaque session and player id', async () => {
+  const { port, close, rooms } = await boot();
+  try {
+    const a = await connect(port, 'ECHO');
+    a.send(Protocol.joinRoom('Returner', 'sword'));
+    const first = await a.wait(MsgType.ROOM_JOINED);
+    assert.ok(first.sessionToken);
+    a.close();
+    await sleep(100);
+
+    const b = await connect(port, 'ECHO');
+    b.send(Protocol.joinRoom('Returner', 'sword', null, false, null, { sessionToken: first.sessionToken }));
+    const resumed = await b.wait(MsgType.ROOM_JOINED);
+    assert.equal(resumed.id, first.id);
+    assert.equal(rooms.rooms.get('ECHO').playerCount, 1, 'reconnect did not duplicate the character');
+    b.close();
+  } finally { await close(); }
+});
+
+test('room setting ownership moves to the next connected player', async () => {
+  const { port, close, rooms } = await boot();
+  try {
+    const a = await connect(port, 'FOXTROT');
+    a.send(Protocol.joinRoom('First', 'sword'));
+    const first = await a.wait(MsgType.ROOM_JOINED);
+    const b = await connect(port, 'FOXTROT');
+    b.send(Protocol.joinRoom('Second', 'sword'));
+    const second = await b.wait(MsgType.ROOM_JOINED);
+    assert.equal(rooms.rooms.get('FOXTROT').hostId, first.id);
+
+    a.close();
+    const changed = await b.wait(MsgType.HOST_CHANGED);
+    assert.equal(changed.hostId, second.id);
+    assert.equal(rooms.rooms.get('FOXTROT').hostId, second.id);
+    b.close();
+  } finally { await close(); }
+});
+
+test('verified Firebase identity binds uid/nickname and records authoritative stats', async () => {
+  const recorded = [];
+  const firebaseServices = {
+    enabled: true,
+    verifyIdToken: async (token) => token === 'good' ? { uid: 'uid-1', name: 'VerifiedName' } : null,
+    recordMatch: async (identity, stats, id) => { recorded.push({ identity, stats, id }); return true; },
+  };
+  const { port, close } = await bootWithFirebase(firebaseServices);
+  try {
+    const a = await connect(port, 'GOLF');
+    const join = Protocol.joinRoom('ForgedName', 'sword', null, false, null, { idToken: 'good' });
+    a.send(join);
+    const joined = await a.wait(MsgType.ROOM_JOINED);
+    assert.equal(joined.initialPlayers[joined.id].nickname, 'VerifiedName');
+    a.send(Protocol.leaveRoom());
+    for (let i = 0; i < 50 && !recorded.length; i++) await sleep(10);
+    assert.equal(recorded[0].identity.uid, 'uid-1');
+    assert.equal(recorded[0].stats.kills, 0);
+    a.close();
+  } finally { await close(); }
+});
+
+test('invalid Firebase token is rejected before a player is seated', async () => {
+  const firebaseServices = {
+    enabled: true,
+    verifyIdToken: async () => { throw new Error('bad token'); },
+    recordMatch: async () => null,
+  };
+  const { port, close, rooms } = await bootWithFirebase(firebaseServices);
+  try {
+    const a = await connect(port, 'HOTEL');
+    a.send(Protocol.joinRoom('Nope', 'sword', null, false, null, { idToken: 'bad' }));
+    const error = await a.wait(MsgType.ERROR);
+    assert.equal(error.code, 'AUTH_INVALID');
+    assert.equal(rooms.rooms.size, 0);
   } finally { await close(); }
 });

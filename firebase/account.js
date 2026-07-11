@@ -128,6 +128,11 @@ export async function getSession() {
   return { user: firebaseAuth.currentUser };
 }
 
+/** Short-lived identity proof for the dedicated game server. */
+export async function getIdToken(forceRefresh = false) {
+  return firebaseAuth?.currentUser?.getIdToken?.(forceRefresh) || null;
+}
+
 /** Profile photo URL. For id/password users who linked Google, the top-level
  *  photoURL stays null, so fall back to the google.com provider entry. */
 export function getPhotoURL() {

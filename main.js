@@ -1302,7 +1302,7 @@ function doHost(dummy = false) {
   closeRoomCustom();
   if (btn) { btn.disabled = true; btn.textContent = dummy ? '연습장 준비 중...' : '서버 연결 중...'; }
 
-  netManager = new NetworkManager();
+  netManager = new NetworkManager({ getAuthToken: accountUI.getAuthToken });
 
   netManager.on('onError', (err) => {
     if (btn) { btn.disabled = false; btn.textContent = idleLabel; }
@@ -1370,14 +1370,8 @@ async function doBotMatch() {
   const botCount = readBotCount();
   const botDifficulty = readBotDifficulty();
   const botWorkshopWeapons = await loadBotWorkshopWeapons();
-  if (!botWorkshopWeapons.length) {
-    if (btn) { btn.disabled = false; btn.innerHTML = '▶ 바로 플레이 <span class="text-[#d6ffe2] normal-case font-bold">(봇전 · 즉시 시작)</span>'; }
-    if (startBtn) { startBtn.disabled = false; startBtn.textContent = '봇전 시작'; }
-    showError('봇이 사용할 공개 워크샵 무기가 없습니다. 워크샵에 무기를 업로드하거나 무기고에 공방 무기를 추가해 주세요.');
-    return;
-  }
 
-  netManager = new NetworkManager();
+  netManager = new NetworkManager({ getAuthToken: accountUI.getAuthToken });
   netManager.on('onInit', () => {
     if (btn) { btn.disabled = false; btn.innerHTML = '▶ 바로 플레이 <span class="text-[#d6ffe2] normal-case font-bold">(봇전 · 즉시 시작)</span>'; }
     if (startBtn) { startBtn.disabled = false; startBtn.textContent = '봇전 시작'; }
@@ -1681,7 +1675,7 @@ function startJoin(rawCode, triggerBtn = joinBtn) {
   hideError();
   setJoinBusy(true);
 
-  netManager = new NetworkManager();
+  netManager = new NetworkManager({ getAuthToken: accountUI.getAuthToken });
 
   // Create registration payload frame (carry costume so the host paints us
   // correctly, and isMobile so the host gives touch players instant-fire).
@@ -2538,7 +2532,11 @@ function ensureLobbyTutorialStyles() {
     .tut-em{color:#ffe36a;background:rgba(255,210,74,.14);border:1px solid rgba(255,210,74,.28);border-radius:4px;padding:0 3px;font-weight:800}
     .tut-anim{animation:tutTextIn .24s ease both}
     @keyframes tutTextIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
-    @media(max-width:640px){#lobbyTutorialCard{bottom:10px;padding:12px;width:calc(100vw - 16px)}.tut-text{font-size:11.5px}}
+    @media(max-width:640px){
+      #lobbyTutorialCard{bottom:10px;padding:12px;width:calc(100vw - 16px)}.tut-text{font-size:11.5px}
+      body.lobby-tutorial-active #lobbyMenu,body.lobby-tutorial-active #hubModules{padding-bottom:55vh!important}
+      body.lobby-tutorial-active :where(#wsList,#shopBody,#leaderboardBody,#armoryBody,#roomCustomBody,.overflow-y-auto){scroll-padding-top:18vh;scroll-padding-bottom:42vh}
+    }
   `;
   document.head.appendChild(st);
 }
@@ -2706,6 +2704,9 @@ function keepLobbyTutorialXStable() {
 function scrollLobbyTutorialTargetY(target) {
   if (!target) return;
   keepLobbyTutorialXStable();
+  if (isPhoneDevice()) {
+    target.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+  }
   const scroller = target.closest('#wsList, #shopBody, #leaderboardBody, #armoryBody, #roomCustomBody, .overflow-y-auto');
   if (scroller) {
     const sr = scroller.getBoundingClientRect();
@@ -3833,6 +3834,10 @@ function setupLobbyPerfToggle() {
 async function handleMatchEnd(stats) {
   showLobbyScreen();
   if (stats && stats.dummy) return; // 연습방은 보고하지 않음
+  if (stats && stats.serverAuthoritative) {
+    setTimeout(() => accountUI.refreshProfile?.().catch(() => {}), 1200);
+    return;
+  }
   try {
     await accountUI.reportMatch(stats || { kills: 0 });
   } catch (e) {

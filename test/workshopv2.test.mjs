@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   clampWorkshopWeaponV2, migrateV1toV2, toWorkshopWeaponV2, makeEmptyWeaponV2, makeEmptyPreset,
-  statCostV2, combatCost, sanitizeCombat, sanitizeCombatKeys, sampleCombatKeys, sanitizeFlipKeys, sampleFlip, sanitizeProjectile, sanitizeProjectileEvents, sanitizeTeleportEvents, sanitizeEffects,
+  statCostV2, combatCost, sanitizeCombat, sanitizeCombatKeys, sampleCombatKeys, sanitizeFlipKeys, sampleFlip, sanitizeProjectile, sanitizeProjectileEvents, sanitizeTeleportEvents, sanitizeEffects, sampleEffectTransform,
   POINT_BUDGET, PROJECTILE_IMAGES, FIXED_PRESET_DURATIONS, AUTHORING_PRESET_KEYS,
 } from '../game/Workshop.js';
 import { v2ToV1Runtime } from '../game/WorkshopStore.js';
@@ -74,7 +74,7 @@ test('budget: cooldown is included and over-budget bleeds to ≤100 per section'
   const faster = combatCost({ damage: 0, cooldownMs: 300, knockback: 60, status: 'none', ultimateGain: 10 });
   const slower = combatCost({ damage: 0, cooldownMs: 1100, knockback: 60, status: 'none', ultimateGain: 10 });
   assert.equal(neutral, 0, '600ms cooldown is budget-neutral');
-  assert.equal(faster - neutral, 1, '300ms faster cooldown costs 1 budget');
+  assert.equal(faster - neutral, 3, '100ms faster cooldown costs 1 budget');
   assert.equal(slower - neutral, -1, '500ms slower cooldown refunds 1 budget');
   // Faster cooldown costs more budget.
   const fast = { ...w, presets: { basic: { ...w.presets.basic, combat: { ...w.presets.basic.combat, cooldownMs: 250 } } } };
@@ -87,6 +87,13 @@ test('budget: cooldown is included and over-budget bleeds to ≤100 per section'
       { kind: k, motion: { keyframes: [{ t: 0, pose: {} }] }, combat: { damage: 60, cooldownMs: 250, knockback: 200, status: 'bleed', statusDurationMs: 3000 } }])),
   });
   assert.ok(statCostV2(maxed) <= POINT_BUDGET, `enforced ${statCostV2(maxed)} ≤ ${POINT_BUDGET}`);
+});
+
+test('ultimate has no cooldown and allows 100 damage at one budget per damage', () => {
+  const ultimate = sanitizeCombat({ damage: 100, cooldownMs: 250 }, 'ultimate');
+  assert.equal(ultimate.damage, 100);
+  assert.equal(ultimate.cooldownMs, 0);
+  assert.equal(combatCost({ ...ultimate, knockback: 60, status: 'none' }, 'ultimate'), 100);
 });
 
 test('skill ultimate gain is clamped in 5-point steps and costs budget', () => {
@@ -299,7 +306,7 @@ test('hitbox frame damage survives V2 clamp and runtime export', () => {
   assert.equal(rt.motionSet.attack.hitboxes[0].damage, 3);
 });
 
-test('effects sanitize: capped, followBone whitelisted, alpha 0..1', () => {
+test('effects sanitize into independent per-frame transforms', () => {
   const fx = sanitizeEffects([
     { time: 0.2, endTime: 0.4, assetId: 'custom:fx_abc', alpha: 5, followBone: 'weaponTip', flipX: true, flipY: true },
     { time: 0.1, assetId: 'boom', followBone: 'hacker' },
@@ -310,7 +317,16 @@ test('effects sanitize: capped, followBone whitelisted, alpha 0..1', () => {
   assert.equal(fx.find((e) => e.assetId === 'custom:fx_abc').endTime, 0.4);
   assert.equal(fx.find((e) => e.assetId === 'custom:fx_abc').flipX, true);
   assert.equal(fx.find((e) => e.assetId === 'custom:fx_abc').flipY, true);
-  assert.equal(fx.find((e) => e.assetId === 'boom').followBone, null, 'unknown bone → null');
+  assert.equal('followBone' in fx.find((e) => e.assetId === 'boom'), false, 'attachment data is removed');
+  const keyed = sanitizeEffects([{ time: 0.2, endTime: 0.6, keys: [
+    { time: 0.2, x: 0, scale: 1, rotation: 0, flipX: false },
+    { time: 0.6, x: 40, scale: 2, rotation: 90, flipX: true },
+  ] }])[0];
+  const mid = sampleEffectTransform(keyed, 0.4);
+  assert.ok(Math.abs(mid.x - 20) < 1e-9);
+  assert.equal(mid.scale, 1.5);
+  assert.ok(Math.abs(mid.rotation - 45) < 1e-9);
+  assert.equal(mid.flipX, false, 'flip changes on its authored key, not midway');
 });
 
 test('frame events sanitize: projectiles capped to 5 and teleports clamped', () => {

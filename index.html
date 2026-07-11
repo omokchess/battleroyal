@@ -811,7 +811,7 @@
               <div id="meHitboxRow" class="flex items-center justify-between mt-1 border-t border-gray-800 pt-1">
                 <span class="text-[10px] text-[#ff7a5a] uppercase font-bold">⚔ 프레임 히트박스</span>
                 <span class="text-[9px] text-gray-500 flex-1 px-2 leading-tight">현재 프레임에 판정 추가 · 빨간 상자=타격 범위 · 빨간 프레임=판정 발생</span>
-                <label class="flex items-center gap-1 text-[9px] text-gray-300 mr-1 whitespace-nowrap" title="비우면 총 대미지를 히트박스 수로 자동 분배합니다.">프레임 대미지
+                <label class="flex items-center gap-1 text-[9px] text-gray-300 mr-1 whitespace-nowrap">프레임 대미지
                   <input id="meHitboxDamage" type="number" min="0" max="60" step="1" placeholder="자동" class="w-16 bg-[#14100b] border border-[#ff7a5a]/60 text-white px-1 py-1 text-[10px] disabled:opacity-40" />
                 </label>
                 <button id="meAddHitbox" class="bg-[#14100b] hover:bg-gray-800 border border-[#ff7a5a] text-[#ff7a5a] text-[10px] px-2 py-1 cursor-pointer active:scale-95">＋ 현재 프레임 판정</button>
@@ -845,15 +845,12 @@
               <div id="meEffectEdit" class="mt-1 grid grid-cols-2 gap-1 text-[9px] text-gray-300">
                 <label class="flex items-center gap-1">시작F<input id="meEffectStartFrame" type="number" min="1" max="64" step="1" class="w-14 bg-[#14100b] border border-gray-600 text-white px-1 py-0.5"/></label>
                 <label class="flex items-center gap-1">종료F<input id="meEffectEndFrame" type="number" min="1" max="64" step="1" class="w-14 bg-[#14100b] border border-gray-600 text-white px-1 py-0.5"/></label>
-                <label class="flex items-center gap-1">X<input id="meEffectX" type="range" min="-200" max="200" step="2" class="flex-1 min-w-0"/></label>
-                <label class="flex items-center gap-1">Y<input id="meEffectY" type="range" min="-200" max="200" step="2" class="flex-1 min-w-0"/></label>
-                <label class="flex items-center gap-1">크기<input id="meEffectScale" type="range" min="0.1" max="4" step="0.05" class="flex-1 min-w-0"/></label>
                 <label class="flex items-center gap-1">회전<input id="meEffectRot" type="range" min="-360" max="360" step="5" class="flex-1 min-w-0"/></label>
                 <label class="flex items-center gap-1">투명<input id="meEffectAlpha" type="range" min="0" max="1" step="0.05" class="flex-1 min-w-0"/></label>
-                <label class="flex items-center gap-1">부착<select id="meEffectBone" class="bg-[#14100b] border border-gray-600 text-white px-1 py-0.5 flex-1 min-w-0"><option value="weaponTip">무기 끝</option><option value="handN">손</option><option value="handR">보조손</option><option value="root">골반</option><option value="head">머리</option></select></label>
                 <label class="flex items-center gap-1"><input id="meEffectFlipX" type="checkbox"/>좌우 반전</label>
                 <label class="flex items-center gap-1"><input id="meEffectFlipY" type="checkbox"/>상하 반전</label>
               </div>
+              <div class="mt-1 text-[9px] text-gray-500">빨간 점 드래그=위치 · 모서리 사각점 드래그=크기 · 현재 프레임에 변화 저장</div>
               <div id="meEffectList" class="mt-1 flex flex-col gap-0.5 max-h-16 overflow-y-auto"></div>
             </div>
 
@@ -997,7 +994,7 @@
                 <div class="flex flex-col gap-1.5 text-[10px] text-gray-300">
                   <label class="block"><span class="flex justify-between"><span>대미지</span><b id="ms_damage_v" class="text-[#e8d5a3]">18</b></span>
                     <input id="ms_damage" type="range" min="0" max="60" step="1" class="w-full"/></label>
-                  <label class="block"><span class="flex justify-between"><span>쿨타임</span><b id="ms_cooldownMs_v" class="text-[#e8d5a3]">600</b></span>
+                  <label id="meCooldownRow" class="block"><span class="flex justify-between"><span>쿨타임</span><b id="ms_cooldownMs_v" class="text-[#e8d5a3]">600</b></span>
                     <input id="ms_cooldownMs" type="range" min="250" max="10000" step="10" class="w-full"/></label>
                   <label class="block"><span class="flex justify-between"><span>넉백</span><b id="ms_knockback_v" class="text-[#e8d5a3]">0</b></span>
                     <input id="ms_knockback" type="range" min="0" max="200" step="5" class="w-full"/></label>

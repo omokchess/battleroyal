@@ -20,7 +20,7 @@ import { resolveMotion, weaponSetId, sanitizeMotion, registerMotionSet, MOTION_L
 import { captureMotionFromWebcam } from './PoseCapture.js';
 import { drawProjectileShape, drawFxShape } from './ProjectileArt.js';
 import { equippedStickLook, saveStickLook } from './StickLook.js';
-import { clampWorkshopStats, statCost, enforceBudget, clampWorkshopWeapon, POINT_BUDGET, toWorkshopWeaponV2, clampWorkshopWeaponV2, COMBAT_PRESET_KINDS, PRESET_LABELS, AUTHORING_PRESET_KEYS, FIXED_PRESET_DURATIONS, makeEmptyWeaponV2, makeEmptyPreset, statCostV2, baseStatsCost, combatCost, sanitizeCombat, sanitizeCombatKeys, sampleCombatKeys, sanitizeProjectile, sanitizeProjectileEvents, sanitizeTeleportEvents, sanitizeEffects, VALID_STATUS, sanitizeFlipKeys, sampleFlip } from './Workshop.js';
+import { clampWorkshopStats, statCost, enforceBudget, clampWorkshopWeapon, POINT_BUDGET, toWorkshopWeaponV2, clampWorkshopWeaponV2, COMBAT_PRESET_KINDS, PRESET_LABELS, AUTHORING_PRESET_KEYS, FIXED_PRESET_DURATIONS, makeEmptyWeaponV2, makeEmptyPreset, statCostV2, baseStatsCost, combatCost, sanitizeCombat, sanitizeCombatKeys, sampleCombatKeys, sanitizeProjectile, sanitizeProjectileEvents, sanitizeTeleportEvents, sanitizeEffects, sampleEffectTransform, VALID_STATUS, sanitizeFlipKeys, sampleFlip } from './Workshop.js';
 import { saveWorkshopWeaponLocal, equipWorkshopWeaponLocal, v2ToV1Runtime } from './WorkshopStore.js';
 import { invalidateWeaponImage, shrinkDataUrlToBudget, WEAPON_IMAGE_BUDGET } from './WeaponImages.js';
 // Local workshop storage + equip live in WorkshopStore now; re-export the
@@ -228,6 +228,7 @@ export class MotionEditor {
     this.dragHandle = null;
     this.dragKfIndex = -1;
     this.dragHitbox = null;     // 'move' | 'resize'
+    this.dragEffect = null;     // 'move' | 'resize'
     this._selectedHitboxIndex = -1;
     this._selectedEffectIndex = -1;
     this._flipKeys = [];
@@ -327,12 +328,8 @@ export class MotionEditor {
     $('meEffectFile')?.addEventListener('change', (e) => this._onEffectFile(e));
     $('meEffectStartFrame')?.addEventListener('change', (e) => this._updateSelectedEffectFrame('start', parseInt(e.target.value, 10)));
     $('meEffectEndFrame')?.addEventListener('change', (e) => this._updateSelectedEffectFrame('end', parseInt(e.target.value, 10)));
-    $('meEffectX')?.addEventListener('input', (e) => this._updateSelectedEffect('x', parseFloat(e.target.value)));
-    $('meEffectY')?.addEventListener('input', (e) => this._updateSelectedEffect('y', parseFloat(e.target.value)));
-    $('meEffectScale')?.addEventListener('input', (e) => this._updateSelectedEffect('scale', parseFloat(e.target.value)));
     $('meEffectRot')?.addEventListener('input', (e) => this._updateSelectedEffect('rotation', parseFloat(e.target.value)));
     $('meEffectAlpha')?.addEventListener('input', (e) => this._updateSelectedEffect('alpha', parseFloat(e.target.value)));
-    $('meEffectBone')?.addEventListener('change', (e) => this._updateSelectedEffect('followBone', e.target.value));
     $('meEffectFlipX')?.addEventListener('change', (e) => this._updateSelectedEffect('flipX', !!e.target.checked));
     $('meEffectFlipY')?.addEventListener('change', (e) => this._updateSelectedEffect('flipY', !!e.target.checked));
     $('meDualWield')?.addEventListener('change', (e) => {
@@ -667,7 +664,8 @@ export class MotionEditor {
     .me-tut-decline span{display:inline-block;animation:meTutLabelSwap .28s ease both}
     @keyframes meTutTextIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
     @keyframes meTutDeclineIn{from{background:#14100b;border-color:#6b6156;color:#8a8175}to{background:#2a0f12;border-color:#ff5a5a;color:#ffd6d6}}
-    @keyframes meTutLabelSwap{from{opacity:0;transform:translateY(4px);letter-spacing:.08em}to{opacity:1;transform:translateY(0);letter-spacing:0}}`;
+    @keyframes meTutLabelSwap{from{opacity:0;transform:translateY(4px);letter-spacing:.08em}to{opacity:1;transform:translateY(0);letter-spacing:0}}
+    @media(max-width:640px){#motionEditor{padding-bottom:55vh!important;scroll-padding-top:16vh;scroll-padding-bottom:45vh}}`;
     document.head.appendChild(st);
   }
 
@@ -835,7 +833,7 @@ export class MotionEditor {
     if (target) {
       const col = target.closest('.me-col-collapsed');
       if (col && this._cols) for (const key of ['left', 'right']) if (this._cols[key].el === col) this._expandCol(key);
-      target.scrollIntoView?.({ block: 'nearest' });
+      target.scrollIntoView?.({ behavior: 'smooth', block: window.innerWidth <= 640 ? 'center' : 'nearest', inline: 'nearest' });
       this._scheduleTutSpotlight(target, s);
     } else {
       this._setTutSpotlight(null);
@@ -1133,9 +1131,12 @@ export class MotionEditor {
       const wrap = document.createElement('span'); wrap.style.cssText = 'display:inline-flex;align-items:center;gap:2px;flex:0 0 auto';
       const b = document.createElement('button');
       const active = key === this._activeKey;
-      b.className = 'min-w-[56px] text-[10px] px-2 py-1 rounded cursor-pointer active:scale-95 ' + (active ? 'bg-[#1c6b33] text-white border border-[#7df09a]' : 'bg-[#14100b] text-gray-300 border border-gray-700 hover:border-gray-500');
-      const star = w.equippedPresetKey === key ? '★ ' : '';
       const done = !!w.presets[key]?.complete;
+      b.className = 'min-w-[56px] text-[10px] px-2 py-1 rounded cursor-pointer active:scale-95 ' + (active
+        ? `bg-[#1c6b33] text-white ${done ? 'border-2' : 'border'} border-[#7df09a]`
+        : done ? 'bg-[#142318] text-[#b8ffc8] border-2 border-[#7df09a] hover:bg-[#1a3020]'
+          : 'bg-[#14100b] text-gray-300 border border-gray-700 hover:border-gray-500');
+      const star = w.equippedPresetKey === key ? '★ ' : '';
       const presetName = w.presets[key]?.displayName || PRESET_LABELS[key] || key;
       b.textContent = star + presetName + (done ? ' ✓' : '');
       b.title = `${PRESET_LABELS[key] || key}${w.presets[key]?.displayName ? ` · 표시명: ${w.presets[key].displayName}` : ''}`;
@@ -1208,7 +1209,7 @@ export class MotionEditor {
     if (COMBAT_PRESET_KINDS.has(key)) {
       p.displayName = this._presetDisplayNameValue();
       p.hitboxes = Array.isArray(this.motion.hitboxes) ? this.motion.hitboxes : [];
-      p.combatKeys = sanitizeCombatKeys(p.combatKeys || [], p.combat);
+      p.combatKeys = sanitizeCombatKeys(p.combatKeys || [], p.combat, key);
       p.projectileEvents = sanitizeProjectileEvents(p.projectileEvents || []);
       p.teleportEvents = sanitizeTeleportEvents(p.teleportEvents || []);
       p.blocks = this.blocks;
@@ -1247,6 +1248,9 @@ export class MotionEditor {
     $('meHitboxRow')?.classList.toggle('hidden', !isCombat);   // hitboxes = combat only
     this._syncHeavyStats(isCombat ? p : null);
     const cn = $('meCombatPresetName'); if (cn) cn.textContent = PRESET_LABELS[key] || key;
+    const ultimate = key === 'ultimate';
+    $('meCooldownRow')?.classList.toggle('hidden', ultimate);
+    if ($('ms_damage')) $('ms_damage').max = ultimate ? '100' : '60';
     this._syncPresetDisplayName(p, isCombat);
     this._syncFrameEventLists();
     this._renderBudget(); this._updateBlockCount(); this._renderAll();
@@ -1572,7 +1576,7 @@ export class MotionEditor {
     const assetId = assetOverride || document.getElementById('meEffectAsset')?.value || 'spark';
     const start = Math.round(this.scrubT * 1000) / 1000;
     const end = Math.min(1, Math.round((start + 0.12) * 1000) / 1000);
-    p.effects.push({ time: start, endTime: end, assetId, x: 0, y: 0, scale: 1, rotation: 0, alpha: 1, flipX: false, flipY: false, followBone: 'weaponTip' });
+    p.effects.push({ time: start, endTime: end, assetId, x: 0, y: 0, scale: 1, rotation: 0, alpha: 1, flipX: false, flipY: false, keys: [{ time: start, x: 0, y: 0, scale: 1, rotation: 0, alpha: 1, flipX: false, flipY: false }] });
     p.effects.sort((a, b) => a.time - b.time);
     this._selectedEffectIndex = p.effects.findIndex(e => Math.abs(e.time - Math.round(this.scrubT * 1000) / 1000) < 0.001 && e.assetId === assetId);
     this._renderEffectList(); this._renderPreview();
@@ -1608,14 +1612,11 @@ export class MotionEditor {
     set('meEffectAsset', e?.assetId || 'spark');
     set('meEffectStartFrame', this._effectTimeToFrame(e?.time ?? this.scrubT));
     set('meEffectEndFrame', this._effectTimeToFrame(e?.endTime ?? e?.time ?? this.scrubT));
-    set('meEffectX', e?.x ?? 0);
-    set('meEffectY', e?.y ?? 0);
-    set('meEffectScale', e?.scale ?? 1);
-    set('meEffectRot', e?.rotation ?? 0);
-    set('meEffectAlpha', e?.alpha ?? 1);
-    set('meEffectBone', e?.followBone || 'weaponTip');
-    setCheck('meEffectFlipX', e?.flipX);
-    setCheck('meEffectFlipY', e?.flipY);
+    const sampled = e ? sampleEffectTransform(e, this._currentMotionTime()) : null;
+    set('meEffectRot', sampled?.rotation ?? 0);
+    set('meEffectAlpha', sampled?.alpha ?? 1);
+    setCheck('meEffectFlipX', sampled?.flipX);
+    setCheck('meEffectFlipY', sampled?.flipY);
   }
   _updateSelectedEffectFrame(which, frame) {
     const p = this._activePreset();
@@ -1636,43 +1637,65 @@ export class MotionEditor {
   _updateSelectedEffect(field, value) {
     const p = this._activePreset();
     if (!p || !Array.isArray(p.effects) || this._selectedEffectIndex < 0 || !p.effects[this._selectedEffectIndex]) return;
-    p.effects[this._selectedEffectIndex][field] = value;
+    const effect = p.effects[this._selectedEffectIndex];
+    if (field === 'assetId') effect.assetId = value;
+    else this._setEffectKeyValue(effect, field, value, this._currentMotionTime());
     p.effects = sanitizeEffects(p.effects);
     this._selectedEffectIndex = Math.max(0, Math.min(this._selectedEffectIndex, p.effects.length - 1));
     this._renderEffectList();
     this._renderPreview();
   }
-  /** Draw a preset's effects near their followBone at the current scrub time. */
+  _setEffectKeyValue(effect, field, value, time = this._currentMotionTime()) {
+    const t = Math.max(Number(effect.time) || 0, Math.min(Number(effect.endTime) || 1, Number(time) || 0));
+    const current = sampleEffectTransform(effect, t);
+    const keys = (Array.isArray(effect.keys) ? effect.keys : []).filter(k => Math.abs(Number(k.time) - t) > 0.0005);
+    keys.push({ ...current, time: Math.round(t * 1000) / 1000, [field]: value });
+    effect.keys = keys.sort((a, b) => a.time - b.time);
+    if (Math.abs(t - (Number(effect.time) || 0)) < 0.0005) Object.assign(effect, effect.keys[0]);
+  }
+  /** Draw effects in player-local space, independent from hands and weapons. */
   _drawEffects(ctx, joints, scale) {
     const p = this._activePreset(); if (!p || !Array.isArray(p.effects)) return;
+    this._effectScreen = null;
     const t = this.playing ? this.scrubT : (this.motion.keyframes[this.selKf]?.t ?? this.scrubT);
     for (const e of p.effects) {
       const start = Number(e.time) || 0;
       const end = Number.isFinite(Number(e.endTime)) ? Math.max(start, Number(e.endTime)) : Math.min(1, start + 0.12);
-      const dt = t - start;
       let progress = 0;
       if (this.playing) {
         if (t < start || t > end) continue;
         progress = Math.max(0, Math.min(1, (t - start) / Math.max(0.001, end - start)));
       } else if (t < start - 0.025 || t > end + 0.025) continue;   // show near its frame window
-      const boneName = e.followBone === 'root' ? 'pelvis' : e.followBone;
-      const bone = joints[boneName] || joints.handN || joints.pelvis; if (!bone) continue;
-      const x = bone.x + (e.x || 0) * (scale / 46), y = bone.y + (e.y || 0) * (scale / 46);
-      const pulse = 0.85 + Math.sin(progress * Math.PI) * 0.35;
-      ctx.save(); ctx.globalAlpha = (e.alpha ?? 1) * (1 - progress * 0.35); ctx.translate(x, y); ctx.rotate((e.rotation || 0) * Math.PI / 180);
-      if (e.flipX || e.flipY) ctx.scale(e.flipX ? -1 : 1, e.flipY ? -1 : 1);
+      const state = sampleEffectTransform(e, t);
+      const bone = joints.pelvis; if (!bone) continue;
+      const unit = scale / 46;
+      const x = bone.x + (state.x || 0) * unit, y = bone.y + (state.y || 0) * unit;
+      ctx.save(); ctx.globalAlpha = state.alpha ?? 1; ctx.translate(x, y); ctx.rotate((state.rotation || 0) * Math.PI / 180);
+      if (state.flipX || state.flipY) ctx.scale(state.flipX ? -1 : 1, state.flipY ? -1 : 1);
       const img = this._imageById(e.assetId);
+      let drawW = 36 * (state.scale || 1) * unit, drawH = drawW;
       if (img && img.complete && img.naturalWidth) {
-        const size = 36 * (e.scale || 1) * pulse;
+        const size = 36 * (state.scale || 1) * unit;
         const aspect = img.naturalWidth / Math.max(1, img.naturalHeight);
         const w = aspect >= 1 ? size : size * aspect;
         const h = aspect >= 1 ? size / aspect : size;
+        drawW = w; drawH = h;
         ctx.imageSmoothingEnabled = false;
         ctx.drawImage(img, -w / 2, -h / 2, w, h);
       } else {
-        drawFxShape(ctx, e.assetId, 18 * (e.scale || 1) * pulse);
+        drawFxShape(ctx, e.assetId, 18 * (state.scale || 1) * unit);
       }
       ctx.restore();
+      if (!this.playing && this._selectedEffectIndex === p.effects.indexOf(e)) {
+        const handleScale = this._previewHandleScale();
+        ctx.save();
+        ctx.strokeStyle = '#ff5a5a'; ctx.lineWidth = 2 * handleScale; ctx.strokeRect(x - drawW / 2, y - drawH / 2, drawW, drawH);
+        ctx.fillStyle = '#ff4b4b'; ctx.beginPath(); ctx.arc(x, y, 7 * handleScale, 0, Math.PI * 2); ctx.fill();
+        const rx = x + drawW / 2, ry = y + drawH / 2;
+        ctx.fillStyle = '#ffd24a'; ctx.fillRect(rx - 6 * handleScale, ry - 6 * handleScale, 12 * handleScale, 12 * handleScale);
+        ctx.restore();
+        this._effectScreen = { cx: x, cy: y, rx, ry, pelvisX: bone.x, pelvisY: bone.y, unit, scale: state.scale || 1 };
+      }
     }
   }
 
@@ -1921,27 +1944,28 @@ export class MotionEditor {
 
   _combatForCurrentFrame(p = this._activeCombatPreset()) {
     if (!p) return null;
-    return sampleCombatKeys(p.combatKeys, p.combat, this._currentFrameTime());
+    return sampleCombatKeys(p.combatKeys, p.combat, this._currentFrameTime(), this._activeKey);
   }
 
   _upsertCombatKey(p, combat, time = this._currentFrameTime()) {
     if (!p) return;
     const tt = Math.round(clamp(Number(time) || 0, 0, 1) * 1000) / 1000;
-    const keys = sanitizeCombatKeys(p.combatKeys || [], p.combat).map(k => ({ time: k.time, combat: { ...k.combat } }));
+    const keys = sanitizeCombatKeys(p.combatKeys || [], p.combat, this._activeKey).map(k => ({ time: k.time, combat: { ...k.combat } }));
     let key = keys.find(k => Math.abs(k.time - tt) < 0.001);
     if (!key) {
-      key = { time: tt, combat: this._combatForCurrentFrame(p) || sanitizeCombat(p.combat) };
+      key = { time: tt, combat: this._combatForCurrentFrame(p) || sanitizeCombat(p.combat, this._activeKey) };
       keys.push(key);
     }
-    key.combat = sanitizeCombat(combat);
+    key.combat = sanitizeCombat(combat, this._activeKey);
     keys.sort((a, b) => a.time - b.time);
     p.combatKeys = keys.slice(0, 64);
-    if (tt <= 0.001) p.combat = sanitizeCombat(combat);
+    if (tt <= 0.001) p.combat = sanitizeCombat(combat, this._activeKey);
   }
 
   _syncFrameScopedControls() {
     const p = this._activeCombatPreset();
     if (p) this._syncCombatSliders(this._combatForCurrentFrame(p));
+    this._syncEffectControls();
     this._syncHitboxDamageControl();
     const dash = this._editingV2?.presets?.[this._activeKey];
     if (dash?.kind === 'dash' && document.getElementById('ms_dashDistance')) {
@@ -1977,7 +2001,7 @@ export class MotionEditor {
       delete hb.damage;
       this._setStatus('현재 프레임 대미지를 자동 분배로 되돌렸습니다.');
     } else {
-      hb.damage = Math.round(clamp(Number(text) || 0, 0, 60));
+      hb.damage = Math.round(clamp(Number(text) || 0, 0, this._activeKey === 'ultimate' ? 100 : 60));
       this._setStatus(`현재 프레임 대미지를 ${hb.damage}로 설정했습니다.`);
     }
     this._syncHitboxDamageControl();
@@ -2026,8 +2050,8 @@ export class MotionEditor {
       if (key === 'status') next.status = value;
       else next[key] = value;
       this._upsertCombatKey(p, next);
-      if (combatCost(this._combatForCurrentFrame(p)) > POINT_BUDGET || statCostV2(w) > POINT_BUDGET) {
-        p.combat = sanitizeCombat(prevCombat);
+      if (combatCost(this._combatForCurrentFrame(p), this._activeKey) > POINT_BUDGET || statCostV2(w) > POINT_BUDGET) {
+        p.combat = sanitizeCombat(prevCombat, this._activeKey);
         p.combatKeys = prevKeys;
         this._budgetBlocked();
       }
@@ -2051,7 +2075,7 @@ export class MotionEditor {
     let cost = 0;
     if (this._editingV2) {
       const p = this._editingV2.presets?.[this._activeKey];
-      cost = p && p.combat ? combatCost(this._combatForCurrentFrame(p) || p.combat) : baseStatsCost(this._editingV2.baseStats);
+      cost = p && p.combat ? combatCost(this._combatForCurrentFrame(p) || p.combat, this._activeKey) : baseStatsCost(this._editingV2.baseStats);
     }
     const bar = document.getElementById('meBudgetBar');
     const val = document.getElementById('meBudgetVal');
@@ -2918,7 +2942,9 @@ export class MotionEditor {
   }
   _activeHandles() {
     const dual = !!(this._editingV2?.weaponVisual?.dual);
-    return HANDLES.filter(h => h.name !== 'weaponOffTip' || dual);
+    if (dual) return HANDLES;
+    const swapped = this._currentHandSwap();
+    return HANDLES.filter(h => swapped ? h.name !== 'weaponTip' : h.name !== 'weaponOffTip');
   }
 
   // --- Preview canvas --------------------------------------------------------
@@ -2955,9 +2981,12 @@ export class MotionEditor {
     e.preventDefault();
   }
   _previewPelvisTarget(W, H, W2E, root = { x: 0, y: 0 }, tp = { x: 0, y: 0 }) {
+    // Zoom around the authored pelvis, not around the canvas origin. Root and
+    // teleport offsets keep a stable screen scale while the character grows.
+    const offsetScale = (H * 0.1) / 14;
     return {
-      x: W / 2 + ((root.x || 0) + (tp.x || 0)) * W2E,
-      y: H * 0.58 + ((root.y || 0) + (tp.y || 0)) * W2E
+      x: W / 2 + ((root.x || 0) + (tp.x || 0)) * offsetScale,
+      y: H * 0.58 + ((root.y || 0) + (tp.y || 0)) * offsetScale
     };
   }
   _previewOriginForPelvis(pose, scale, pelvis) {
@@ -3158,6 +3187,18 @@ export class MotionEditor {
     const mx = (e.clientX - r.left) * (this.canvas.width / r.width);
     const my = (e.clientY - r.top) * (this.canvas.height / r.height);
     const handleScale = this._previewHandleScale();
+    // Selected effect handles take priority over pose joints. The red centre
+    // moves the effect and the yellow corner resizes it at the current frame.
+    const fx = this._effectScreen;
+    if (fx) {
+      const grab = 13 * handleScale;
+      if ((fx.rx - mx) ** 2 + (fx.ry - my) ** 2 < grab * grab) {
+        this._pushUndo('effect resize'); this.dragEffect = 'resize'; e.preventDefault(); return;
+      }
+      if ((fx.cx - mx) ** 2 + (fx.cy - my) ** 2 < grab * grab) {
+        this._pushUndo('effect move'); this.dragEffect = 'move'; e.preventDefault(); return;
+      }
+    }
     // Hitbox handles take priority (resize corner, then move centre).
     const s = this._hbScreen;
     if (s) {
@@ -3235,6 +3276,27 @@ export class MotionEditor {
     const kf = this.motion.keyframes[this.selKf];
     kf.pose[h.joint] = Math.round(deg);
     this._tutEvent('joint');
+    this._renderPreview();
+  }
+
+  _dragEffectTo(e) {
+    const p = this._activePreset();
+    const effect = p?.effects?.[this._selectedEffectIndex];
+    const s = this._effectScreen;
+    if (!effect || !s) return;
+    const r = this.canvas.getBoundingClientRect();
+    const mx = (e.clientX - r.left) * (this.canvas.width / r.width);
+    const my = (e.clientY - r.top) * (this.canvas.height / r.height);
+    if (this.dragEffect === 'move') {
+      this._setEffectKeyValue(effect, 'x', Math.round((mx - s.pelvisX) / s.unit));
+      this._setEffectKeyValue(effect, 'y', Math.round((my - s.pelvisY) / s.unit));
+    } else if (this.dragEffect === 'resize') {
+      const base = Math.max(1, Math.hypot(s.rx - s.cx, s.ry - s.cy));
+      const next = clamp((s.scale || 1) * Math.hypot(mx - s.cx, my - s.cy) / base, 0.1, 4);
+      this._setEffectKeyValue(effect, 'scale', Math.round(next * 100) / 100);
+    }
+    p.effects = sanitizeEffects(p.effects);
+    this._renderEffectList();
     this._renderPreview();
   }
 
@@ -3347,6 +3409,7 @@ export class MotionEditor {
       return;
     }
     if (this.dragHat) { this._dragHatTo(e); return; }
+    if (this.dragEffect) { this._dragEffectTo(e); return; }
     if (this.dragHandle) { this._dragJointTo(e); return; }
     if (this.dragHitbox === 'move' || this.dragHitbox === 'resize') { this._dragHitboxTo(e); return; }
     if (this.dragKfIndex >= 0) {
@@ -3365,7 +3428,7 @@ export class MotionEditor {
   }
   _pointerUp() {
     if (this.dragKfIndex >= 0) this.motion.keyframes.sort((a, b) => a.t - b.t);
-    this.dragHandle = null; this.dragKfIndex = -1; this.dragHitbox = null; this.dragPelvis = null; this.dragHat = null; this.dragFrameOverviewHeight = null;
+    this.dragHandle = null; this.dragKfIndex = -1; this.dragHitbox = null; this.dragEffect = null; this.dragPelvis = null; this.dragHat = null; this.dragFrameOverviewHeight = null;
   }
 
   // --- Frame flip (stick-fighter) --------------------------------------------

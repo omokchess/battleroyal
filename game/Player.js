@@ -288,12 +288,12 @@ export class Player {
     // peer's blob) and re-attach, mirroring ranged/weaponVisual above.
     if (def && def.presetCombat && typeof def.presetCombat === 'object') {
       const pc = {};
-      for (const k in def.presetCombat) pc[k] = sanitizeCombat(def.presetCombat[k]);
+      for (const k in def.presetCombat) pc[k] = sanitizeCombat(def.presetCombat[k], k);
       safe.presetCombat = pc;
     }
     if (def && def.presetCombatKeys && typeof def.presetCombatKeys === 'object') {
       const pk = {};
-      for (const k in def.presetCombatKeys) pk[k] = sanitizeCombatKeys(def.presetCombatKeys[k], safe.presetCombat?.[k]);
+      for (const k in def.presetCombatKeys) pk[k] = sanitizeCombatKeys(def.presetCombatKeys[k], safe.presetCombat?.[k], k);
       safe.presetCombatKeys = pk;
     }
     if (def && def.presetHitboxes && typeof def.presetHitboxes === 'object') {
@@ -324,7 +324,8 @@ export class Player {
           safe.motionSet[k].effects = sanitizeEffects(rawMotion.effects);
         }
         if (rawMotion && Array.isArray(rawMotion.combatKeys)) {
-          safe.motionSet[k].combatKeys = sanitizeCombatKeys(rawMotion.combatKeys, safe.stats);
+          const presetKind = k === 'attack' ? 'basic' : k;
+          safe.motionSet[k].combatKeys = sanitizeCombatKeys(rawMotion.combatKeys, safe.stats, presetKind);
         }
       }
     }

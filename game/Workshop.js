@@ -37,7 +37,7 @@ export const ENVELOPE = {
   hitboxDimMax:    160,            // each of w/h
   hitboxAreaMax:   14000,          // w*h px²
   activeLenMax:    0.4,            // active-window length (normalized motion time)
-  maxHitboxes:     8,
+  maxHitboxes:     64,
   maxProjectileEvents: 5,
   maxTeleportEvents: 5,
 };

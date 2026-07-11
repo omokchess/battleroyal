@@ -840,7 +840,7 @@ export class Player {
         h: Math.max(1, Number(hb.h) || 1)
       });
     }
-    return out.slice(0, 8);
+    return out.slice(0, 64);
   }
 
   /**
@@ -891,7 +891,7 @@ export class Player {
     this.ultimateGauge = Math.max(0, Math.min(100, Math.round(Number(data.ultimateGauge) || 0)));
     this.motionLockUntil = data.motionLockMs > 0 ? Date.now() + data.motionLockMs : 0;
     this.motionRootUntil = data.rootMotionMs > 0 ? Date.now() + data.rootMotionMs : 0;
-    this.activeHitboxes = Array.isArray(data.activeHitboxes) ? data.activeHitboxes.slice(0, 8) : [];
+    this.activeHitboxes = Array.isArray(data.activeHitboxes) ? data.activeHitboxes.slice(0, 64) : [];
     this.chakramOrbitUntil = data.orbitMs > 0 ? Date.now() + data.orbitMs : 0;
     this.heatShieldUntil = data.shieldMs > 0 ? Date.now() + data.shieldMs : 0;
     this.guardianStanceUntil = data.stanceMs > 0 ? Date.now() + data.stanceMs : 0;

@@ -106,9 +106,9 @@ test('gameplay fields are KEPT + clamped on the admin path', () => {
 
 test('hitbox count is capped and bad entries dropped', () => {
   const many = { duration: 0.4, keyframes: [{ t: 0, pose: {} }, { t: 1, pose: {} }],
-    hitboxes: [null, 'x', {}, { ox: 1 }, { ox: 2 }, { ox: 3 }, { ox: 4 }, { ox: 5 }] };
+    hitboxes: Array.from({ length: 70 }, (_, i) => ({ ox: i })) };
   const m = sanitizeMotion(many, DEFAULT_MOTION, { allowGameplay: true });
-  assert.ok(m.hitboxes.length <= MOTION_LIMITS.maxHitboxes);
+  assert.equal(m.hitboxes.length, MOTION_LIMITS.maxHitboxes);
 });
 
 test('StickAnimator starts remote workshop attack from last motion tag', () => {

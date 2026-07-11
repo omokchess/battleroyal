@@ -1661,7 +1661,7 @@ export class Game extends GameSim {
             p.costumeEffect = snap.costumeEffect || null;
             p.motionLockUntil = snap.motionLockMs > 0 ? Date.now() + Math.max(0, Math.round(snap.motionLockMs || 0)) : 0;
             p.motionRootUntil = snap.rootMotionMs > 0 ? Date.now() + Math.max(0, Math.round(snap.rootMotionMs || 0)) : 0;
-            p.activeHitboxes = Array.isArray(snap.activeHitboxes) ? snap.activeHitboxes.slice(0, 8) : [];
+            p.activeHitboxes = Array.isArray(snap.activeHitboxes) ? snap.activeHitboxes.slice(0, 64) : [];
             if (snap.wsw) {
               const motionSetSig = (() => { try { return JSON.stringify(snap.wsw.motionSet || {}).length; } catch { return 0; } })();
               const visualSig = (() => { try { return JSON.stringify(snap.wsw.weaponVisual || {}).length; } catch { return 0; } })();

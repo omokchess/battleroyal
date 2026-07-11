@@ -48,12 +48,12 @@ test('workshop hitboxes are clamped tighter than admin (count/size/area/window)'
       hitboxes: [
         { ox: 0, oy: 0, w: 9999, h: 9999, activeStart: 0, activeEnd: 1 },
         { ox: 10, oy: 0, w: 50, h: 50, activeStart: 0.2, activeEnd: 0.9 },
-        { ox: 20, oy: 0, w: 50, h: 50, activeStart: 0, activeEnd: 1 },   // 3rd dropped (cap 2)
+        ...Array.from({ length: 70 }, (_, i) => ({ ox: 20 + i, oy: 0, w: 50, h: 50, activeStart: 0, activeEnd: 1 })),
       ],
     } },
   });
   const hbs = w.motionSet.attack.hitboxes;
-  assert.ok(hbs.length <= ENVELOPE.maxHitboxes, 'hitbox count capped');
+  assert.equal(hbs.length, ENVELOPE.maxHitboxes, 'hitbox count is capped at 64');
   for (const hb of hbs) {
     assert.ok(hb.w <= ENVELOPE.hitboxDimMax && hb.h <= ENVELOPE.hitboxDimMax, 'dim capped');
     assert.ok(hb.w * hb.h <= ENVELOPE.hitboxAreaMax + 1, 'area capped');

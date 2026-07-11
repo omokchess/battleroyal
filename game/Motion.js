@@ -43,7 +43,7 @@ export const MOTION_LIMITS = {
   rootOffsetMax: 220,
   // Admin-canonical gameplay fields (T1-C). Geometry is in world px relative to
   // the player centre (ox is forward, flipped by facing at sim time).
-  maxHitboxes: 8,
+  maxHitboxes: 64,
   hitboxOffsetMax: 220,   // |ox|, |oy|
   hitboxSizeMin: 4,
   hitboxSizeMax: 320,     // w, h

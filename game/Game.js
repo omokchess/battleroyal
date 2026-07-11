@@ -26,7 +26,6 @@ import { normalizeRoomConfig, arenaDimensions, HEAL_RATES } from './RoomConfig.j
 import { Sound } from './Sound.js';
 import { BrowserFx } from './BrowserFx.js';
 import { generateCover, resolveCover, coverBlocksSegment, coverRayDistance, coverClearOfPoint, coverBlocksCircle } from './Cover.js';
-import { generateWater, emptyWater } from './Water.js';
 import { buildLevel, PHYS } from './Level.js';
 import { BotBrain, BOT_DIFFICULTY } from './Bot.js';
 import { resolveMotion, weaponSetId, sanitizeMotionSetId, canonicalWeaponMotion, canonicalWeaponsSnapshot, setCanonicalWeapon } from './Motion.js';
@@ -498,12 +497,6 @@ export class Game extends GameSim {
   }
 
   /**
-   * Resolve the biome + water layout from roomConfig and compute the combined
-   * movement-blocker list. Deterministic (water comes from map size, like the
-   * grass), so host and clients build the identical terrain with no extra sync.
-   * Call after `this.cover`, `this.roomConfig` and the map dims are set.
-   */
-  /**
    * Focus points for the action camera: the local player (with a small facing
    * look-ahead so the view leads the action) plus every other living player
    * within range, so a 1v1 frames both fighters and zooms by their distance.
@@ -847,8 +840,6 @@ export class Game extends GameSim {
       hitFlash,
       killFeed: this._killFeed,
       cover: this.cover,
-      biome: this.biome,
-      water: this.water,
       healingItems: this.healingItems,
       mines: this.mines,
       firePatches: this.firePatches,
@@ -1547,7 +1538,6 @@ export class Game extends GameSim {
           // Regenerate the host's terrain locally from the shared seed
           // (grass-style deterministic generation — no per-tile data synced).
           this.coverSeed = Number.isFinite(data.coverSeed) ? data.coverSeed : 0;
-          this._buildTerrain();   // biome + water + cover (deterministic from config + seed)
 
           // Adopt the host's canonical weapon defs so every peer simulates/renders
           // identically (host authority). Re-sanitized with allowGameplay → clamped,

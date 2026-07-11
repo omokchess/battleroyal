@@ -21,7 +21,7 @@ import {
   PRIMARY_PRESET_KEYS, COMBAT_PRESET_KINDS, NONCOMBAT_PRESET_KINDS,
   sanitizeCombat, sanitizeCombatKeys, clampWorkshopHitboxes,
 } from './Workshop.js';
-import { saveCustomWeaponRecord } from './WeaponImages.js';
+import { saveCustomWeaponRecord, removeLocalCustomWeaponRecords } from './WeaponImages.js';
 
 const WS_STORE = 'pixelroyale_workshop_weapons_v2';        // { id: WorkshopWeaponV2 }
 const WS_EQUIP = 'pixelroyale_equipped_workshop_weapon_v2';// equipped weapon id
@@ -90,7 +90,7 @@ export function deleteWorkshopWeaponLocal(id) {
  *  published doc carried the author's custom weapon pixels (weaponImage), fold
  *  them into THIS device's image store so the recipient sees the image too — not
  *  just the default stick. */
-export function importWorkshopWeapon(raw) {
+export async function importWorkshopWeapon(raw) {
   const savedImages = new Set();
   const saveImageOnce = (img, idOverride = null) => {
     const id = idOverride || img?.id;
@@ -128,6 +128,10 @@ export function importWorkshopWeapon(raw) {
       if (img && (!ids.size || ids.has(img.id))) saveImageOnce(img, img.id);
     }
   }
+  // Older builds wrote received pixels into localStorage before saving the
+  // weapon and could fill the quota halfway through. Their ids are now safely
+  // in Cache Storage, so remove those duplicate blobs before writing metadata.
+  removeLocalCustomWeaponRecords([...savedImages]);
   const saved = saveWorkshopWeaponLocal(toWorkshopWeaponV2(raw));
   _emitStoreChanged('import', saved);
   return saved;

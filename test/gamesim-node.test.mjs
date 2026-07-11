@@ -85,6 +85,23 @@ test('a bot match actually simulates: bodies move, bots attack, effects fire', (
   assert.ok(sim.effects.length > 0, 'the sim should raise visual effects');
 });
 
+test('offline bot-match players and bots can respawn repeatedly', () => {
+  const { sim, clock } = newSim();
+  const me = sim.beginMatch({ id: 'p1', nickname: 'Hero', weapon: 'sword' });
+  const bot = Object.values(sim.players).find(p => p.isBot);
+  for (const target of [me, bot, me]) {
+    target.hp = 0;
+    target.isDead = true;
+    for (let i = 0; i < 100; i++) {
+      clock.advance(1000 / 60);
+      sim.tick(1 / 60, sim.now());
+    }
+    assert.equal(target.isDead, false, `${target.id} respawned`);
+    assert.equal(target.hp, target.maxHp);
+    assert.equal(target.respawnRemainingMs, 0);
+  }
+});
+
 test('the sim queues its snapshots instead of sending them (no transport)', () => {
   const { sim, clock } = newSim();
   sim.beginMatch({ id: 'p1', nickname: 'Hero', weapon: 'sword' });

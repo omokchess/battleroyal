@@ -66,12 +66,6 @@ export const HEAL_RATE_LABELS = {
   fast: '빠름', normal: '보통', slow: '느림'
 };
 
-// 지형(바이옴) 프리셋. 시각 테마(바닥 색/분위기)를 바꾸며, 'snow' 에서는 물이
-// 얼어 이동 차단이 사라진다(위로 걸어다닐 수 있음). 'day' = 현행 초록 들판.
-export const BIOME_LABELS = {
-  day: '낮', night: '밤', dawn: '새벽', desert: '사막', snow: '눈'
-};
-
 // 기본값 = 현행 동작.
 export const DEFAULT_ROOM_CONFIG = Object.freeze({
   arenaSize: 'medium',
@@ -81,8 +75,6 @@ export const DEFAULT_ROOM_CONFIG = Object.freeze({
   platformShape: 'balanced',
   healing: false,
   healingRate: 'normal',
-  biome: 'day',
-  water: false,
   // Tier-2 공방 무기는 사용자 창작 무기 중심 구조라 항상 허용한다.
   allowWorkshop: true
 });
@@ -106,8 +98,6 @@ export function normalizeRoomConfig(raw) {
     platformShape: oneOf(c.platformShape, PLATFORM_SHAPES, DEFAULT_ROOM_CONFIG.platformShape),
     healing:     Boolean(c.healing),
     healingRate: oneOf(c.healingRate, HEAL_RATES, DEFAULT_ROOM_CONFIG.healingRate),
-    biome:       oneOf(c.biome, BIOME_LABELS, DEFAULT_ROOM_CONFIG.biome),
-    water:       Boolean(c.water),
     allowWorkshop: true
   };
 }
@@ -126,10 +116,8 @@ export function arenaDimensions(config) {
 export function roomConfigBadges(config) {
   const cfg = normalizeRoomConfig(config);
   const badges = [];
-  if (cfg.biome !== 'day') badges.push(BIOME_LABELS[cfg.biome]);
   if (cfg.cover !== 'none') badges.push(`엄폐물 ${COVER_LABELS[cfg.cover]}`);
   if (cfg.platforms !== 'none') badges.push(`플랫폼 ${PLATFORM_LABELS[cfg.platforms]}`);
-  if (cfg.water) badges.push('물');
   if (cfg.healing) badges.push('회복');
   return badges;
 }

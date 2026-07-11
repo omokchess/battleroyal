@@ -10,6 +10,7 @@ globalThis.localStorage = {
 };
 
 const S = await import('../game/WorkshopStore.js');
+const Images = await import('../game/WeaponImages.js');
 const { makeEmptyWeaponV2 } = await import('../game/Workshop.js');
 
 beforeEach(() => mem.clear());
@@ -67,18 +68,18 @@ test('legacy V1 equipped weapon is absorbed into the V2 store on first load', ()
   assert.equal(mem.get('pixelroyale_workshop_equipped_v1'), undefined, 'legacy key cleared');
 });
 
-test('importWorkshopWeapon migrates a browsed (V1) weapon into the local armory', () => {
+test('importWorkshopWeapon migrates a browsed (V1) weapon into the local armory', async () => {
   const before = S.loadWorkshopWeaponsV2().length;
-  S.importWorkshopWeapon({ name: '남의검', stats: { damage: 25 }, motionSet: { attack: { keyframes: [{ t: 0, pose: {} }] } } });
+  await S.importWorkshopWeapon({ name: '남의검', stats: { damage: 25 }, motionSet: { attack: { keyframes: [{ t: 0, pose: {} }] } } });
   const all = S.loadWorkshopWeaponsV2();
   assert.equal(all.length, before + 1);
   assert.equal(all[all.length - 1].schemaVersion, 2);
 });
 
-test('importWorkshopWeapon preserves long published ids so similar weapons do not overwrite', () => {
+test('importWorkshopWeapon preserves long published ids so similar weapons do not overwrite', async () => {
   const prefix = 'firebase_user_uid_with_long_prefix_1234567890_';
-  S.importWorkshopWeapon({ id: prefix + 'alpha-blade', schemaVersion: 2, name: 'A', presets: { basic: { kind: 'basic', motion: { keyframes: [{ t: 0, pose: {} }] }, combat: { damage: 12 } } } });
-  S.importWorkshopWeapon({ id: prefix + 'alpha-burst', schemaVersion: 2, name: 'B', presets: { basic: { kind: 'basic', motion: { keyframes: [{ t: 0, pose: {} }] }, combat: { damage: 14 } } } });
+  await S.importWorkshopWeapon({ id: prefix + 'alpha-blade', schemaVersion: 2, name: 'A', presets: { basic: { kind: 'basic', motion: { keyframes: [{ t: 0, pose: {} }] }, combat: { damage: 12 } } } });
+  await S.importWorkshopWeapon({ id: prefix + 'alpha-burst', schemaVersion: 2, name: 'B', presets: { basic: { kind: 'basic', motion: { keyframes: [{ t: 0, pose: {} }] }, combat: { damage: 14 } } } });
   const ids = S.loadWorkshopWeaponsV2().map(w => w.id);
   assert.ok(ids.includes(prefix + 'alpha-blade'));
   assert.ok(ids.includes(prefix + 'alpha-burst'));
@@ -95,7 +96,7 @@ test('saveWorkshopWeaponLocal throws when local storage write fails', () => {
   }
 });
 
-test('importWorkshopWeapon stores custom pixels for weapon, offhand, decorations, and effects', () => {
+test('importWorkshopWeapon stores received pixels outside the localStorage quota', async () => {
   const w = makeEmptyWeaponV2({ name: '장식검' });
   w.weaponVisual = {
     imageId: 'custom:main',
@@ -107,7 +108,7 @@ test('importWorkshopWeapon stores custom pixels for weapon, offhand, decorations
     ],
   };
   w.presets.basic.effects = [{ time: 0.1, assetId: 'custom:fx-a', x: 0, y: 0, scale: 1, alpha: 1 }];
-  S.importWorkshopWeapon({
+  await S.importWorkshopWeapon({
     ...w,
     weaponImage: { id: 'custom:main', name: 'main', src: 'data:image/png;base64,main', size: 2 },
     offhandImage: { id: 'custom:off', name: 'off', src: 'data:image/png;base64,off', size: 1 },
@@ -117,11 +118,10 @@ test('importWorkshopWeapon stores custom pixels for weapon, offhand, decorations
     ],
     effectImages: [{ id: 'custom:fx-a', name: 'fxA', src: 'data:image/png;base64,fxa', size: 1 }],
   });
-  const records = JSON.parse(mem.get('psd_custom_weapons') || '[]');
-  const ids = new Set(records.map(r => r.id));
   for (const id of ['custom:main', 'custom:off', 'custom:hat-a', 'custom:hat-b', 'custom:fx-a']) {
-    assert.ok(ids.has(id), `${id} image record imported`);
+    assert.equal(Images.getCustomWeaponRecord(id)?.id, id, `${id} image record imported`);
   }
+  assert.equal(mem.get('psd_custom_weapons'), '[]', 'received image blobs do not consume localStorage');
   const saved = S.loadWorkshopWeaponsV2()[0];
   assert.equal(saved.weaponVisual.hats.length, 2);
   assert.equal(saved.presets.basic.effects[0].assetId, 'custom:fx-a');

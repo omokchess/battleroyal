@@ -319,12 +319,13 @@ test('effects sanitize into independent per-frame transforms', () => {
   assert.equal(fx.find((e) => e.assetId === 'custom:fx_abc').flipY, true);
   assert.equal('followBone' in fx.find((e) => e.assetId === 'boom'), false, 'attachment data is removed');
   const keyed = sanitizeEffects([{ time: 0.2, endTime: 0.6, keys: [
-    { time: 0.2, x: 0, scale: 1, rotation: 0, flipX: false },
-    { time: 0.6, x: 40, scale: 2, rotation: 90, flipX: true },
+    { time: 0.2, x: 0, scaleX: 1, scaleY: 2, rotation: 0, flipX: false },
+    { time: 0.6, x: 40, scaleX: 2, scaleY: 4, rotation: 90, flipX: true },
   ] }])[0];
   const mid = sampleEffectTransform(keyed, 0.4);
   assert.ok(Math.abs(mid.x - 20) < 1e-9);
-  assert.equal(mid.scale, 1.5);
+  assert.equal(mid.scaleX, 1.5);
+  assert.equal(mid.scaleY, 3);
   assert.ok(Math.abs(mid.rotation - 45) < 1e-9);
   assert.equal(mid.flipX, false, 'flip changes on its authored key, not midway');
 });

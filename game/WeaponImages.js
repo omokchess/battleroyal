@@ -13,13 +13,35 @@
 
 const KEY = 'psd_custom_weapons';
 const cache = new Map();   // imageId → { img, size, anchors } | null (miss)
+const records = new Map(); // received/network images live outside localStorage quota
+const ASSET_CACHE = 'craftroyale-workshop-assets-v1';
+const assetUrl = (id) => `/__craftroyale_workshop_asset__/${encodeURIComponent(id)}`;
+
+async function hydrateReceivedImages() {
+  if (typeof caches === 'undefined') return;
+  try {
+    const store = await caches.open(ASSET_CACHE);
+    const requests = await store.keys();
+    await Promise.all(requests.map(async request => {
+      const response = await store.match(request);
+      const rec = response && await response.json();
+      if (rec?.id && rec?.src) { records.set(rec.id, rec); cache.delete(rec.id); }
+    }));
+  } catch { /* cache storage is optional */ }
+}
+hydrateReceivedImages();
+
+function persistReceivedImage(entry) {
+  if (typeof caches === 'undefined') return;
+  caches.open(ASSET_CACHE)
+    .then(store => store.put(assetUrl(entry.id), new Response(JSON.stringify(entry), { headers: { 'content-type': 'application/json' } })))
+    .catch(() => {});
+}
 
 export function resolveWeaponImage(imageId) {
   if (!imageId || typeof imageId !== 'string' || !imageId.startsWith('custom:')) return null;
   if (cache.has(imageId)) return cache.get(imageId);
-  let rec = null;
-  try { const list = JSON.parse(localStorage.getItem(KEY) || '[]'); if (Array.isArray(list)) rec = list.find(c => c && c.id === imageId); }
-  catch {}
+  const rec = getCustomWeaponRecord(imageId);
   if (!rec || !rec.src) { cache.set(imageId, null); return null; }
   const img = new Image();
   img.src = rec.src;
@@ -80,7 +102,18 @@ function _readStore() {
 /** The local image record for an imageId (or null) — used to attach pixels on upload. */
 export function getCustomWeaponRecord(imageId) {
   if (!imageId || typeof imageId !== 'string' || !imageId.startsWith('custom:')) return null;
-  return _readStore().find(c => c && c.id === imageId) || null;
+  return records.get(imageId) || _readStore().find(c => c && c.id === imageId) || null;
+}
+
+/** Remove failed-import copies from localStorage after moving them to Cache
+ * Storage. This immediately returns quota to the small synchronous weapon map. */
+export function removeLocalCustomWeaponRecords(ids) {
+  const wanted = new Set(Array.isArray(ids) ? ids : []);
+  if (!wanted.size) return;
+  try {
+    const next = _readStore().filter(rec => !wanted.has(rec?.id));
+    localStorage.setItem(KEY, JSON.stringify(next));
+  } catch { /* a blocked localStorage does not affect Cache Storage */ }
 }
 
 /**
@@ -99,12 +132,8 @@ export function saveCustomWeaponRecord(rec) {
     size: Number(rec.size) || 2,
     anchors: (rec.anchors && typeof rec.anchors === 'object') ? rec.anchors : null,
   };
-  try {
-    const list = _readStore();
-    const i = list.findIndex(c => c && c.id === entry.id);
-    if (i >= 0) list[i] = entry; else list.push(entry);
-    localStorage.setItem(KEY, JSON.stringify(list));
-  } catch { return false; }
+  records.set(entry.id, entry);
+  persistReceivedImage(entry);
   invalidateWeaponImage(entry.id);
   return true;
 }

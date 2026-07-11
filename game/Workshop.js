@@ -290,7 +290,8 @@ export function sanitizeEffects(list) {
       endTime,
       assetId: rawAssetId,
       x: clampNum(e.x, [-200, 200], 0), y: clampNum(e.y, [-200, 200], 0),
-      scale: clampNum(e.scale, [0.1, 4], 1),
+      scaleX: clampNum(e.scaleX ?? e.scale, [0.1, 4], 1),
+      scaleY: clampNum(e.scaleY ?? e.scale, [0.1, 4], 1),
       rotation: clampNum(e.rotation, [-360, 360], 0),
       alpha: clampNum(e.alpha, [0, 1], 1),
       flipX: !!e.flipX,
@@ -298,14 +299,16 @@ export function sanitizeEffects(list) {
     };
     const rawKeys = Array.isArray(e.keys) ? e.keys : [];
     const byTime = new Map();
-    byTime.set(time, { time, x: base.x, y: base.y, scale: base.scale, rotation: base.rotation, alpha: base.alpha, flipX: base.flipX, flipY: base.flipY });
+    byTime.set(time, { time, x: base.x, y: base.y, scaleX: base.scaleX, scaleY: base.scaleY, rotation: base.rotation, alpha: base.alpha, flipX: base.flipX, flipY: base.flipY });
     for (const key of rawKeys.slice(0, 64)) {
       if (!key || typeof key !== 'object') continue;
       const kt = Math.round(clampNum(key.time, [time, endTime], time) * 1000) / 1000;
       byTime.set(kt, {
         time: kt,
         x: clampNum(key.x, [-200, 200], base.x), y: clampNum(key.y, [-200, 200], base.y),
-        scale: clampNum(key.scale, [0.1, 4], base.scale), rotation: clampNum(key.rotation, [-360, 360], base.rotation),
+        scaleX: clampNum(key.scaleX ?? key.scale, [0.1, 4], base.scaleX),
+        scaleY: clampNum(key.scaleY ?? key.scale, [0.1, 4], base.scaleY),
+        rotation: clampNum(key.rotation, [-360, 360], base.rotation),
         alpha: clampNum(key.alpha, [0, 1], base.alpha), flipX: key.flipX === undefined ? base.flipX : !!key.flipX,
         flipY: key.flipY === undefined ? base.flipY : !!key.flipY,
       });
@@ -318,7 +321,7 @@ export function sanitizeEffects(list) {
 
 export function sampleEffectTransform(effect, time = 0) {
   const e = sanitizeEffects([effect])[0];
-  if (!e) return { x: 0, y: 0, scale: 1, rotation: 0, alpha: 1, flipX: false, flipY: false };
+  if (!e) return { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0, alpha: 1, flipX: false, flipY: false };
   const keys = e.keys || [];
   if (!keys.length || time <= keys[0].time) return { ...keys[0] };
   let a = keys[0], b = keys[keys.length - 1];
@@ -329,7 +332,7 @@ export function sampleEffectTransform(effect, time = 0) {
   const u = b.time === a.time ? 0 : Math.max(0, Math.min(1, (time - a.time) / (b.time - a.time)));
   const lerp = (x, y) => x + (y - x) * u;
   return {
-    time, x: lerp(a.x, b.x), y: lerp(a.y, b.y), scale: lerp(a.scale, b.scale),
+    time, x: lerp(a.x, b.x), y: lerp(a.y, b.y), scaleX: lerp(a.scaleX, b.scaleX), scaleY: lerp(a.scaleY, b.scaleY),
     rotation: lerp(a.rotation, b.rotation), alpha: lerp(a.alpha, b.alpha),
     flipX: u < 1 ? a.flipX : b.flipX, flipY: u < 1 ? a.flipY : b.flipY,
   };

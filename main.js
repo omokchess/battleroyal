@@ -1134,8 +1134,6 @@ function readRoomConfig() {
     platformShape: pick('platformShape', 'balanced'),
     healing: pick('healing', 'off') === 'on',
     healingRate: pick('healingRate', 'normal'),
-    biome: pick('biome', 'day'),
-    water: false,
     allowWorkshop: true,
   });
 }
@@ -1282,10 +1280,10 @@ async function loadBotWorkshopWeapons() {
 /**
  * 3. Match Hosting workflow
  */
-function doHost(dummy = false) {
+function doHost(dummy = false, triggerBtn = null) {
   const nickname = nicknameInput.value.trim();
   const roomCode = hostRoomInput.value.trim();
-  const btn = dummy ? dummyBtn : hostBtn;
+  const btn = triggerBtn || (dummy ? dummyBtn : hostBtn);
   const idleLabel = dummy ? '더미방 생성' : '방 생성';
   const roomConfig = readRoomConfig();
 
@@ -1350,7 +1348,7 @@ if (dummyBtn) dummyBtn.addEventListener('click', () => doHost(true));
  * us the authoritative host with no signaling peer. Defaults to a punchy small
  * arena with the storm + healing on so the game's hooks show fast.
  */
-async function doBotMatch() {
+async function doBotMatch(triggerBtn = null) {
   let nickname = nicknameInput.value.trim();
   if (!nickname) { nickname = '용사'; nicknameInput.value = nickname; }
 
@@ -1368,8 +1366,9 @@ async function doBotMatch() {
 
   hideError();
   closeRoomCustom();
-  const btn = document.getElementById('quickPlayBtn');
+  const btn = triggerBtn || document.getElementById('quickPlayBtn');
   const startBtn = document.getElementById('quickStartBtn');
+  const btnIdleHtml = btn?.innerHTML || '봇전 시작';
   if (btn) { btn.disabled = true; btn.textContent = '전장 준비 중...'; }
   if (startBtn) { startBtn.disabled = true; startBtn.textContent = '전장 준비 중...'; }
 
@@ -1377,7 +1376,7 @@ async function doBotMatch() {
 
   netManager = new NetworkManager({ getAuthToken: accountUI.getAuthToken });
   netManager.on('onInit', () => {
-    if (btn) { btn.disabled = false; btn.innerHTML = '▶ 바로 플레이 <span class="text-[#d6ffe2] normal-case font-bold">(봇전 · 즉시 시작)</span>'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = btnIdleHtml; }
     if (startBtn) { startBtn.disabled = false; startBtn.textContent = '봇전 시작'; }
     enterGameScreen(true);
     activeGame = new Game(gameCanvas, netManager, localAppearance(), {
@@ -1392,7 +1391,7 @@ async function doBotMatch() {
     if (!document.getElementById('onboardCard')) activeGame.releaseMatchHold?.();
   });
   netManager.on('onError', (err) => {
-    if (btn) { btn.disabled = false; btn.innerHTML = '▶ 바로 플레이 <span class="text-[#d6ffe2] normal-case font-bold">(봇전 · 즉시 시작)</span>'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = btnIdleHtml; }
     if (startBtn) { startBtn.disabled = false; startBtn.textContent = '봇전 시작'; }
     showError(err);
     netManager.stop();
@@ -1405,7 +1404,7 @@ if (quickPlayBtn) quickPlayBtn.addEventListener('click', () => {
   if (typeof window.openLobbyModule === 'function') window.openLobbyModule('quickplay');
   else openRoomCustom('quickplay');
 });
-if (quickStartBtn) quickStartBtn.addEventListener('click', doBotMatch);
+if (quickStartBtn) quickStartBtn.addEventListener('click', () => doBotMatch());
 
 // --- Stickman motion sets ------------------------------------------------------
 // Cosmetic motion sets from localStorage. The admin-canonical Firestore layer
@@ -2401,7 +2400,7 @@ const LOBBY_TUTORIAL_STEPS = [
   },
   {
     title: '바로 플레이 규칙',
-    text: '바로 플레이는 방 제작과 같은 설정 UI를 사용합니다.\n\nAI 수와 AI 난이도는 바로 플레이에서만 쓰는 전용 설정입니다.\n\n플랫폼, 지형, 엄폐물, 회복 아이템도 봇전에 맞게 조절할 수 있습니다.',
+    text: '바로 플레이는 방 제작과 같은 설정 UI를 사용합니다.\n\nAI 수와 AI 난이도는 바로 플레이에서만 쓰는 전용 설정입니다.\n\n플랫폼, 엄폐물, 회복 아이템도 봇전에 맞게 조절할 수 있습니다.',
     target: '[data-tutorial="quickplay-rules"]',
     advanceOn: 'targetClick',
     waitForTarget: true,
@@ -2463,7 +2462,7 @@ const LOBBY_TUTORIAL_STEPS = [
   },
   {
     title: '방 상세 정보',
-    text: '오른쪽 블록은 선택한 방의 설정과 입장 버튼을 보여줍니다.\n\n플랫폼, 엄폐물, 지형, 회복 여부를 확인한 뒤 입장할 수 있습니다.\n\n이 블록을 눌러 다음으로 넘어갑니다.',
+    text: '오른쪽 블록은 선택한 방의 설정과 입장 버튼을 보여줍니다.\n\n플랫폼, 엄폐물, 회복 여부를 확인한 뒤 입장할 수 있습니다.\n\n이 블록을 눌러 다음으로 넘어갑니다.',
     target: '[data-tutorial="arena-detail"]',
     advanceOn: 'targetClick',
     waitForTarget: true,
@@ -2477,13 +2476,13 @@ const LOBBY_TUTORIAL_STEPS = [
   },
   {
     title: '방 제작',
-    text: '방 제작은 내가 호스트가 되어 경기장을 여는 메뉴입니다.\n\n플랫폼, 엄폐물, 지형, 회복 아이템 같은 경기 규칙을 직접 정하고 방을 만들 수 있습니다.',
+    text: '방 제작은 서버에 경기장을 개설하는 메뉴입니다.\n\n플랫폼, 엄폐물, 회복 아이템 같은 경기 규칙을 직접 정하고 방을 만들 수 있습니다.',
     target: '[data-module="create"]',
     advanceOn: 'module:create',
   },
   {
     title: '경기 규칙 블록',
-    text: '왼쪽 블록은 플랫폼, 플랫폼 모양, 지형, 엄폐물, 회복 아이템을 설정합니다.\n\n방을 만들기 전에 경기의 구조와 난이도를 정하는 곳입니다.\n\n이 블록을 눌러 다음으로 넘어갑니다.',
+    text: '왼쪽 블록은 플랫폼, 플랫폼 모양, 엄폐물, 회복 아이템을 설정합니다.\n\n방을 만들기 전에 경기의 구조와 난이도를 정하는 곳입니다.\n\n이 블록을 눌러 다음으로 넘어갑니다.',
     target: '[data-tutorial="create-rules"]',
     advanceOn: 'targetClick',
     waitForTarget: true,
@@ -2951,7 +2950,7 @@ async function renderWorkshopList(el) {
         btn.textContent = price ? '구매 중...' : '추가 중...';
         try {
           if (price > 0) await accountUI.spendWorkshopWeaponCoins?.(price);
-          const imported = importWorkshopWeapon(w);
+          const imported = await importWorkshopWeapon(w);
           const importedId = imported?.id;
           if (!importedId || !loadWorkshopWeaponsV2().some(item => item.id === importedId)) {
             throw new Error('무기고에 추가되지 않았습니다. 저장공간을 확인해 주세요.');
@@ -3530,20 +3529,15 @@ function buildCreateInto(body, mode = 'host') {
     [...(groupEl(g)?.querySelectorAll('.cfg-opt') || [])].find(b => b.dataset.value === value)?.click();
   };
   const GROUPS = isQuickplay
-    ? [['botCount', 'AI 수'], ['botDifficulty', 'AI 난이도'], ['platforms', '플랫폼'], ['platformShape', '플랫폼 모양'], ['biome', '지형'], ['cover', '엄폐물'], ['healing', '회복 아이템']]
-    : [['platforms', '플랫폼'], ['platformShape', '플랫폼 모양'], ['biome', '지형'], ['cover', '엄폐물'], ['healing', '회복 아이템']];
+    ? [['botCount', 'AI 수'], ['botDifficulty', 'AI 난이도'], ['platforms', '플랫폼'], ['platformShape', '플랫폼 모양'], ['cover', '엄폐물'], ['healing', '회복 아이템']]
+    : [['platforms', '플랫폼'], ['platformShape', '플랫폼 모양'], ['cover', '엄폐물'], ['healing', '회복 아이템']];
   const ONOFF = new Set(['healing']);
   const healingOn = () => selectedOf('healing')?.value === 'on';
   const PLATFORM_COUNT = { none: 0, few: 2, some: 4, many: 6 };
   const PLATFORM_DESC = { none: '발판 없음', few: '발판 2개', some: '발판 4개', many: '발판 6개' };
   const PLATFORM_SHAPE_DESC = { balanced: '좌우 대칭 계층', stairs: '오르내리는 계단형', towers: '양쪽 타워형' };
 
-  // Biome → a representative floor colour, shown as a swatch dot on its pill so
-  // the host can tell at a glance what each terrain looks like.
-  const BIOME_SWATCH = { day: '#adbc3a', night: '#3a4a6a', dawn: '#d98a6a', desert: '#d9c38a', snow: '#e9eef3' };
-  const pillInner = (g, o) => g === 'biome'
-    ? `<span class="biome-dot" style="background:${BIOME_SWATCH[o.value] || '#888'}"></span>${o.label}`
-    : o.label;
+  const pillInner = (_g, o) => o.label;
   // Segment group: pills + a sliding indicator that glides prev→new selection.
   const segRow = (g) => `<div class="create-seg" data-group="${g}">${opts(g).map(o =>
     `<button class="create-pill ${o.on ? 'on' : ''}" data-g="${g}" data-v="${o.value}">${pillInner(g, o)}</button>`).join('')}<span class="create-seg-ind"></span></div>`;
@@ -3632,7 +3626,6 @@ function buildCreateInto(body, mode = 'host') {
     const rows = [
       ...(isQuickplay ? [['AI 수', selectedOf('botCount')?.label], ['AI 난이도', selectedOf('botDifficulty')?.label]] : []),
       ['플랫폼', selectedOf('platforms')?.label], ['플랫폼 모양', selectedOf('platformShape')?.label],
-      ['지형', selectedOf('biome')?.label],
       ['엄폐물', selectedOf('cover')?.label],
       ['회복', healingOn() ? `${selectedOf('healing')?.label}·${selectedOf('healingRate')?.label || '보통'}` : selectedOf('healing')?.label]
     ];
@@ -3686,9 +3679,9 @@ function buildCreateInto(body, mode = 'host') {
   renderPlatformPreview();
   const mirrorCode = () => { const h = document.getElementById('hostRoomInput'); if (h) h.value = body.querySelector('#createCode').value.trim(); };
   body.querySelector('#createCode')?.addEventListener('input', mirrorCode);
-  body.querySelector('#createHost')?.addEventListener('click', () => { mirrorCode(); document.getElementById('hostBtn')?.click(); });
-  body.querySelector('#createDummy')?.addEventListener('click', () => { mirrorCode(); document.getElementById('dummyBtn')?.click(); });
-  body.querySelector('#createQuickStart')?.addEventListener('click', () => document.getElementById('quickStartBtn')?.click());
+  body.querySelector('#createHost')?.addEventListener('click', (e) => { mirrorCode(); doHost(false, e.currentTarget); });
+  body.querySelector('#createDummy')?.addEventListener('click', (e) => { mirrorCode(); doHost(true, e.currentTarget); });
+  body.querySelector('#createQuickStart')?.addEventListener('click', (e) => doBotMatch(e.currentTarget));
   body.querySelector('#createQuickBack')?.addEventListener('click', () => window.showLobbyHub?.());
   renderSummary();
 }
@@ -3698,7 +3691,6 @@ const COVER_KO = { none: '없음', few: '적음', some: '보통', many: '많음'
 const PLATFORM_KO = { none: '없음', few: '적음', some: '보통', many: '많음' };
 const PLATFORM_SHAPE_KO = { balanced: '균형형', stairs: '계단형', towers: '타워형' };
 const RATE_KO = { fast: '빠름', normal: '보통', slow: '느림' };
-const BIOME_KO = { day: '낮', night: '밤', dawn: '새벽', desert: '사막', snow: '눈' };
 function buildArenaInto(body) {
   if (window.__clearArenaTimer) window.__clearArenaTimer();
   body.innerHTML = `
@@ -3753,7 +3745,6 @@ function buildArenaInto(body) {
     const cfg = Weapons[r.weapon] || Weapons.sword;
     const c = normalizeRoomConfig(r.config);
     const rows = [['플랫폼', PLATFORM_KO[c.platforms] || c.platforms], ['플랫폼 모양', PLATFORM_SHAPE_KO[c.platformShape] || c.platformShape],
-      ['지형', BIOME_KO[c.biome] || c.biome || '낮'],
       ['엄폐물', COVER_KO[c.cover] || c.cover],
       ['회복', c.healing ? `켜짐 · ${RATE_KO[c.healingRate] || ''}` : '꺼짐']];
     detailEl.innerHTML = `
@@ -3855,7 +3846,7 @@ async function syncPrivateWorkshopWeaponsFromAccount() {
     const items = await accountUI.myPrivateWorkshopWeapons();
     let changed = false;
     for (const item of items || []) {
-      const saved = importWorkshopWeapon(item);
+      const saved = await importWorkshopWeapon(item);
       if (saved) changed = true;
     }
     if (changed) {

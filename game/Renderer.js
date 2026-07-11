@@ -208,7 +208,6 @@ export class Renderer {
   renderPlatformer(state, localPlayerId, camera, level, visualSettings = {}) {
     const ctx = this.ctx, cw = this.canvas.width, ch = this.canvas.height;
     const now = Date.now();
-    const biome = state.biome || 'day';
     this._perf = !!visualSettings.performanceMode;
     this._glow = this._perf ? 0 : 1;
 
@@ -221,7 +220,7 @@ export class Renderer {
     ctx.save();
     ctx.translate(shake.x || 0, shake.y || 0);
 
-    if (level) this._drawLevel(ctx, camera, cw, ch, level, biome);
+    if (level) this._drawLevel(ctx, camera, cw, ch, level);
     if (state.storm) this._drawPlatformerZone(ctx, camera, cw, ch, state.storm, now);
     if (state.healingItems && state.healingItems.length) this._drawHealingItems(ctx, camera, cw, ch, state.healingItems, now);
     if (state.mines && state.mines.length) this._drawMines(ctx, camera, cw, ch, state.mines, localPlayerId, now);
@@ -472,7 +471,7 @@ export class Renderer {
     }
   }
 
-  _drawLevel(ctx, camera, cw, ch, level, biome) {
+  _drawLevel(ctx, camera, cw, ch, level) {
     const rectScreen = (r) => {
       const a = camera.toScreen(r.x, r.y, cw, ch);
       const b = camera.toScreen(r.x + r.w, r.y + r.h, cw, ch);
@@ -2859,14 +2858,13 @@ export class Renderer {
     const rec = resolveWeaponImage(e.assetId || '');
     const img = rec && rec.img;
     if (img && img.complete && img.naturalWidth) {
-      const size = 36 * (Number(e.scale) || 1) * zoom;
-      const aspect = img.naturalWidth / Math.max(1, img.naturalHeight);
-      const w = aspect >= 1 ? size : size * aspect;
-      const h = aspect >= 1 ? size / aspect : size;
+      const w = 36 * (Number(e.scaleX) || 1) * zoom;
+      const h = 36 * (Number(e.scaleY) || 1) * zoom;
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(img, -w / 2, -h / 2, w, h);
     } else {
-      drawFxShape(ctx, e.assetId || 'spark', 18 * (Number(e.scale) || 1) * zoom);
+      ctx.scale(Number(e.scaleX) || 1, Number(e.scaleY) || 1);
+      drawFxShape(ctx, e.assetId || 'spark', 18 * zoom);
     }
     ctx.restore();
   }

@@ -1576,7 +1576,7 @@ export class MotionEditor {
     const assetId = assetOverride || document.getElementById('meEffectAsset')?.value || 'spark';
     const start = Math.round(this.scrubT * 1000) / 1000;
     const end = Math.min(1, Math.round((start + 0.12) * 1000) / 1000);
-    p.effects.push({ time: start, endTime: end, assetId, x: 0, y: 0, scale: 1, rotation: 0, alpha: 1, flipX: false, flipY: false, keys: [{ time: start, x: 0, y: 0, scale: 1, rotation: 0, alpha: 1, flipX: false, flipY: false }] });
+    p.effects.push({ time: start, endTime: end, assetId, x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0, alpha: 1, flipX: false, flipY: false, keys: [{ time: start, x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0, alpha: 1, flipX: false, flipY: false }] });
     p.effects.sort((a, b) => a.time - b.time);
     this._selectedEffectIndex = p.effects.findIndex(e => Math.abs(e.time - Math.round(this.scrubT * 1000) / 1000) < 0.001 && e.assetId === assetId);
     this._renderEffectList(); this._renderPreview();
@@ -1589,7 +1589,7 @@ export class MotionEditor {
     const list = (p && p.effects) || [];
     if (this._selectedEffectIndex >= list.length) this._selectedEffectIndex = list.length - 1;
     host.innerHTML = list.map((e, i) => `<div class="flex items-center gap-1 text-[9px] ${i === this._selectedEffectIndex ? 'text-[#ffd24a]' : 'text-gray-300'}" data-fx="${i}">
-      <button class="flex items-center gap-1 flex-1 min-w-0 text-left hover:text-[#ffd24a]" data-fxpick="${i}"><span class="text-[#ffd24a]">${this._effectTimeToFrame(e.time)}-${this._effectTimeToFrame(e.endTime ?? e.time)}</span><span class="truncate">${escOpt(this._effectDisplayName(e.assetId))} x${Number(e.scale || 1).toFixed(1)}</span></button>
+      <button class="flex items-center gap-1 flex-1 min-w-0 text-left hover:text-[#ffd24a]" data-fxpick="${i}"><span class="text-[#ffd24a]">${this._effectTimeToFrame(e.time)}-${this._effectTimeToFrame(e.endTime ?? e.time)}</span><span class="truncate">${escOpt(this._effectDisplayName(e.assetId))} ${Number(e.scaleX || 1).toFixed(1)}×${Number(e.scaleY || 1).toFixed(1)}</span></button>
       <button class="text-gray-600 hover:text-red-400 px-1" data-fxdel="${i}">✕</button></div>`).join('') ||
       '<span class="text-[9px] text-gray-600">없음</span>';
     host.querySelectorAll('[data-fxpick]').forEach(b => b.addEventListener('click', () => {
@@ -1673,17 +1673,13 @@ export class MotionEditor {
       ctx.save(); ctx.globalAlpha = state.alpha ?? 1; ctx.translate(x, y); ctx.rotate((state.rotation || 0) * Math.PI / 180);
       if (state.flipX || state.flipY) ctx.scale(state.flipX ? -1 : 1, state.flipY ? -1 : 1);
       const img = this._imageById(e.assetId);
-      let drawW = 36 * (state.scale || 1) * unit, drawH = drawW;
+      let drawW = 36 * (state.scaleX || 1) * unit, drawH = 36 * (state.scaleY || 1) * unit;
       if (img && img.complete && img.naturalWidth) {
-        const size = 36 * (state.scale || 1) * unit;
-        const aspect = img.naturalWidth / Math.max(1, img.naturalHeight);
-        const w = aspect >= 1 ? size : size * aspect;
-        const h = aspect >= 1 ? size / aspect : size;
-        drawW = w; drawH = h;
         ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(img, -w / 2, -h / 2, w, h);
+        ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
       } else {
-        drawFxShape(ctx, e.assetId, 18 * (state.scale || 1) * unit);
+        ctx.scale(state.scaleX || 1, state.scaleY || 1);
+        drawFxShape(ctx, e.assetId, 18 * unit);
       }
       ctx.restore();
       if (!this.playing && this._selectedEffectIndex === p.effects.indexOf(e)) {
@@ -1694,7 +1690,7 @@ export class MotionEditor {
         const rx = x + drawW / 2, ry = y + drawH / 2;
         ctx.fillStyle = '#ffd24a'; ctx.fillRect(rx - 6 * handleScale, ry - 6 * handleScale, 12 * handleScale, 12 * handleScale);
         ctx.restore();
-        this._effectScreen = { cx: x, cy: y, rx, ry, pelvisX: bone.x, pelvisY: bone.y, unit, scale: state.scale || 1 };
+        this._effectScreen = { cx: x, cy: y, rx, ry, halfW: drawW / 2, halfH: drawH / 2, pelvisX: bone.x, pelvisY: bone.y, unit, scaleX: state.scaleX || 1, scaleY: state.scaleY || 1 };
       }
     }
   }
@@ -3291,9 +3287,10 @@ export class MotionEditor {
       this._setEffectKeyValue(effect, 'x', Math.round((mx - s.pelvisX) / s.unit));
       this._setEffectKeyValue(effect, 'y', Math.round((my - s.pelvisY) / s.unit));
     } else if (this.dragEffect === 'resize') {
-      const base = Math.max(1, Math.hypot(s.rx - s.cx, s.ry - s.cy));
-      const next = clamp((s.scale || 1) * Math.hypot(mx - s.cx, my - s.cy) / base, 0.1, 4);
-      this._setEffectKeyValue(effect, 'scale', Math.round(next * 100) / 100);
+      const nextX = clamp((s.scaleX || 1) * Math.abs(mx - s.cx) / Math.max(1, s.halfW), 0.1, 4);
+      const nextY = clamp((s.scaleY || 1) * Math.abs(my - s.cy) / Math.max(1, s.halfH), 0.1, 4);
+      this._setEffectKeyValue(effect, 'scaleX', Math.round(nextX * 100) / 100);
+      this._setEffectKeyValue(effect, 'scaleY', Math.round(nextY * 100) / 100);
     }
     p.effects = sanitizeEffects(p.effects);
     this._renderEffectList();

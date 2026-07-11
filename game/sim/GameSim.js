@@ -30,7 +30,6 @@ import { Weapons, getEffectiveWeapon, SkillConfig, DashConfig, ComboConfig, Magi
 import { MsgType, Protocol } from '../../multiplayer/Protocol.js';
 import { normalizeRoomConfig, arenaDimensions, HEAL_RATES } from '../RoomConfig.js';
 import { generateCover, resolveCover, coverBlocksSegment, coverRayDistance, coverClearOfPoint, coverBlocksCircle } from '../Cover.js';
-import { generateWater, emptyWater } from '../Water.js';
 import { buildLevel, PHYS } from '../Level.js';
 import { BotBrain, BOT_DIFFICULTY } from '../Bot.js';
 import { resolveMotion, weaponSetId, sanitizeMotionSetId, canonicalWeaponMotion, canonicalWeaponsSnapshot, setCanonicalWeapon } from '../Motion.js';
@@ -78,12 +77,9 @@ export class GameSim {
 
     this.roomConfig = normalizeRoomConfig(options.roomConfig);
 
-    // Terrain: cover + water, derived deterministically from the seed.
+    // Arena obstacles are part of the deterministic platformer level.
     this.cover = [];
     this.coverSeed = 0;
-    this.biome = 'day';
-    this.water = emptyWater();
-    this.frozen = false;
     this.moveTiles = [];
 
     this.healingItems = [];
@@ -158,7 +154,6 @@ export class GameSim {
 
     // One per-match seed drives the layout; only the seed ships to clients.
     this.coverSeed = this.seed;
-    this._buildTerrain();
 
     const spawnP = this._getRandomSpawnPoint();
     const player = new Player(id, nickname, weapon, spawnP.x, spawnP.y, costume);
@@ -583,7 +578,8 @@ export class GameSim {
         e.x = e.effectOriginX + state.x * e.effectFacing;
         e.y = e.effectOriginY + state.y;
         e.angle = (Number(state.rotation) || 0) * Math.PI / 180;
-        e.scale = Number(state.scale) || 1;
+        e.scaleX = Number(state.scaleX) || 1;
+        e.scaleY = Number(state.scaleY) || 1;
         e.alpha = Number.isFinite(state.alpha) ? state.alpha : 1;
         e.flipX = !!state.flipX;
         e.flipY = !!state.flipY;
@@ -1103,7 +1099,8 @@ export class GameSim {
       type: 'workshop_frame_fx',
       worldAnchored: true,
       assetId: ev.assetId || 'spark',
-      scale: Number(state.scale) || 1,
+      scaleX: Number(state.scaleX) || 1,
+      scaleY: Number(state.scaleY) || 1,
       alpha: Number.isFinite(state.alpha) ? state.alpha : 1,
       flipX: !!state.flipX,
       flipY: !!state.flipY,
@@ -2674,26 +2671,6 @@ export class GameSim {
     this.mapHeight = this.level.height;
   }
 
-
-  _buildTerrain() {
-    this.biome = this.roomConfig?.biome || 'day';
-    this.frozen = this.biome === 'snow';      // frozen water = walkable
-    // Reuse the synced per-match cover seed (a derived value so water and cover
-    // don't correlate) — deterministic across clients, no extra sync.
-    const waterSeed = ((this.coverSeed ^ 0x9e3779b9) >>> 0);
-    this.water = this.roomConfig?.water
-      ? generateWater(this.mapWidth, this.mapHeight, waterSeed)
-      : emptyWater();
-    // Platformer cover is baked into Level.solids so it is visible and collides
-    // through the same AABB path. Keep the old top-down random cover disabled
-    // here; otherwise invisible rectangles would still block projectiles/LOS.
-    this.cover = [];
-    // Water blocks movement only when not frozen. Platformer movement currently
-    // uses level geometry, so this list is retained only for legacy callers.
-    this.moveTiles = this.frozen
-      ? this.cover
-      : this.cover.concat(this.water.tiles);
-  }
 
   _findEmptyPosition() {
     const anchors = this.level?.itemSpawns;

@@ -28,6 +28,7 @@ export class Player {
     // tests so a fast-moving target can't tunnel through a thin/quick blade.
     this.prevX = x;
     this.prevY = y;
+    this.positionRevision = 0;
 
     // Core parameters
     this.maxHp = weaponConfig.maxHp || 100;
@@ -760,6 +761,7 @@ export class Player {
       maxHp: this.maxHp,
       x: this.x,
       y: this.y,
+      posRev: this.positionRevision >>> 0,
       vx: this.vx,
       vy: this.vy,
       grounded: this.grounded,
@@ -846,6 +848,7 @@ export class Player {
    */
   deserialize(data) {
     this.nickname = data.nickname;
+    this.positionRevision = Number.isSafeInteger(data.posRev) && data.posRev >= 0 ? data.posRev : 0;
     this.weapon = data.weapon;
     this.maxHp = Number.isFinite(data.maxHp) ? data.maxHp : (Weapons[this.weapon]?.maxHp || this.maxHp || 100);
     this.hp = Number.isFinite(data.hp) ? Math.min(data.hp, this.maxHp) : this.maxHp;

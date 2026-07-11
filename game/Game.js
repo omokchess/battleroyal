@@ -1689,10 +1689,13 @@ export class Game extends GameSim {
               // local prediction against a short velocity projection instead of
               // dragging the player back to that stale position every packet.
               const projected = projectServerSnapshot(snap, this.networkManager.latency);
-              const rawDistance = localCorrectDist(p.x, p.y, snap.x, snap.y);
               const correctionDistance = localCorrectDist(p.x, p.y, projected.x, projected.y);
               const respawned = wasDead && !p.isDead;
-              if (p.isDead || respawned || rawDistance > 240) {
+              const snapRevision = Number.isSafeInteger(snap.posRev) && snap.posRev >= 0 ? snap.posRev : 0;
+              const positionDiscontinuity = p._serverPositionRevision !== undefined
+                && p._serverPositionRevision !== snapRevision;
+              p._serverPositionRevision = snapRevision;
+              if (p.isDead || respawned || positionDiscontinuity) {
                 p.x = snap.x;
                 p.y = snap.y;
                 if (Number.isFinite(snap.vx)) p.vx = snap.vx;
@@ -1701,8 +1704,14 @@ export class Game extends GameSim {
               } else {
                 if (correctionDistance > 8) {
                   const correction = correctionDistance > 90 ? 0.18 : 0.08;
-                  p.x += (projected.x - p.x) * correction;
-                  p.y += (projected.y - p.y) * correction;
+                  const step = boundedPositionCorrection(
+                    projected.x - p.x,
+                    projected.y - p.y,
+                    correction,
+                    18
+                  );
+                  p.x += step.x;
+                  p.y += step.y;
                 }
                 if (Number.isFinite(snap.vx)) p.vx += (snap.vx - p.vx) * 0.12;
                 if (Number.isFinite(snap.vy)) p.vy += (snap.vy - p.vy) * 0.12;
@@ -1866,8 +1875,21 @@ export function projectServerSnapshot(snapshot, roundTripMs = 0) {
   const seconds = oneWayMs / 1000;
   return {
     x: (Number(snapshot?.x) || 0) + (Number(snapshot?.vx) || 0) * seconds,
-    y: (Number(snapshot?.y) || 0) + (Number(snapshot?.vy) || 0) * seconds,
+    // Vertical prediction is unstable around landings, one-way platforms and
+    // jump cuts. Keep authoritative Y and reconcile it with a bounded step.
+    y: Number(snapshot?.y) || 0,
   };
+}
+
+
+export function boundedPositionCorrection(dx, dy, factor = 0.08, maxStep = 18) {
+  const x = Number(dx) || 0;
+  const y = Number(dy) || 0;
+  const distance = Math.hypot(x, y);
+  if (distance <= 0) return { x: 0, y: 0 };
+  const requested = Math.max(0, distance * Math.max(0, Number(factor) || 0));
+  const scale = Math.min(requested, Math.max(0, Number(maxStep) || 0)) / distance;
+  return { x: x * scale, y: y * scale };
 }
 
 

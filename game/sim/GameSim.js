@@ -653,6 +653,7 @@ export class GameSim {
           p.hp = p.maxHp;
           p.x = spawnP.x;
           p.y = spawnP.y;
+          this._markPositionDiscontinuity(p);
           p.respawnTime = 0;
           p.respawnRemainingMs = 0;
           p.clearCombatTimers(); // also clears bleed/burn DoTs
@@ -1104,6 +1105,7 @@ export class GameSim {
       const dist = Math.max(0, Math.min(260, Number(ev.distance) || 0));
       this._displace(player, Math.cos(ang) * dist, Math.sin(ang) * dist);
       this._resolveOutOfTerrain(player);
+      this._markPositionDiscontinuity(player);
     }
     for (let i = 0; i < (sw.frameEffects || []).length; i++) {
       if (sw.firedFrameEffects.has(i)) continue;
@@ -1286,7 +1288,7 @@ export class GameSim {
         if (amt > 0) player.hp = Math.min(player.maxHp, player.hp + amt);
       },
       dash: ({ angle, distance }) => { const a = angle * D2R; this._displace(player, Math.cos(a) * distance, Math.sin(a) * distance); },
-      teleport: ({ distance }) => { this._displace(player, Math.cos(player.angle) * distance, Math.sin(player.angle) * distance); this._resolveOutOfTerrain(player); },
+      teleport: ({ distance }) => { this._displace(player, Math.cos(player.angle) * distance, Math.sin(player.angle) * distance); this._resolveOutOfTerrain(player); this._markPositionDiscontinuity(player); },
       jump: ({ power }) => { player.vy = -PHYS.jumpSpeed * power; player.grounded = false; },
       // Self-movement (BlockVM 2.0 ④): set/boost own velocity → jetpacks, recoil,
       // air-dashes. Speed is move-budget clamped (VM caps + a hard total cap here).
@@ -3407,6 +3409,15 @@ export class GameSim {
     player.y = target.y + Math.sin(angle) * distance;
     Collision.clampToMap(player, this.mapWidth, this.mapHeight);
     this._resolveOutOfTerrain(player);
+    this._markPositionDiscontinuity(player);
+  }
+
+
+  _markPositionDiscontinuity(player) {
+    if (!player) return;
+    player.positionRevision = ((Number(player.positionRevision) || 0) + 1) >>> 0;
+    player.prevX = player.x;
+    player.prevY = player.y;
   }
 
 
@@ -4267,6 +4278,7 @@ export class GameSim {
     player.x = Math.max(margin, Math.min(this.mapWidth - margin, fromX + dx));
     player.y = Math.max(margin, Math.min(this.mapHeight - margin, fromY + dy));
     this._resolveOutOfTerrain(player);   // teleport: don't land inside terrain
+    this._markPositionDiscontinuity(player);
     player.vy = 0;                        // cancel fall momentum on blink
     // Teleport is discontinuous — don't let the next melee test sweep the jump.
     player.prevX = player.x;

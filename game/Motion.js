@@ -36,14 +36,12 @@ const VALID_EVENTS = new Set(['impact', 'projectile', 'sfx']);
 export const MOTION_LIMITS = {
   minDuration: 0.05,
   maxDuration: 30,
-  maxKeyframes: 64,
   maxEvents: 12,
   angleMin: -360,
   angleMax: 360,
   rootOffsetMax: 220,
   // Admin-canonical gameplay fields (T1-C). Geometry is in world px relative to
   // the player centre (ox is forward, flipped by facing at sim time).
-  maxHitboxes: 64,
   hitboxOffsetMax: 220,   // |ox|, |oy|
   hitboxSizeMin: 4,
   hitboxSizeMax: 320,     // w, h
@@ -74,7 +72,7 @@ export function sanitizeMotion(raw, fallback = DEFAULT_MOTION, opts = {}) {
     ? clamp(raw.duration, MOTION_LIMITS.minDuration, MOTION_LIMITS.maxDuration)
     : 0.5;
 
-  const kfsIn = raw.keyframes.slice(0, MOTION_LIMITS.maxKeyframes);
+  const kfsIn = raw.keyframes;
   const keyframes = [];
   for (const kf of kfsIn) {
     if (!kf || typeof kf !== 'object' || typeof kf.pose !== 'object' || !kf.pose) continue;
@@ -126,7 +124,7 @@ function sanitizeHitboxes(arr) {
   if (!Array.isArray(arr)) return [];
   const L = MOTION_LIMITS;
   const out = [];
-  for (const hb of arr.slice(0, L.maxHitboxes)) {
+  for (const hb of arr) {
     if (!hb || typeof hb !== 'object') continue;
     const ox = Number.isFinite(hb.ox) ? clamp(hb.ox, -L.hitboxOffsetMax, L.hitboxOffsetMax) : 0;
     const oy = Number.isFinite(hb.oy) ? clamp(hb.oy, -L.hitboxOffsetMax, L.hitboxOffsetMax) : 0;

@@ -2,10 +2,87 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   clampWorkshopWeaponV2, migrateV1toV2, toWorkshopWeaponV2, makeEmptyWeaponV2, makeEmptyPreset,
-  statCostV2, combatCost, sanitizeCombat, sanitizeCombatKeys, sampleCombatKeys, sanitizeFlipKeys, sampleFlip, sanitizeProjectile, sanitizeProjectileEvents, sanitizeTeleportEvents, sanitizeEffects, sampleEffectTransform,
+  statCostV2, baseStatsCost, combatCost, sanitizeCombat, sanitizeCombatKeys, sampleCombatKeys, sanitizeFlipKeys, sampleFlip, sanitizeProjectile, sanitizeProjectileEvents, sanitizeTeleportEvents, sanitizeEffects, sampleEffectTransform,
+  sanitizeStatuses, sanitizeBuffs,
   POINT_BUDGET, PROJECTILE_IMAGES, FIXED_PRESET_DURATIONS, AUTHORING_PRESET_KEYS,
 } from '../game/Workshop.js';
 import { v2ToV1Runtime } from '../game/WorkshopStore.js';
+
+test('base stat budget uses the displayed HP and movement rates', () => {
+  assert.equal(baseStatsCost({ maxHp: 70, moveSpeed: 0.7 }), 0);
+  assert.equal(baseStatsCost({ maxHp: 71, moveSpeed: 0.7 }), 2);
+  assert.equal(baseStatsCost({ maxHp: 70, moveSpeed: 0.71 }), 1);
+  assert.equal(baseStatsCost({ maxHp: 100, moveSpeed: 1 }), 90);
+});
+
+test('stacked statuses and buffs are sanitized without collapsing to one selection', () => {
+  const statuses = sanitizeStatuses([
+    { type: 'slow', durationMs: 900 },
+    { type: 'burn', durationMs: 1400 },
+    { type: 'airborne', durationMs: 700, airborneHeight: 180 },
+  ]);
+  assert.deepEqual(statuses.map(status => status.type), ['slow', 'burn', 'airborne']);
+  assert.equal(statuses[2].airborneHeight, 180);
+
+  const buffs = sanitizeBuffs([
+    { type: 'damageUp', value: 37, durationMs: 2200, timing: 'onUse' },
+    { type: 'moveSpeed', value: 0.76, durationMs: 3400, timing: 'after' },
+    { type: 'shield', value: 27, durationMs: 1000 },
+  ], 'skill1');
+  assert.deepEqual(buffs, [
+    { type: 'damageUp', timing: 'onUse', value: 40, durationMs: 2000 },
+    { type: 'moveSpeed', timing: 'after', value: 0.8, durationMs: 3000 },
+    { type: 'shield', timing: 'onUse', value: 30, durationMs: 1000 },
+  ]);
+});
+
+test('basic presets reject buffs and iframe is exclusive to ultimate', () => {
+  const raw = [
+    { type: 'damageUp', value: 50, durationMs: 1000 },
+    { type: 'iframe', value: 12 },
+  ];
+  assert.deepEqual(sanitizeBuffs(raw, 'basic'), []);
+  assert.deepEqual(sanitizeBuffs(raw, 'skill1').map(buff => buff.type), ['damageUp']);
+  assert.deepEqual(sanitizeBuffs(raw, 'ultimate').map(buff => buff.type), ['damageUp', 'iframe']);
+});
+
+test('status and buff application frames survive sanitization', () => {
+  assert.equal(sanitizeStatuses([{ type: 'burn', durationMs: 1000, applyFrame: 23 }])[0].applyFrame, 23);
+  assert.equal(sanitizeBuffs([{ type: 'shield', value: 10, durationMs: 1000, applyFrame: 64 }], 'skill1')[0].applyFrame, 64);
+  assert.equal(sanitizeStatuses([{ type: 'slow', durationMs: 1000, applyFrame: 999 }])[0].applyFrame, 999);
+});
+
+test('multiple hitboxes on one frame and counts above the old limit survive', () => {
+  const hitboxes = Array.from({ length: 80 }, (_, index) => ({
+    ox: index, oy: 0, w: 20, h: 20, frameTime: 0.5, activeStart: 0.48, activeEnd: 0.52,
+  }));
+  const preset = makeEmptyPreset('basic');
+  preset.hitboxes = hitboxes;
+  const weapon = clampWorkshopWeaponV2({ schemaVersion: 2, presets: { basic: preset } });
+  assert.equal(weapon.presets.basic.hitboxes.length, 80);
+  assert.ok(weapon.presets.basic.hitboxes.every(hitbox => hitbox.frameTime === 0.5));
+});
+
+test('an explicitly emptied status list does not revive the legacy primary status', () => {
+  const combat = sanitizeCombat({ status: 'none', statusDurationMs: 0, statuses: [] }, 'skill1');
+  assert.deepEqual(combat.statuses, []);
+  assert.equal(combat.status, 'none');
+});
+
+test('stacked status and buff entries all contribute to preset budget', () => {
+  const neutral = { damage: 0, cooldownMs: 1000, knockback: 60, ultimateGain: 10 };
+  const withOne = combatCost({ ...neutral, buffs: [{ type: 'shield', value: 10, durationMs: 1000 }] }, 'skill1');
+  const withMany = combatCost({
+    ...neutral,
+    statuses: [{ type: 'slow', durationMs: 100 }, { type: 'stun', durationMs: 100 }],
+    buffs: [
+      { type: 'shield', value: 10, durationMs: 1000 },
+      { type: 'damageUp', value: 20, durationMs: 1000 },
+    ],
+  }, 'skill1');
+  assert.ok(withOne > combatCost(neutral, 'skill1'));
+  assert.ok(withMany > withOne);
+});
 
 test('V1 → V2 migration moves fields to the right places', () => {
   const v1 = {
@@ -22,7 +99,7 @@ test('V1 → V2 migration moves fields to the right places', () => {
   const w = migrateV1toV2(v1);
   assert.equal(w.schemaVersion, 2);
   // body stats only on the weapon
-  assert.equal(w.baseStats.maxHp, 130);
+  assert.ok(w.baseStats.maxHp <= 130);
   assert.ok(w.baseStats.moveSpeed <= 1.2);
   assert.ok(statCostV2(w) <= POINT_BUDGET, 'migrated legacy weapon is clamped to the stronger budget');
   assert.equal(w.baseStats.damage, undefined);
@@ -70,6 +147,7 @@ test('V2 weapons always expose every authoring preset and drop the removed kill 
 
 test('budget: cooldown is included and over-budget bleeds to ≤100 per section', () => {
   const w = makeEmptyWeaponV2({ firstPresetKind: 'basic' });
+  w.baseStats = { maxHp: 70, moveSpeed: 0.7 };
   const neutral = combatCost({ damage: 0, cooldownMs: 600, knockback: 60, status: 'none', ultimateGain: 10 });
   const faster = combatCost({ damage: 0, cooldownMs: 300, knockback: 60, status: 'none', ultimateGain: 10 });
   const slower = combatCost({ damage: 0, cooldownMs: 1100, knockback: 60, status: 'none', ultimateGain: 10 });
@@ -328,6 +406,19 @@ test('effects sanitize into independent per-frame transforms', () => {
   assert.equal(mid.scaleY, 3);
   assert.ok(Math.abs(mid.rotation - 45) < 1e-9);
   assert.equal(mid.flipX, false, 'flip changes on its authored key, not midway');
+});
+
+test('animated effects run from their start frame through the motion end and keep color', () => {
+  const [fx] = sanitizeEffects([{ assetId: 'spark', time: 0.4, endTime: 0.5, color: '#12ABef' }]);
+  assert.equal(fx.animated, true);
+  assert.equal(fx.endTime, 1);
+  assert.equal(fx.color, '#12abef');
+  assert.equal(sampleEffectTransform(fx, 0.7).color, '#12abef');
+
+  const [slash] = sanitizeEffects([{ assetId: 'slash', time: 0.4, endTime: 0.5, color: 'bad' }]);
+  assert.equal(slash.animated, false);
+  assert.equal(slash.endTime, 0.5);
+  assert.equal(slash.color, '#ffffff');
 });
 
 test('frame events sanitize: projectiles capped to 5 and teleports clamped', () => {

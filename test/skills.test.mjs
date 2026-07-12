@@ -13,6 +13,7 @@ function combatGame() {
   game.effects = [];
   game.pendingMeleeHits = [];
   game.pendingSwordWaves = [];
+  game.pendingWorkshopBuffs = [];
   game.mapWidth = 700;
   game.mapHeight = 700;
   game._creditKill = () => {};
@@ -24,6 +25,87 @@ function combatGame() {
   game._triggerHitstop = () => {};
   return game;
 }
+
+test('workshop buffs apply immediate and after-motion timing independently', () => {
+  const game = combatGame();
+  const player = new Player('buffer', 'Buffer', 'sword', 100, 100);
+  game.players[player.id] = player;
+  game._scheduleWorkshopBuffs(player, {
+    buffs: [
+      { type: 'damageUp', value: 20, durationMs: 2000, timing: 'onUse' },
+      { type: 'moveSpeed', value: 0.4, durationMs: 3000, timing: 'after' },
+    ],
+  }, 1000, 500, 'skill1');
+
+  assert.equal(player.workshopDamageBuffPct, 20);
+  assert.equal(player.workshopMoveBuffValue, 0);
+  game._releaseDueWorkshopBuffs(1499);
+  assert.equal(player.workshopMoveBuffValue, 0);
+  game._releaseDueWorkshopBuffs(1500);
+  assert.equal(player.workshopMoveBuffValue, 0.4);
+});
+
+test('workshop buff can activate on an exact authored frame', () => {
+  const game = combatGame();
+  const player = new Player('frame-buffer', 'Frame Buffer', 'sword', 100, 100);
+  game.players[player.id] = player;
+  game._scheduleWorkshopBuffs(player, {
+    buffs: [{ type: 'shield', value: 10, durationMs: 1000, timing: 'onUse', applyFrame: 3 }],
+  }, 1000, 400, 'skill1', 5);
+  game._releaseDueWorkshopBuffs(1199);
+  assert.equal(player.workshopShield, 0);
+  game._releaseDueWorkshopBuffs(1200);
+  assert.equal(player.workshopShield, 10);
+});
+
+test('workshop statuses only apply on their authored hit frame', () => {
+  const game = combatGame();
+  const target = new Player('status-target', 'Target', 'sword', 100, 100);
+  const applied = [];
+  game._applyStatusEffect = (_target, _ownerId, type) => applied.push(type);
+  const combat = { statuses: [{ type: 'burn', durationMs: 1000, applyFrame: 4 }] };
+  game._applyCombatStatuses(target, 'owner', combat, 1000, 3);
+  assert.deepEqual(applied, []);
+  game._applyCombatStatuses(target, 'owner', combat, 1000, 4);
+  assert.deepEqual(applied, ['burn']);
+});
+
+test('workshop projectile only carries statuses authored for its launch frame', () => {
+  const game = combatGame();
+  const player = new Player('ranged-status', 'Ranged', 'sword', 100, 100);
+  player.workshopWeapon = { stats: { damage: 10 } };
+  const projectile = { speed: 300, lifetimeMs: 1000, hitbox: { shape: 'circle', radius: 6 } };
+  const combat = { damage: 10, statuses: [{ type: 'burn', durationMs: 1000, applyFrame: 4 }] };
+  game._spawnWorkshopProjectile(player, projectile, combat, 1000, 'skill1', null, 3);
+  game._spawnWorkshopProjectile(player, projectile, combat, 1000, 'skill1', null, 4);
+  assert.deepEqual(game.projectiles[0].wsStatuses, []);
+  assert.deepEqual(game.projectiles[1].wsStatuses.map(status => status.type), ['burn']);
+});
+
+test('workshop defensive buffs reduce matching damage and shield absorbs hits', () => {
+  const game = combatGame();
+  const player = new Player('guard', 'Guard', 'sword', 100, 100);
+  game._applyWorkshopBuff(player, { type: 'dotGuard', value: 3, durationMs: 2000 });
+  game._applyWorkshopBuff(player, { type: 'skillGuard', value: 50, durationMs: 2000 });
+  game._applyWorkshopBuff(player, { type: 'shield', value: 20, durationMs: 2000 });
+
+  const startHp = player.hp;
+  player.takeDamage(8, 'dot', true, 'dot');
+  assert.equal(player.hp, startHp, 'shield absorbs DoT after flat reduction');
+  assert.equal(player.workshopShield, 15);
+  player.takeDamage(20, 'skill', true, 'skill');
+  assert.equal(player.hp, startHp, 'remaining shield absorbs reduced skill damage');
+  assert.equal(player.workshopShield, 5);
+  player.takeDamage(20, 'skill', true, 'skill');
+  assert.equal(player.hp, startHp - 5);
+});
+
+test('ultimate iframe buff converts authored frames to runtime seconds', () => {
+  const game = combatGame();
+  const player = new Player('iframe', 'IFrame', 'sword', 100, 100);
+  game._applyWorkshopBuff(player, { type: 'iframe', value: 12, durationMs: 0 });
+  assert.equal(player.iframeTimeLeft, 0.2);
+});
 
 function botSpawnGame(botWorkshopWeapons = []) {
   const game = Object.create(Game.prototype);
@@ -141,23 +223,32 @@ test('workshop frame hitboxes can override damage per authored frame', () => {
   assert.equal(target.hp, target.maxHp - 17);
 });
 
-test('one skill activation awards ultimate gauge only on its first hitbox hit', () => {
+test('one skill activation awards ultimate gauge immediately without requiring a hit', () => {
   const game = combatGame();
-  let awards = 0;
-  game._awardUltimateGauge = () => { awards++; };
+  game._awardUltimateGauge = Game.prototype._awardUltimateGauge;
+  game._isMotionLocked = () => false;
   const attacker = new Player('atk', 'Maker', 'sword', 100, 100);
   const target = new Player('tar', 'Target', 'sword', 130, 100);
   attacker.angle = 0;
-  attacker.workshopWeapon = { stats: { damage: 20 } };
+  attacker.workshopWeapon = {
+    stats: { damage: 20 },
+    presetCombat: { skill: { damage: 20, cooldownMs: 1000, knockback: 0, status: 'none', ultimateGain: 25 } },
+    presetHitboxes: { skill: [
+      { ox: 30, oy: 0, w: 60, h: 40, frameTime: 0.2 },
+      { ox: 30, oy: 0, w: 60, h: 40, frameTime: 0.6 },
+    ] },
+    motionSet: { skill: { duration: 1, hitboxes: [
+      { ox: 30, oy: 0, w: 60, h: 40, frameTime: 0.2 },
+      { ox: 30, oy: 0, w: 60, h: 40, frameTime: 0.6 },
+    ] } },
+  };
   game.players[attacker.id] = attacker;
   game.players[target.id] = target;
-  game._startHitboxSwing(attacker, { duration: 1, hitboxes: [
-    { ox: 30, oy: 0, w: 60, h: 40, frameTime: 0.2 },
-    { ox: 30, oy: 0, w: 60, h: 40, frameTime: 0.6 },
-  ] }, 1000, { damage: 20, ultimateGain: 25, presetKind: 'skill1' });
+  game._activateWorkshopSkill(attacker, 'skill', 1000);
+  assert.equal(attacker.ultimateGauge, 25);
   game._updateHitboxSwings(1200);
   game._updateHitboxSwings(1600);
-  assert.equal(awards, 1);
+  assert.equal(attacker.ultimateGauge, 25);
 });
 
 test('motion-only workshop ultimate still starts its authored animation', () => {
@@ -184,6 +275,7 @@ test('motion-only workshop ultimate still starts its authored animation', () => 
 
 test('heavy combo fires after the configured number of basic attacks', () => {
   const game = combatGame();
+  game._awardUltimateGauge = Game.prototype._awardUltimateGauge;
   game._isMotionLocked = () => false;
   game._canonicalHitboxMotion = () => ({ duration: 0.2, hitboxes: [{ ox: 1, oy: 0, w: 10, h: 10, frameTime: 0.5 }] });
   const tags = [];
@@ -199,6 +291,7 @@ test('heavy combo fires after the configured number of basic attacks', () => {
   };
   for (let i = 0; i < 4; i++) game._performBasicAttack(player, Weapons.sword, 1000 + i * 200);
   assert.deepEqual(tags, ['basic', 'basic', 'basic', 'heavy']);
+  assert.equal(player.ultimateGauge, 20, 'three basics and one heavy each grant 5 gauge on use');
 });
 
 test('workshop skill activation shows the authored skill name beside the caster', () => {

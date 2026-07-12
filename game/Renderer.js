@@ -10,6 +10,21 @@ import { StickAnimator } from './Motion.js';
 import { sanitizeLook } from './StickLook.js';
 import { resolveWeaponImage } from './WeaponImages.js';
 import { drawProjectileShape, drawFxShape } from './ProjectileArt.js';
+import { builtinEffectAsset, drawTintedEffectImage } from './EffectAssets.js';
+
+const WORKSHOP_FX_WORLD_SCALE = 14 / 46;
+const builtinEffectImages = new Map();
+
+function resolveBuiltinEffectImage(assetId) {
+  const meta = builtinEffectAsset(assetId);
+  if (!meta?.src || typeof Image === 'undefined') return null;
+  if (!builtinEffectImages.has(assetId)) {
+    const img = new Image();
+    img.src = meta.src;
+    builtinEffectImages.set(assetId, img);
+  }
+  return builtinEffectImages.get(assetId);
+}
 
 // Pixel-detected frame x-ranges of fx/slash2 (SpriteSheetSlash02.png, H=50).
 // The sheet is not a uniform grid; these are the real crescent frames
@@ -2823,6 +2838,35 @@ export class Renderer {
     ctx.restore();
   }
 
+  _drawWorkshopBuffLabels(ctx, bodyScr, p, radius) {
+    const labels = [];
+    if (p.workshopDamageBuffLeft > 0) labels.push({ text: `대미지 +${Math.round(p.workshopDamageBuffPct || 0)}%`, color: '#ff8a65' });
+    if (p.workshopDotGuardLeft > 0) labels.push({ text: '도트 피해 -3', color: '#81d4fa' });
+    if (p.workshopSkillGuardLeft > 0) labels.push({ text: `스킬 방어 ${Math.round(p.workshopSkillGuardPct || 0)}%`, color: '#80cbc4' });
+    if (p.workshopMoveBuffLeft > 0) labels.push({ text: `이동 +${Number(p.workshopMoveBuffValue || 0).toFixed(1)}`, color: '#b9f6ca' });
+    if (p.workshopShieldLeft > 0 && p.workshopShield > 0) labels.push({ text: `방어막 ${Math.ceil(p.workshopShield)}`, color: '#90caf9' });
+    if (p.workshopIFrameBuffLeft > 0) labels.push({ text: '무적', color: '#fff59d' });
+    if (!labels.length) return;
+
+    ctx.save();
+    ctx.font = '8px "Galmuri11", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    let y = bodyScr.y - radius - 57;
+    for (const label of labels.slice(0, 5)) {
+      const width = ctx.measureText(label.text).width + 8;
+      ctx.fillStyle = 'rgba(8,10,14,0.82)';
+      ctx.fillRect(bodyScr.x - width / 2, y - 6, width, 12);
+      ctx.strokeStyle = label.color;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(bodyScr.x - width / 2, y - 6, width, 12);
+      ctx.fillStyle = label.color;
+      ctx.fillText(label.text, bodyScr.x, y + 0.5);
+      y -= 14;
+    }
+    ctx.restore();
+  }
+
   _drawSkillCallout(ctx, scr, e, alpha, zoom) {
     const text = String(e.text || '스킬').trim().slice(0, 24);
     if (!text) return;
@@ -2856,15 +2900,15 @@ export class Renderer {
     if (e.flipX || e.flipY) ctx.scale(e.flipX ? -1 : 1, e.flipY ? -1 : 1);
     ctx.globalAlpha = Math.max(0, Math.min(1, alpha * baseAlpha));
     const rec = resolveWeaponImage(e.assetId || '');
-    const img = rec && rec.img;
+    const img = (rec && rec.img) || resolveBuiltinEffectImage(e.assetId || '');
     if (img && img.complete && img.naturalWidth) {
-      const w = 36 * (Number(e.scaleX) || 1) * zoom;
-      const h = 36 * (Number(e.scaleY) || 1) * zoom;
+      const w = 36 * WORKSHOP_FX_WORLD_SCALE * (Number(e.scaleX) || 1) * zoom;
+      const h = 36 * WORKSHOP_FX_WORLD_SCALE * (Number(e.scaleY) || 1) * zoom;
       ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(img, -w / 2, -h / 2, w, h);
+      drawTintedEffectImage(ctx, img, -w / 2, -h / 2, w, h, e.color || '#ffffff');
     } else {
       ctx.scale(Number(e.scaleX) || 1, Number(e.scaleY) || 1);
-      drawFxShape(ctx, e.assetId || 'spark', 18 * zoom);
+      drawFxShape(ctx, e.assetId || 'spark', 18 * zoom, e.color || null);
     }
     ctx.restore();
   }
@@ -4511,6 +4555,7 @@ export class Renderer {
 
       // Status-effect icons (bleed/burn/slow/stun) above the HP bar.
       this._drawStatusIcons(ctx, bodyScr, p, radius);
+      this._drawWorkshopBuffLabels(ctx, bodyScr, p, radius);
 
       // Mini floating HP bars (hovering above head)
       const barW = 32;

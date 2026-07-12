@@ -38,6 +38,27 @@ test('off() removes a listener; unknown events are ignored', () => {
   assert.doesNotThrow(() => nm.on('nope', () => {})());
 });
 
+test('WsTransport coalesces a burst of state snapshots to the newest frame', async () => {
+  const seen = [];
+  const transport = new WsTransport((event, from, data) => {
+    if (event === 'onData') seen.push([from, data]);
+  }, 'ws://unused');
+
+  for (let i = 1; i <= 40; i++) {
+    transport._queueLatestGameState({ type: MsgType.GAME_STATE, stateSeq: i, players: { frame: i } });
+  }
+  await sleep(10);
+
+  assert.equal(seen.length, 1, 'one render interval must apply at most one state correction');
+  assert.equal(seen[0][0], 'server');
+  assert.equal(seen[0][1].players.frame, 40, 'the newest authoritative state wins');
+
+  transport._queueLatestGameState({ type: MsgType.GAME_STATE, stateSeq: 39, players: { frame: 39 } });
+  await sleep(10);
+  assert.equal(seen.length, 1, 'an older state cannot roll the client backward');
+  transport.stop();
+});
+
 // ── LocalTransport (offline bot match) ──────────────────────────────────────
 
 test('hostLocal makes the client its own authoritative host, no network', async () => {

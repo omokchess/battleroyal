@@ -118,7 +118,17 @@ export class Player {
     this.sniperTeleportTargetUntil = 0;
     this.altSkillCdLeft = 0;    // generic R skill cooldown (seconds)
     this.targetSkillCdLeft = 0; // generic LMB skill cooldown (seconds)
-    this.ultimateGauge = 0;     // 0..100, filled by landing workshop attacks/skills
+    this.workshopDamageBuffLeft = 0;
+    this.workshopDamageBuffPct = 0;
+    this.workshopDotGuardLeft = 0;
+    this.workshopSkillGuardLeft = 0;
+    this.workshopSkillGuardPct = 0;
+    this.workshopMoveBuffLeft = 0;
+    this.workshopMoveBuffValue = 0;
+    this.workshopShieldLeft = 0;
+    this.workshopShield = 0;
+    this.workshopIFrameBuffLeft = 0;
+    this.ultimateGauge = 0;     // 0..100, filled when workshop attacks/skills are used
     this.pendingWeapon = null; // queued weapon swap, applied on next respawn
     this.arrowStacks = 0;     // bow skill charges earned by landing arrows
     this.greatswordChargeStart = 0;
@@ -189,7 +199,7 @@ export class Player {
         anchors: h.anchors && typeof h.anchors === 'object' ? h.anchors : null,
         layer: ['behindPlayer', 'overPlayer', 'overWeapon'].includes(h.layer) ? h.layer : 'overPlayer',
         showHandles: h.showHandles !== false,
-        keys: Array.isArray(h.keys) ? h.keys.slice(0, 64).map(k => ({ ...k })) : [],
+        keys: Array.isArray(h.keys) ? h.keys.map(k => ({ ...k })) : [],
       } : null).filter(Boolean);
       safe.weaponVisual = {
         imageId: def.weaponVisual.imageId ? String(def.weaponVisual.imageId).slice(0, 128) : null,
@@ -417,6 +427,10 @@ export class Player {
     if (this.dashCdLeft > 0) this.dashCdLeft = Math.max(0, this.dashCdLeft - deltaTime);
     if (this.stunTimeLeft > 0) this.stunTimeLeft = Math.max(0, this.stunTimeLeft - deltaTime);
     if (this.slowTimeLeft > 0) this.slowTimeLeft = Math.max(0, this.slowTimeLeft - deltaTime);
+    for (const key of ['workshopDamageBuffLeft', 'workshopDotGuardLeft', 'workshopSkillGuardLeft', 'workshopMoveBuffLeft', 'workshopShieldLeft', 'workshopIFrameBuffLeft']) {
+      if (this[key] > 0) this[key] = Math.max(0, this[key] - deltaTime);
+    }
+    if (this.workshopShieldLeft <= 0) this.workshopShield = 0;
   }
 
   beginMotionRoot(motion, now = Date.now(), durMs = 0) {
@@ -544,6 +558,7 @@ export class Player {
     const rageSlowMul = (this.buffType === 'axe_rage' && this.buffTimeLeft > 0) ? 0.3 : 1; // 70% slow while spinning
     const weaponConfig = Weapons[this.weapon] || Weapons.sword;
     let baseMul = this.workshopWeapon?.stats?.moveSpeed ?? weaponConfig.moveSpeed ?? 1;
+    if (this.workshopMoveBuffLeft > 0) baseMul += this.workshopMoveBuffValue || 0;
     if (this.weapon === 'flamethrower' && this.flameSpraying) baseMul = weaponConfig.sprayMoveSpeed ?? baseMul;
     const target = (right ? 1 : 0) - (left ? 1 : 0);
     const targetVx = target * PHYS.runSpeed * baseMul * slowMul * rageSlowMul;
@@ -691,6 +706,12 @@ export class Player {
     this.targetSkillCdLeft = 0;
     this.wsSkillCd = {};
     this.wsSkillCdHoldUntil = {};
+    this.workshopDamageBuffLeft = 0; this.workshopDamageBuffPct = 0;
+    this.workshopDotGuardLeft = 0;
+    this.workshopSkillGuardLeft = 0; this.workshopSkillGuardPct = 0;
+    this.workshopMoveBuffLeft = 0; this.workshopMoveBuffValue = 0;
+    this.workshopShieldLeft = 0; this.workshopShield = 0;
+    this.workshopIFrameBuffLeft = 0;
     this._basicCombo = 0;
     this.arrowStacks = 0;
     this.greatswordChargeStart = 0;
@@ -735,12 +756,19 @@ export class Player {
 
   // `ignoreIframe` lets damage-over-time (bleed/burn) keep ticking through dash
   // i-frames — i-frames only block NEW direct hits/status, not existing DoTs.
-  takeDamage(amount, attackerName, ignoreIframe = false) {
+  takeDamage(amount, attackerName, ignoreIframe = false, damageKind = 'direct') {
     if (this.isDead || (!ignoreIframe && this.isInvincible())) return false;
 
     let dmg = amount;
+    if (damageKind === 'dot' && this.workshopDotGuardLeft > 0) dmg = Math.max(0, dmg - 3);
+    if (damageKind === 'skill' && this.workshopSkillGuardLeft > 0) dmg *= Math.max(0, 1 - (this.workshopSkillGuardPct || 0) / 100);
     // 열기 방패 (flamethrower LMB): flat 30% damage reduction while active.
     if (this.heatShieldUntil && Date.now() < this.heatShieldUntil) dmg *= 0.7;
+    if (this.workshopShieldLeft > 0 && this.workshopShield > 0) {
+      const absorbed = Math.min(this.workshopShield, dmg);
+      this.workshopShield -= absorbed;
+      dmg -= absorbed;
+    }
     this.hp -= dmg;
     if (this.hp <= 0) {
       this.hp = 0;
@@ -753,8 +781,8 @@ export class Player {
   /**
    * Full serialization for sync transmission
    */
-  serialize() {
-    return {
+  serialize(options = {}) {
+    const snapshot = {
       id: this.id,
       nickname: this.nickname,
       weapon: this.weapon,
@@ -803,6 +831,7 @@ export class Player {
       altSkillCdMs: Math.round((this.altSkillCdLeft || 0) * 1000),
       targetSkillCdMs: Math.round((this.targetSkillCdLeft || 0) * 1000),
       wsSkillCdMs: serializeWorkshopCooldowns(this.wsSkillCd),
+      wsBuff: this.workshopBuffSnapshot(),
       ultimateGauge: Math.max(0, Math.min(100, Math.round(this.ultimateGauge || 0))),
       motionLockMs: Math.max(0, Math.round((this.motionLockUntil || 0) - Date.now())),
       rootMotionMs: Math.max(0, Math.round((this.motionRootUntil || 0) - Date.now())),
@@ -816,9 +845,10 @@ export class Player {
       costumeEffect: this.costumeEffect || null,
       msid: this.motionSetId || null,   // stickman motion-set loadout id (cosmetic; id only)
       look: this.stickLook || null,     // stick appearance blob (cosmetic; sanitized at render)
-      wsw: this.workshopWeapon || null, // workshop weapon def (re-clamped on receive)
       cos: this.cosmeticsSnapshot()
     };
+    if (options.includeWorkshopWeapon !== false) snapshot.wsw = this.workshopWeapon || null;
+    return snapshot;
   }
 
   _serializeActiveHitboxes() {
@@ -840,7 +870,7 @@ export class Player {
         h: Math.max(1, Number(hb.h) || 1)
       });
     }
-    return out.slice(0, 64);
+    return out;
   }
 
   /**
@@ -888,10 +918,11 @@ export class Player {
     this.targetSkillCdLeft = Math.max(0, (data.targetSkillCdMs || 0) / 1000);
     this.wsSkillCd = deserializeWorkshopCooldowns(data.wsSkillCdMs);
     this.wsSkillCdHoldUntil = {};
+    this.applyWorkshopBuffSnapshot(data.wsBuff);
     this.ultimateGauge = Math.max(0, Math.min(100, Math.round(Number(data.ultimateGauge) || 0)));
     this.motionLockUntil = data.motionLockMs > 0 ? Date.now() + data.motionLockMs : 0;
     this.motionRootUntil = data.rootMotionMs > 0 ? Date.now() + data.rootMotionMs : 0;
-    this.activeHitboxes = Array.isArray(data.activeHitboxes) ? data.activeHitboxes.slice(0, 64) : [];
+    this.activeHitboxes = Array.isArray(data.activeHitboxes) ? data.activeHitboxes : [];
     this.chakramOrbitUntil = data.orbitMs > 0 ? Date.now() + data.orbitMs : 0;
     this.heatShieldUntil = data.shieldMs > 0 ? Date.now() + data.shieldMs : 0;
     this.guardianStanceUntil = data.stanceMs > 0 ? Date.now() + data.stanceMs : 0;
@@ -906,7 +937,10 @@ export class Player {
     this.stickLook = (data.look && typeof data.look === 'object') ? data.look : null; // sanitized at render
     // Workshop weapon: re-clamp the received def through the envelope (never trust
     // a peer's raw blob — host authority + double clamp).
-    if (data.wsw) this._applyWorkshopWeapon(data.wsw); else this.workshopWeapon = null;
+    if (Object.prototype.hasOwnProperty.call(data, 'wsw')) {
+      if (data.wsw) this._applyWorkshopWeapon(data.wsw);
+      else this.workshopWeapon = null;
+    }
     this.applyCosmeticsSnapshot(data.cos);
 
     // Coordinate smoothing can be applied in game loop,
@@ -914,6 +948,26 @@ export class Player {
     this.x = data.x;
     this.y = data.y;
     this.angle = data.angle;
+  }
+
+  workshopBuffSnapshot() {
+    return {
+      damageMs: Math.round(this.workshopDamageBuffLeft * 1000), damagePct: this.workshopDamageBuffPct || 0,
+      dotMs: Math.round(this.workshopDotGuardLeft * 1000),
+      skillMs: Math.round(this.workshopSkillGuardLeft * 1000), skillPct: this.workshopSkillGuardPct || 0,
+      moveMs: Math.round(this.workshopMoveBuffLeft * 1000), moveValue: this.workshopMoveBuffValue || 0,
+      shieldMs: Math.round(this.workshopShieldLeft * 1000), shield: Math.max(0, this.workshopShield || 0),
+      iframeMs: Math.round(this.workshopIFrameBuffLeft * 1000),
+    };
+  }
+
+  applyWorkshopBuffSnapshot(raw = {}) {
+    this.workshopDamageBuffLeft = Math.max(0, (raw.damageMs || 0) / 1000); this.workshopDamageBuffPct = Math.max(0, Number(raw.damagePct) || 0);
+    this.workshopDotGuardLeft = Math.max(0, (raw.dotMs || 0) / 1000);
+    this.workshopSkillGuardLeft = Math.max(0, (raw.skillMs || 0) / 1000); this.workshopSkillGuardPct = Math.max(0, Number(raw.skillPct) || 0);
+    this.workshopMoveBuffLeft = Math.max(0, (raw.moveMs || 0) / 1000); this.workshopMoveBuffValue = Math.max(0, Number(raw.moveValue) || 0);
+    this.workshopShieldLeft = Math.max(0, (raw.shieldMs || 0) / 1000); this.workshopShield = Math.max(0, Number(raw.shield) || 0);
+    this.workshopIFrameBuffLeft = Math.max(0, (raw.iframeMs || 0) / 1000);
   }
 }
 

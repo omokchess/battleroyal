@@ -51,6 +51,10 @@ export class WsTransport {
     this._reconnectStartedAt = 0;
     this._retryTimer = null;
     this._attempt = 0;
+    this._pendingGameState = null;
+    this._gameStateFlushHandle = null;
+    this._gameStateFlushKind = '';
+    this._lastGameStateSequence = -1;
   }
 
   /**
@@ -108,6 +112,7 @@ export class WsTransport {
 
       if (data.type === MsgType.PONG) { this._onPong(data); return; }
       if (data.type === MsgType.ROOM_JOINED) {
+        this._lastGameStateSequence = -1;
         const firstJoin = !this._joined;
         this._joined = true;
         this.localId = data.id;
@@ -133,6 +138,10 @@ export class WsTransport {
         this.emit('onError', data.message || '서버 오류.');
         return;
       }
+      if (data.type === MsgType.GAME_STATE) {
+        this._queueLatestGameState(data);
+        return;
+      }
       // Every game frame flows through onData, tagged 'server' (the sim/shell
       // don't care about the sender id on the client).
       this.emit('onData', 'server', data);
@@ -142,6 +151,7 @@ export class WsTransport {
       if (this._stopped) return;
       clearTimeout(this._connectTimer);
       this._stopPing();
+      this._cancelQueuedGameState();
       this._scheduleReconnect();
     };
 
@@ -159,6 +169,7 @@ export class WsTransport {
     if (!this._stopped) this._send({ type: MsgType.LEAVE_ROOM });
     this._stopped = true;
     this._stopPing();
+    this._cancelQueuedGameState();
     clearTimeout(this._connectTimer);
     clearTimeout(this._retryTimer);
     if (this.ws) {
@@ -171,6 +182,60 @@ export class WsTransport {
     if (this._stopped || !this.ws || this.ws.readyState !== 1 /* OPEN */) return false;
     try { this.ws.send(JSON.stringify(payload)); return true; }
     catch { return false; }
+  }
+
+  /**
+   * A proxy or a temporarily busy tab can deliver several authoritative
+   * snapshots in one burst. Applying every stale intermediate state before the
+   * next paint stacks the client's per-snapshot correction and looks like a
+   * teleport. Keep only the newest GAME_STATE for the next render frame.
+   * Discrete frames (kills, joins, actions) still bypass this queue unchanged.
+   */
+  _queueLatestGameState(frame) {
+    const sequence = Number(frame?.stateSeq);
+    const pendingSequence = Number(this._pendingGameState?.stateSeq);
+    if (Number.isSafeInteger(sequence) && sequence >= 0) {
+      if (sequence <= this._lastGameStateSequence) return;
+      if (this._pendingGameState && Number.isSafeInteger(pendingSequence) && sequence <= pendingSequence) return;
+    }
+
+    this._pendingGameState = frame;
+    if (this._gameStateFlushHandle !== null) return;
+
+    const flush = () => {
+      this._gameStateFlushHandle = null;
+      this._gameStateFlushKind = '';
+      const latest = this._pendingGameState;
+      this._pendingGameState = null;
+      if (this._stopped || !latest) return;
+      const latestSequence = Number(latest.stateSeq);
+      if (Number.isSafeInteger(latestSequence) && latestSequence >= 0) {
+        if (latestSequence <= this._lastGameStateSequence) return;
+        this._lastGameStateSequence = latestSequence;
+      }
+      this.emit('onData', 'server', latest);
+    };
+
+    if (typeof globalThis.requestAnimationFrame === 'function') {
+      this._gameStateFlushKind = 'raf';
+      this._gameStateFlushHandle = globalThis.requestAnimationFrame(flush);
+    } else {
+      this._gameStateFlushKind = 'timeout';
+      this._gameStateFlushHandle = setTimeout(flush, 0);
+    }
+  }
+
+  _cancelQueuedGameState() {
+    if (this._gameStateFlushHandle !== null) {
+      if (this._gameStateFlushKind === 'raf' && typeof globalThis.cancelAnimationFrame === 'function') {
+        globalThis.cancelAnimationFrame(this._gameStateFlushHandle);
+      } else {
+        clearTimeout(this._gameStateFlushHandle);
+      }
+    }
+    this._gameStateFlushHandle = null;
+    this._gameStateFlushKind = '';
+    this._pendingGameState = null;
   }
 
   _startPing() {
@@ -215,6 +280,7 @@ export class WsTransport {
     if (this._stopped) return;
     this._stopped = true;
     this._stopPing();
+    this._cancelQueuedGameState();
     clearTimeout(this._connectTimer);
     clearTimeout(this._retryTimer);
     try { this.ws?.close(); } catch {}

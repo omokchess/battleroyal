@@ -34,7 +34,7 @@ import { buildLevel, PHYS } from '../Level.js';
 import { BotBrain, BOT_DIFFICULTY } from '../Bot.js';
 import { resolveMotion, weaponSetId, sanitizeMotionSetId, canonicalWeaponMotion, canonicalWeaponsSnapshot, setCanonicalWeapon } from '../Motion.js';
 import { STATUS } from '../Status.js';
-import { sampleCombatKeys, sampleEffectTransform } from '../Workshop.js';
+import { sampleCombatKeys, sampleEffectTransform, sanitizeStatuses, sanitizeBuffs } from '../Workshop.js';
 import { NULL_FX } from './Fx.js';
 import { makeRng, randomSeed, SystemClock } from './env.js';
 
@@ -42,6 +42,7 @@ import { makeRng, randomSeed, SystemClock } from './env.js';
 // Exported: the client shell renders the respawn-countdown HUD against this.
 export const RESPAWN_MS = 1500;
 const RESPAWN_PROTECTION_MS = 2000;
+const WORKSHOP_FX_WORLD_SCALE = 14 / 46;
 
 export class GameSim {
   constructor(options = {}) {
@@ -109,6 +110,7 @@ export class GameSim {
     this.pendingChakrams = [];
     this.pendingMeleeHits = [];
     this.pendingHammerSlams = [];
+    this.pendingWorkshopBuffs = [];
     this.effects = [];
 
     this.isRunning = false;
@@ -123,6 +125,8 @@ export class GameSim {
 
     // Outbound Protocol messages; the runner drains these (see _publish).
     this.outbox = [];
+    this._stateSequence = 0;
+    this._lastBroadcastWorkshopRefs = new Map();
     // True when this instance owns the simulation (offline host, or the server).
     this.isAuthority = false;
   }
@@ -142,6 +146,8 @@ export class GameSim {
     this.pendingMeleeHits = [];
     this.pendingHammerSlams = [];
     this.effects = [];
+    this._stateSequence = 0;
+    this._lastBroadcastWorkshopRefs = new Map();
   }
 
   /**
@@ -196,12 +202,18 @@ export class GameSim {
     const weapon = Weapons[joinPayload.weapon] ? joinPayload.weapon : 'sword';
     const costume = sanitizeCostume(joinPayload.costume);
     const p = new Player(id, nickname, weapon, spawnP.x, spawnP.y, costume);
+    const workshopWeapon = joinPayload.costume?.workshopWeapon;
+    if (workshopWeapon && typeof workshopWeapon === 'object' && !Array.isArray(workshopWeapon)) {
+      p._applyWorkshopWeapon(workshopWeapon);
+      p.hp = p.maxHp;
+    }
     p.applyCosmetics(sanitizeCosmetics(joinPayload.costume?.cosmetics));
     p.isMobile = !!joinPayload.isMobile;
     p.mobileAimAssist = joinPayload.controls?.mobileAimAssist === undefined ? true : !!joinPayload.controls.mobileAimAssist;
     p.automaticAttack = !!joinPayload.controls?.automaticAttack;
     this._enforceWorkshopPolicy(p);
     this.players[id] = p;
+    this._lastBroadcastWorkshopRefs.set(id, p.workshopWeapon || null);
     this._announce(`${p.nickname}님이 전장에 입장했습니다!`);
     return p;
   }
@@ -210,6 +222,7 @@ export class GameSim {
   removePlayer(id) {
     if (!this.players[id]) return false;
     delete this.players[id];
+    this._lastBroadcastWorkshopRefs.delete(id);
     return true;
   }
 
@@ -324,6 +337,7 @@ export class GameSim {
     this._releaseDueSniperShots(now);
     this._releaseDueMatchlockShots(now);
     this._releaseDuePendingChakrams(now);
+    this._releaseDueWorkshopBuffs(now);
     this._processSpearThrowQueue(now);
     this._processPendingMeleeHits(now);
     this._processGreatswordCharges(now);
@@ -463,10 +477,8 @@ export class GameSim {
           if (proj.kind === 'wsranged') {
             // A workshop ranged basic attack: weapon-damage direct hit + status.
             const owner = this.players[proj.ownerId];
-            const died = target.takeDamage(proj.damage || 0, owner ? owner.nickname : '');
-            if (owner) this._awardUltimateGaugeOnce(owner, proj.wsUltimateGain ?? 10, proj.wsGaugeActivation);
-            if (proj.wsStatus && proj.wsStatus !== 'none') this._applyStatusEffect(target, proj.ownerId, proj.wsStatus, proj.wsStatusMs || 0, now, proj.wsAirborneHeight);
-            else if (owner) this._applyWorkshopStatus(owner, target, now);
+            const died = target.takeDamage(this._workshopOutgoingDamage(owner, proj.damage || 0), owner ? owner.nickname : '');
+            this._applyCombatStatuses(target, proj.ownerId, { statuses: proj.wsStatuses, status: proj.wsStatus, statusDurationMs: proj.wsStatusMs, airborneHeight: proj.wsAirborneHeight }, now);
             if (died) this._creditKill(proj.ownerId, target);
             if (!proj.piercing) proj.isDead = true;
             return;
@@ -475,9 +487,8 @@ export class GameSim {
             // A workshop skill1/2/3's OWN ranged ability: its own damage + status
             // (not the basic swing's) — see _fireWorkshopPresetProjectile.
             const owner = this.players[proj.ownerId];
-            const died = target.takeDamage(proj.damage || 0, owner ? owner.nickname : '');
-            if (owner) this._awardUltimateGaugeOnce(owner, proj.wsUltimateGain ?? 10, proj.wsGaugeActivation);
-            if (proj.wsStatus) this._applyStatusEffect(target, proj.ownerId, proj.wsStatus, proj.wsStatusMs || 0, now, proj.wsAirborneHeight);
+            const died = target.takeDamage(this._workshopOutgoingDamage(owner, proj.damage || 0), owner ? owner.nickname : '', false, 'skill');
+            this._applyCombatStatuses(target, proj.ownerId, { statuses: proj.wsStatuses, status: proj.wsStatus, statusDurationMs: proj.wsStatusMs, airborneHeight: proj.wsAirborneHeight }, now);
             if (died) this._creditKill(proj.ownerId, target);
             if (!proj.piercing) proj.isDead = true;
             return;
@@ -576,13 +587,14 @@ export class GameSim {
       if (e.type === 'workshop_frame_fx' && e.effectDef) {
         const authoredTime = e.effectStart + (e.effectEnd - e.effectStart) * e.progress;
         const state = sampleEffectTransform(e.effectDef, authoredTime);
-        e.x = e.effectOriginX + state.x * e.effectFacing;
-        e.y = e.effectOriginY + state.y;
-        e.angle = (Number(state.rotation) || 0) * Math.PI / 180;
+        e.x = e.effectOriginX + state.x * WORKSHOP_FX_WORLD_SCALE * e.effectFacing;
+        e.y = e.effectOriginY + state.y * WORKSHOP_FX_WORLD_SCALE;
+        e.angle = (Number(state.rotation) || 0) * Math.PI / 180 * e.effectFacing;
         e.scaleX = Number(state.scaleX) || 1;
         e.scaleY = Number(state.scaleY) || 1;
         e.alpha = Number.isFinite(state.alpha) ? state.alpha : 1;
-        e.flipX = !!state.flipX;
+        e.color = state.color || e.effectDef.color || '#ffffff';
+        e.flipX = !!state.flipX !== (e.effectFacing < 0);
         e.flipY = !!state.flipY;
       }
     });
@@ -624,6 +636,7 @@ export class GameSim {
           this._clearPendingHammerSlamsFor(p.id);
           this._clearPendingSniperShotsFor(p.id);
           this._clearPendingMatchlockShotsFor(p.id);
+          this.pendingWorkshopBuffs = (this.pendingWorkshopBuffs || []).filter(entry => entry.playerId !== p.id);
         }
         p.respawnRemainingMs = Math.max(0, p.respawnTime - now);
         if (now >= p.respawnTime) {
@@ -787,7 +800,7 @@ export class GameSim {
   }
 
 
-  _spawnWorkshopProjectile(player, pj, combat = {}, now = this.now(), tagSuffix = 'evt', activationId = null) {
+  _spawnWorkshopProjectile(player, pj, combat = {}, now = this.now(), tagSuffix = 'evt', activationId = null, sourceFrame = 1) {
     if (!player || !pj) return;
     const ang = this._projectileAngle(player, pj);
     const speed = pj.speed || 600;
@@ -803,9 +816,12 @@ export class GameSim {
     proj.wsImageId = pj.imageId || 'arrow';
     proj.wsScale = Math.max(0.3, Math.min(3, Number(pj.scale) || 1));
     proj.wsRotation = Number.isFinite(Number(pj.rotation)) ? Number(pj.rotation) : 0;
-    proj.wsStatus = combat.status || 'none';
-    proj.wsStatusMs = combat.statusDurationMs || 0;
-    proj.wsAirborneHeight = combat.airborneHeight || 120;
+    proj.wsStatuses = sanitizeStatuses(combat.statuses, combat)
+      .filter(status => !Number.isFinite(status.applyFrame) || status.applyFrame === sourceFrame);
+    const primaryStatus = proj.wsStatuses[0];
+    proj.wsStatus = primaryStatus?.type || 'none';
+    proj.wsStatusMs = primaryStatus?.durationMs || 0;
+    proj.wsAirborneHeight = primaryStatus?.airborneHeight || 120;
     proj.wsSlot = tagSuffix;
     proj.wsGaugeActivation = activationId || `ws_${player.id}_${this._wsActivationSeq = (this._wsActivationSeq || 0) + 1}`;
     proj.wsUltimateGain = tagSuffix === 'basic'
@@ -832,6 +848,13 @@ export class GameSim {
     else if (status === 'burn') this._applyBurn(target, ownerId, 2, ms);
     else if (status === 'stun') this._applyStun(target, ms, now);
     else if (status === 'airborne') this._applyAirborne(target, ms, airborneHeight, now);
+  }
+
+  _applyCombatStatuses(target, ownerId, combat, now, frameNumber = null) {
+    for (const status of sanitizeStatuses(combat?.statuses, combat)) {
+      if (frameNumber != null && Number.isFinite(status.applyFrame) && status.applyFrame !== frameNumber) continue;
+      this._applyStatusEffect(target, ownerId, status.type, status.durationMs, now, status.airborneHeight || 120);
+    }
   }
 
 
@@ -874,7 +897,9 @@ export class GameSim {
     player.lastAttackTime = now; player.swingDirection *= -1;
     player.attackMotionTag = tagSuffix || 'skill';
     player.lastAttackMotionTag = player.attackMotionTag;
-    this._lockPlayerMotion(player, now, player.workshopWeapon?.motionSet?.[tagSuffix || 'skill']);
+    const motion = player.workshopWeapon?.motionSet?.[tagSuffix || 'skill'];
+    this._lockPlayerMotion(player, now, motion);
+    this._scheduleWorkshopBuffs(player, combat, now, Math.max(80, ((motion?.duration || 0.42) * 1000)), tagSuffix, motion?.keyframes?.length || 1);
     this._spawnWorkshopProjectile(player, pj, combat, now, tagSuffix || 'skill');
   }
 
@@ -894,6 +919,7 @@ export class GameSim {
     if (!player.wsSkillCd) player.wsSkillCd = {};
     if ((player.wsSkillCd[slot] || 0) > 0) return true;   // on cooldown — button consumed, nothing fires
     player.wsSkillCd[slot] = slot === 'ultimate' ? 0 : (Number.isFinite(combat.cooldownMs) ? combat.cooldownMs : 1000) / 1000;
+    if (slot !== 'ultimate') this._awardUltimateGauge(player, combat.ultimateGain);
     this._showSkillCallout(player, slot, slot === 'ultimate' ? '궁극기' : '스킬', now);
     const motion = ws.motionSet && ws.motionSet[slot];
     if (!player.wsSkillCdHoldUntil) player.wsSkillCdHoldUntil = {};
@@ -945,6 +971,49 @@ export class GameSim {
     }
   }
 
+  _workshopOutgoingDamage(player, damage) {
+    const base = Math.max(0, Number(damage) || 0);
+    return player?.workshopDamageBuffLeft > 0 ? base * (1 + (player.workshopDamageBuffPct || 0) / 100) : base;
+  }
+
+  _scheduleWorkshopBuffs(player, combat, now, motionMs = 420, kind = null, frameCount = 1) {
+    for (const buff of sanitizeBuffs(combat?.buffs, kind)) {
+      const count = Math.max(1, Number(frameCount) || 1);
+      const hasAuthoredFrame = Number.isFinite(buff.applyFrame);
+      const authoredFrame = Math.max(1, Math.min(count, buff.applyFrame || 1));
+      const frameDelay = count <= 1 ? 0 : motionMs * ((authoredFrame - 1) / (count - 1));
+      const delay = hasAuthoredFrame ? frameDelay : (buff.timing === 'after' ? motionMs : 0);
+      if (delay > 0) this.pendingWorkshopBuffs.push({ playerId: player.id, at: now + delay, buff });
+      else this._applyWorkshopBuff(player, buff);
+    }
+  }
+
+  _releaseDueWorkshopBuffs(now) {
+    if (!this.pendingWorkshopBuffs?.length) return;
+    const keep = [];
+    for (const pending of this.pendingWorkshopBuffs) {
+      if (now < pending.at) { keep.push(pending); continue; }
+      const player = this.players[pending.playerId];
+      if (player && !player.isDead) this._applyWorkshopBuff(player, pending.buff);
+    }
+    this.pendingWorkshopBuffs = keep;
+  }
+
+  _applyWorkshopBuff(player, buff) {
+    if (!player || !buff) return;
+    const seconds = Math.max(0, (buff.durationMs || 0) / 1000);
+    if (buff.type === 'damageUp') { player.workshopDamageBuffLeft = Math.max(player.workshopDamageBuffLeft || 0, seconds); player.workshopDamageBuffPct = Math.max(player.workshopDamageBuffPct || 0, buff.value || 0); }
+    else if (buff.type === 'dotGuard') player.workshopDotGuardLeft = Math.max(player.workshopDotGuardLeft || 0, seconds);
+    else if (buff.type === 'skillGuard') { player.workshopSkillGuardLeft = Math.max(player.workshopSkillGuardLeft || 0, seconds); player.workshopSkillGuardPct = Math.max(player.workshopSkillGuardPct || 0, buff.value || 0); }
+    else if (buff.type === 'moveSpeed') { player.workshopMoveBuffLeft = Math.max(player.workshopMoveBuffLeft || 0, seconds); player.workshopMoveBuffValue = Math.max(player.workshopMoveBuffValue || 0, buff.value || 0); }
+    else if (buff.type === 'shield') { player.workshopShieldLeft = Math.max(player.workshopShieldLeft || 0, seconds); player.workshopShield = Math.min(30, (player.workshopShield || 0) + (buff.value || 0)); }
+    else if (buff.type === 'iframe') {
+      const seconds = Math.max(0, (buff.value || 0) / 60);
+      player.iframeTimeLeft = Math.max(player.iframeTimeLeft || 0, seconds);
+      player.workshopIFrameBuffLeft = Math.max(player.workshopIFrameBuffLeft || 0, seconds);
+    }
+  }
+
 
   /** Begin a hitbox-driven swing: manage the cooldown + render animation via
    *  lastAttackTime, and record the active swing for _updateHitboxSwings. */
@@ -953,6 +1022,7 @@ export class GameSim {
     player.attackMotionTag = opts.motionTag || 'attack';
     player.lastAttackMotionTag = player.attackMotionTag;
     this._lockPlayerMotion(player, now, motion);
+    this._scheduleWorkshopBuffs(player, opts.combat, now, Math.max(80, (motion.duration || 0.4) * 1000), opts.presetKind, motion.keyframes?.length || 1);
     player.swingDirection *= -1;
     player._hbSwing = {
       start: now,
@@ -975,6 +1045,7 @@ export class GameSim {
       airborneHeight: opts.airborneHeight || 120,
       ultimateGain: Number.isFinite(Number(opts.ultimateGain)) ? Number(opts.ultimateGain) : null,
       presetKind: opts.presetKind || null,
+      frameCount: Math.max(1, motion.keyframes?.length || 1),
       ultimateAwarded: false,
       activationId: `ws_${player.id}_${this._wsActivationSeq = (this._wsActivationSeq || 0) + 1}`,
       hit: new Set(),
@@ -1051,14 +1122,10 @@ export class GameSim {
           const kb = Number.isFinite(phaseCombat.knockback) ? phaseCombat.knockback : sw.knockback;
           if (kb) this._displace(t, facing * kb, 0);
           const hbDamage = Number.isFinite(Number(hb.damage)) ? Math.max(0, Number(hb.damage)) : perHitDamage;
-          const died = t.takeDamage(hbDamage, p.nickname);
-          if (!sw.ultimateAwarded) {
-            this._awardUltimateGauge(p, Number.isFinite(Number(phaseCombat.ultimateGain)) ? phaseCombat.ultimateGain : 10);
-            sw.ultimateAwarded = true;
-          }
-          const status = phaseCombat.status && phaseCombat.status !== 'none' ? phaseCombat.status : sw.status;
-          const statusMs = Number.isFinite(phaseCombat.statusDurationMs) ? phaseCombat.statusDurationMs : sw.statusMs;
-          if (status) this._applyStatusEffect(t, p.id, status, statusMs, now, phaseCombat.airborneHeight || sw.airborneHeight);
+          const skillDamage = !['basic', 'attack', 'heavy'].includes(sw.presetKind);
+          const died = t.takeDamage(this._workshopOutgoingDamage(p, hbDamage), p.nickname, false, skillDamage ? 'skill' : 'direct');
+          const frameNumber = Math.max(1, Math.min(sw.frameCount, Math.round(phase * Math.max(0, sw.frameCount - 1)) + 1));
+          this._applyCombatStatuses(t, p.id, phaseCombat, now, frameNumber);
           if (died) this._creditKill(p.id, t);
           this.fx.hitstop(42, p.id);
         }
@@ -1091,7 +1158,8 @@ export class GameSim {
       const ev = sw.projectileEvents[i];
       if (phase < ev.time) continue;
       sw.firedProjectileEvents.add(i);
-      this._spawnWorkshopProjectile(player, ev.projectile || sw.eventProjectile || player.workshopWeapon?.projectile, combat, now, `evt${i}`, sw.activationId);
+      const sourceFrame = Math.max(1, Math.min(sw.frameCount, Math.round(ev.time * Math.max(0, sw.frameCount - 1)) + 1));
+      this._spawnWorkshopProjectile(player, ev.projectile || sw.eventProjectile || player.workshopWeapon?.projectile, combat, now, `evt${i}`, sw.activationId, sourceFrame);
     }
     for (let i = 0; i < (sw.teleportEvents || []).length; i++) {
       if (sw.firedTeleportEvents.has(i)) continue;
@@ -1127,9 +1195,9 @@ export class GameSim {
       : 420;
     this.effects.push({
       attackerId: player.id,
-      x: originX + state.x * forward,
-      y: originY + state.y,
-      angle: (Number(state.rotation) || 0) * Math.PI / 180,
+      x: originX + state.x * WORKSHOP_FX_WORLD_SCALE * forward,
+      y: originY + state.y * WORKSHOP_FX_WORLD_SCALE,
+      angle: (Number(state.rotation) || 0) * Math.PI / 180 * forward,
       weapon: player.weapon,
       type: 'workshop_frame_fx',
       worldAnchored: true,
@@ -1137,7 +1205,8 @@ export class GameSim {
       scaleX: Number(state.scaleX) || 1,
       scaleY: Number(state.scaleY) || 1,
       alpha: Number.isFinite(state.alpha) ? state.alpha : 1,
-      flipX: !!state.flipX,
+      color: state.color || ev.color || '#ffffff',
+      flipX: !!state.flipX !== (forward < 0),
       flipY: !!state.flipY,
       effectDef: ev,
       effectStart: startTime,
@@ -1512,6 +1581,7 @@ export class GameSim {
     // fall back to a workshop projectile, canonical hitbox swing, or coded kit.
     if (this._isMotionLocked(player, now)) return false;
     if (player.blockVM && player.blockVM.hasHandler('basicAttack')) {
+      this._awardUltimateGauge(player, 5);
       player.lastAttackTime = now;
       player.attackMotionTag = 'attack';
       player.lastAttackMotionTag = 'attack';
@@ -1526,6 +1596,7 @@ export class GameSim {
     // a ranged (or event-based) basic no longer skips the heavy entirely. Returns
     // true when this hit converted into the heavy (consuming the attack).
     if (this._tryHeavyCombo(player, now)) return true;
+    this._awardUltimateGauge(player, 5);
 
     const basicMotion = player.workshopWeapon?.motionSet?.attack;
     const basicHasEvents = !!(basicMotion && ((basicMotion.projectileEvents && basicMotion.projectileEvents.length) || (basicMotion.teleportEvents && basicMotion.teleportEvents.length)));
@@ -1569,6 +1640,7 @@ export class GameSim {
     player._basicComboAt = now;
     if ((player._basicCombo || 0) >= heavyAfter) {
       player._basicCombo = 0;
+      this._awardUltimateGauge(player, 5);
       const motion = heavyMotion;
       const swingMotion = motion ? { ...motion, hitboxes: (Array.isArray(motion.hitboxes) ? motion.hitboxes : heavyHb) || [] } : { duration: 0.5, hitboxes: heavyHb || [] };
       this._startHitboxSwing(player, swingMotion, now, {
@@ -1577,7 +1649,7 @@ export class GameSim {
         status: heavyCombat.status, statusMs: heavyCombat.statusDurationMs, airborneHeight: heavyCombat.airborneHeight,
         projectile: ws.presetRanged?.heavy || null,
         motionTag: 'heavy',
-        ultimateGain: 10,
+        ultimateGain: 5,
         combat: heavyCombat,
         combatKeys: ws.presetCombatKeys?.heavy || [],
         presetKind: 'heavy',
@@ -4182,7 +4254,7 @@ export class GameSim {
       p[tk] -= deltaTime;
       if (p[tk] <= 0 && !p.isDead) {
         p[tk] += 1;
-        const died = p.takeDamage(p[dp] || STATUS[key].dps, STATUS[key].deathName, true);
+        const died = p.takeDamage(p[dp] || STATUS[key].dps, STATUS[key].deathName, true, 'dot');
         if (died) this._creditKill(p[src], p, STATUS[key].viaLabel);
       }
       if (p[tl] <= 0) { p[tl] = 0; p[tk] = 0; p[dp] = 0; p[src] = null; }
@@ -5297,7 +5369,12 @@ export class GameSim {
   _broadcastState() {
     const playerSnapshots = {};
     Object.keys(this.players).forEach(id => {
-      playerSnapshots[id] = this.players[id].serialize();
+      const player = this.players[id];
+      const workshopRef = player.workshopWeapon || null;
+      const includeWorkshopWeapon = !this._lastBroadcastWorkshopRefs.has(id)
+        || this._lastBroadcastWorkshopRefs.get(id) !== workshopRef;
+      playerSnapshots[id] = player.serialize({ includeWorkshopWeapon });
+      this._lastBroadcastWorkshopRefs.set(id, workshopRef);
     });
 
     const projectileSnapshots = this.projectiles.map(p => p.serialize());
@@ -5311,7 +5388,8 @@ export class GameSim {
       zoneRenderPayload(this.zone),
       this.roomConfig.healing ? this.healingItems : null,
       this.mines.length ? this.mines : null,
-      this.firePatches.length ? this.firePatches : null
+      this.firePatches.length ? this.firePatches : null,
+      ++this._stateSequence
     );
 
     this._publish(payload);   // queued; the runner delivers it (see drainOutbox)

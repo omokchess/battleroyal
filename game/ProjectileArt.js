@@ -66,8 +66,8 @@ export function drawProjectileShape(ctx, x, y, angle, imageId, size = 20) {
 
 const FX_COL = { spark: '#ffe08a', slash: '#e5e7eb', burst: '#ff7a3d', ring: '#7fd3ff', smoke: '#9ca3af' };
 /** Draw a cosmetic frame-effect shape centred at the current ctx origin. */
-export function drawFxShape(ctx, assetId, size = 18) {
-  const col = FX_COL[assetId] || FX_COL.spark; const r = Math.max(4, size);
+export function drawFxShape(ctx, assetId, size = 18, color = null) {
+  const col = color || FX_COL[assetId] || FX_COL.spark; const r = Math.max(4, size);
   ctx.fillStyle = col; ctx.strokeStyle = col;
   switch (assetId) {
     case 'slash': ctx.lineWidth = Math.max(2, r * 0.18); ctx.beginPath(); ctx.arc(0, 0, r, -0.8, 0.8); ctx.stroke(); break;

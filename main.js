@@ -116,12 +116,13 @@ function registerPwa() {
 // Keep release communication in one place. Update this object whenever a
 // public build ships; the lobby notice renders it without duplicating markup.
 const LOBBY_PATCH = Object.freeze({
-  version: '2026.07.11 · 네트워크 롤백 완화 패치',
+  version: '2026.07.12 · 이동 안정화·FX 좌표 일치 패치',
   items: [
-    '전용 서버 시뮬레이션 30Hz → 60Hz 상향',
-    '서버 위치 스냅샷 30Hz 안정 전송',
-    '핑 기반 위치 선행 예측으로 후진·롤백 완화',
-    '입력 유지 신호 주기 100ms → 50ms 단축',
+    '방 최초 입장 시 장착한 공방 무기 즉시 적용',
+    '대형 공방 데이터의 입장 직후 중복 상태 전송 제거',
+    '편도 지연을 포함한 연속 목표점 계산으로 앞뒤 위치 흔들림 제거',
+    '커스텀 FX 위치·크기를 공방 미리보기와 같은 단위로 통일',
+    '캐릭터 방향에 맞춰 FX 위치·회전·좌우 방향 함께 반전',
   ],
 });
 

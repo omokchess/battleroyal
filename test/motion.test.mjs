@@ -6,13 +6,13 @@ import {
   StickAnimator,
 } from '../game/Motion.js';
 
-test('sanitizeMotion clamps angles and caps keyframes', () => {
+test('sanitizeMotion clamps angles without truncating keyframes', () => {
   const huge = { duration: 999, loop: true,
     keyframes: Array.from({ length: 80 }, (_, i) => ({ t: i / 79, pose: { spine: 99999 } })),
     events: [{ t: 0.5, type: 'impact' }] };
   const m = sanitizeMotion(huge);
   assert.ok(m.duration <= MOTION_LIMITS.maxDuration);
-  assert.ok(m.keyframes.length <= MOTION_LIMITS.maxKeyframes);
+  assert.equal(m.keyframes.length, 80);
   assert.equal(m.keyframes[0].pose.spine, MOTION_LIMITS.angleMax); // clamped, not 99999
   assert.equal(m.events[0].type, 'impact');
 });
@@ -104,11 +104,11 @@ test('gameplay fields are KEPT + clamped on the admin path', () => {
   assert.ok(m.knockback <= MOTION_LIMITS.knockbackMax, 'knockback clamped');
 });
 
-test('hitbox count is capped and bad entries dropped', () => {
+test('hitbox count is not truncated and bad entries are still dropped', () => {
   const many = { duration: 0.4, keyframes: [{ t: 0, pose: {} }, { t: 1, pose: {} }],
     hitboxes: Array.from({ length: 70 }, (_, i) => ({ ox: i })) };
   const m = sanitizeMotion(many, DEFAULT_MOTION, { allowGameplay: true });
-  assert.equal(m.hitboxes.length, MOTION_LIMITS.maxHitboxes);
+  assert.equal(m.hitboxes.length, 70);
 });
 
 test('StickAnimator starts remote workshop attack from last motion tag', () => {

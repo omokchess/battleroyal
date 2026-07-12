@@ -18,6 +18,7 @@
  */
 
 import { sanitizeMotion } from './Motion.js';
+import { isAnimatedEffect, sanitizeEffectColor } from './EffectAssets.js';
 
 // Hard min/max for every workshop stat. Tuned around the existing roster
 // (damage ~10-50, cooldown 180-2000, hp 85-155, move 0.78-1.35, range 55-290)
@@ -37,12 +38,12 @@ export const ENVELOPE = {
   hitboxDimMax:    160,            // each of w/h
   hitboxAreaMax:   14000,          // w*h px²
   activeLenMax:    0.4,            // active-window length (normalized motion time)
-  maxHitboxes:     64,
   maxProjectileEvents: 5,
   maxTeleportEvents: 5,
 };
 
 export const VALID_STATUS = new Set(['none', 'slow', 'bleed', 'burn', 'stun', 'airborne']);
+export const WORKSHOP_BUFF_TYPES = new Set(['damageUp', 'dotGuard', 'skillGuard', 'moveSpeed', 'shield', 'iframe']);
 export const POINT_BUDGET = 100;
 const BUDGET_COST_MULT = 1.5;
 const COOLDOWN_BUDGET_BASE_MS = 600;
@@ -139,7 +140,7 @@ export function enforceBudget(stats) {
 export function clampWorkshopHitboxes(hitboxes) {
   if (!Array.isArray(hitboxes)) return [];
   const out = [];
-  for (const hb of hitboxes.slice(0, ENVELOPE.maxHitboxes)) {
+  for (const hb of hitboxes) {
     if (!hb || typeof hb !== 'object') continue;
     let w = clampNum(hb.w, [4, ENVELOPE.hitboxDimMax], 40);
     let h = clampNum(hb.h, [4, ENVELOPE.hitboxDimMax], 40);
@@ -243,7 +244,7 @@ export const PROJECTILE_ENV = {
   speed: [80, 1200], lifetimeMs: [100, 4000], scale: [0.3, 3],
   hbDim: [4, 120], hbRadius: [3, 80], hbOff: [-120, 120],
 };
-export const V2_LIMITS = { maxEffects: 24, maxFlipKeys: 16, dashDistance: [0, 320] };
+export const V2_LIMITS = { maxEffects: 24, dashDistance: [0, 320] };
 const FOLLOW_BONES = new Set(['weaponTip', 'handR', 'handN', 'root', 'head']);
 const FX_STATUS = VALID_STATUS;   // reuse
 
@@ -255,12 +256,12 @@ const isCombatKind = (k) => COMBAT_PRESET_KINDS.has(k);
 export function sanitizeFlipKeys(keys) {
   if (!Array.isArray(keys)) return [];
   const byTime = new Map();
-  for (const k of keys.slice(0, 64)) {
+  for (const k of keys) {
     if (!k || typeof k !== 'object') continue;
     const t = clampNum(k.time, [0, 1], 0);
-    byTime.set(Math.round(t * 1000) / 1000, !!k.value);   // last write per time wins
+    byTime.set(t, !!k.value);   // last write per time wins
   }
-  return [...byTime.entries()].sort((a, b) => a[0] - b[0]).slice(0, V2_LIMITS.maxFlipKeys)
+  return [...byTime.entries()].sort((a, b) => a[0] - b[0])
     .map(([time, value]) => ({ time, value }));
 }
 
@@ -291,12 +292,15 @@ export function sanitizeEffects(list) {
   for (const e of list.slice(0, V2_LIMITS.maxEffects)) {
     if (!e || typeof e !== 'object') continue;
     const time = clampNum(e.time, [0, 1], 0);
-    const endTime = clampNum(e.endTime, [time, 1], Math.min(1, time + 0.12));
     const rawAssetId = sanitizeText(e.assetId, 128) || 'spark';
+    const animated = isAnimatedEffect({ assetId: rawAssetId, animated: e.animated });
+    const endTime = animated ? 1 : clampNum(e.endTime, [time, 1], Math.min(1, time + 0.12));
     const base = {
       time,
       endTime,
       assetId: rawAssetId,
+      animated,
+      color: sanitizeEffectColor(e.color),
       x: clampNum(e.x, [-200, 200], 0), y: clampNum(e.y, [-200, 200], 0),
       scaleX: clampNum(e.scaleX ?? e.scale, EFFECT_SCALE, 1),
       scaleY: clampNum(e.scaleY ?? e.scale, EFFECT_SCALE, 1),
@@ -308,9 +312,9 @@ export function sanitizeEffects(list) {
     const rawKeys = Array.isArray(e.keys) ? e.keys : [];
     const byTime = new Map();
     byTime.set(time, { time, x: base.x, y: base.y, scaleX: base.scaleX, scaleY: base.scaleY, rotation: base.rotation, alpha: base.alpha, flipX: base.flipX, flipY: base.flipY });
-    for (const key of rawKeys.slice(0, 64)) {
+    for (const key of rawKeys) {
       if (!key || typeof key !== 'object') continue;
-      const kt = Math.round(clampNum(key.time, [time, endTime], time) * 1000) / 1000;
+      const kt = clampNum(key.time, [time, endTime], time);
       byTime.set(kt, {
         time: kt,
         x: clampNum(key.x, [-200, 200], base.x), y: clampNum(key.y, [-200, 200], base.y),
@@ -329,9 +333,9 @@ export function sanitizeEffects(list) {
 
 export function sampleEffectTransform(effect, time = 0) {
   const e = sanitizeEffects([effect])[0];
-  if (!e) return { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0, alpha: 1, flipX: false, flipY: false };
+  if (!e) return { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0, alpha: 1, flipX: false, flipY: false, color: '#ffffff' };
   const keys = e.keys || [];
-  if (!keys.length || time <= keys[0].time) return { ...keys[0] };
+  if (!keys.length || time <= keys[0].time) return { ...keys[0], color: e.color };
   let a = keys[0], b = keys[keys.length - 1];
   for (let i = 1; i < keys.length; i++) {
     if (time <= keys[i].time) { a = keys[i - 1]; b = keys[i]; break; }
@@ -342,7 +346,7 @@ export function sampleEffectTransform(effect, time = 0) {
   return {
     time, x: lerp(a.x, b.x), y: lerp(a.y, b.y), scaleX: lerp(a.scaleX, b.scaleX), scaleY: lerp(a.scaleY, b.scaleY),
     rotation: lerp(a.rotation, b.rotation), alpha: lerp(a.alpha, b.alpha),
-    flipX: u < 1 ? a.flipX : b.flipX, flipY: u < 1 ? a.flipY : b.flipY,
+    flipX: u < 1 ? a.flipX : b.flipX, flipY: u < 1 ? a.flipY : b.flipY, color: e.color,
   };
 }
 
@@ -411,31 +415,77 @@ export function sanitizeTeleportEvents(list) {
 export function sanitizeCombat(c, kind = null) {
   const r = (c && typeof c === 'object') ? c : {};
   const ultimate = kind === 'ultimate';
-  const status = VALID_STATUS.has(r.status) ? r.status : 'none';
+  const statuses = sanitizeStatuses(r.statuses, r);
+  const primaryStatus = statuses[0] || { type: 'none', durationMs: 0, airborneHeight: 120 };
+  const buffs = kind === 'basic' ? [] : sanitizeBuffs(r.buffs, kind);
   return {
     damage: Math.round(clampNum(r.damage, [0, ultimate ? 100 : 60], 18)),
     range: 0,
     cooldownMs: ultimate ? 0 : Math.round(clampNum(r.cooldownMs, ENVELOPE.cooldownMs, 600)),
     knockback: Math.round(clampNum(r.knockback, ENVELOPE.knockback, 0)),
-    status,
-    statusDurationMs: status === 'none' ? 0 : Math.round(clampNum(r.statusDurationMs, ENVELOPE.statusDurationMs, 0)),
-    statusIntensity: status === 'none' ? 0 : Math.round(clampNum(r.statusIntensity, ENVELOPE.statusIntensity, 0.5) * 100) / 100,
+    status: primaryStatus.type,
+    statusDurationMs: primaryStatus.durationMs,
+    statusIntensity: primaryStatus.intensity ?? 0.5,
+    statuses,
+    buffs,
     ultimateGain: Math.round(clampNum(r.ultimateGain, [10, 35], 10) / 5) * 5,
-    airborneHeight: status === 'airborne' ? Math.round(clampNum(r.airborneHeight, ENVELOPE.airborneHeight, 120)) : 120,
+    airborneHeight: primaryStatus.type === 'airborne' ? primaryStatus.airborneHeight : 120,
   };
+}
+
+export function sanitizeStatuses(list, legacy = null) {
+  const source = Array.isArray(list) ? list : [];
+  const raw = source.length ? source : (legacy?.status && legacy.status !== 'none' ? [{
+    type: legacy.status,
+    durationMs: legacy.statusDurationMs,
+    intensity: legacy.statusIntensity,
+    airborneHeight: legacy.airborneHeight,
+  }] : []);
+  const out = [];
+  for (const item of raw.slice(0, 6)) {
+    const type = VALID_STATUS.has(item?.type) ? item.type : (VALID_STATUS.has(item?.status) ? item.status : 'none');
+    if (type === 'none') continue;
+    const status = {
+      type,
+      durationMs: Math.round(clampNum(item.durationMs ?? item.statusDurationMs, ENVELOPE.statusDurationMs, 0)),
+    };
+    if (Number.isFinite(Number(item.applyFrame))) status.applyFrame = Math.round(clampNum(item.applyFrame, [1, Number.MAX_SAFE_INTEGER], 1));
+    if (type === 'airborne') status.airborneHeight = Math.round(clampNum(item.airborneHeight, ENVELOPE.airborneHeight, 120));
+    if (!out.some(existing => existing.type === type)) out.push(status);
+  }
+  return out;
+}
+
+export function sanitizeBuffs(list, kind = null) {
+  if (!Array.isArray(list) || kind === 'basic') return [];
+  const out = [];
+  for (const raw of list.slice(0, 6)) {
+    const type = WORKSHOP_BUFF_TYPES.has(raw?.type) ? raw.type : null;
+    if (!type || (type === 'iframe' && kind !== 'ultimate') || out.some(b => b.type === type)) continue;
+    const buff = { type, timing: raw.timing === 'after' ? 'after' : 'onUse' };
+    if (Number.isFinite(Number(raw.applyFrame))) buff.applyFrame = Math.round(clampNum(raw.applyFrame, [1, Number.MAX_SAFE_INTEGER], 1));
+    if (type === 'damageUp' || type === 'skillGuard') buff.value = Math.round(clampNum(raw.value, [10, 50], 10) / 10) * 10;
+    else if (type === 'moveSpeed') buff.value = Math.round(clampNum(raw.value, [0.1, 0.9], 0.1) * 10) / 10;
+    else if (type === 'shield') buff.value = Math.round(clampNum(raw.value, [10, 30], 10) / 10) * 10;
+    else if (type === 'iframe') buff.value = Math.round(clampNum(raw.value, [1, 30], 1));
+    else buff.value = 3;
+    buff.durationMs = type === 'iframe' ? 0 : Math.round(clampNum(raw.durationMs, [1000, 10000], 1000) / 1000) * 1000;
+    out.push(buff);
+  }
+  return out;
 }
 
 export function sanitizeCombatKeys(keys, fallbackCombat = null, kind = null) {
   if (!Array.isArray(keys)) return [];
   const byTime = new Map();
-  for (const k of keys.slice(0, 64)) {
+  for (const k of keys) {
     if (!k || typeof k !== 'object') continue;
     const rawTime = Number.isFinite(Number(k.time)) ? Number(k.time) : Number(k.t);
-    const time = Math.round(clampNum(rawTime, [0, 1], 0) * 1000) / 1000;
+    const time = clampNum(rawTime, [0, 1], 0);
     const rawCombat = (k.combat && typeof k.combat === 'object') ? k.combat : k;
     byTime.set(time, sanitizeCombat({ ...(fallbackCombat || {}), ...rawCombat }, kind));
   }
-  return [...byTime.entries()].sort((a, b) => a[0] - b[0]).slice(0, 64)
+  return [...byTime.entries()].sort((a, b) => a[0] - b[0])
     .map(([time, combat]) => ({ time, combat }));
 }
 
@@ -502,9 +552,11 @@ export function sanitizePreset(raw, key) {
 
 // ── Budget (V2): body budget + per-combat-preset budget ─────────────────────
 export function baseStatsCost(bs = {}) {
-  const hp = Math.max(0, (Number(bs.maxHp) || 100) - 100) * 2;
-  const spdSteps = Math.max(0, Math.round(((Number(bs.moveSpeed) || 1) - 1) * 100));
-  return Math.round((hp + spdSteps * 2) * BUDGET_COST_MULT);
+  const hp = Math.max(0, (Number(bs.maxHp) || 70) - 70) * 2;
+  const spdSteps = Math.max(0, Math.round(((Number(bs.moveSpeed) || 0.7) - 0.7) * 100));
+  // Base stats use their displayed, author-facing rates directly:
+  // +1 HP costs 2 and +0.01 move speed costs 1.
+  return Math.round(hp + spdSteps);
 }
 export function combatCost(combat, kind = null) {
   const c = combat || {};
@@ -516,13 +568,23 @@ export function combatCost(combat, kind = null) {
     ? Math.floor(cooldownDelta / COOLDOWN_BUDGET_COST_STEP_MS)
     : -Math.floor(Math.abs(cooldownDelta) / COOLDOWN_BUDGET_REFUND_STEP_MS));
   const knockback = Math.round(Math.abs((Number(c.knockback) || 60) - 60) / 5) * 2;
-  const dur = Math.max(0, Number(c.statusDurationMs) || 0);
-  const statusMul = c.status === 'slow' ? 1 : (c.status === 'bleed' || c.status === 'burn' ? 2 : (c.status === 'stun' ? 3 : (c.status === 'airborne' ? 4 : 0)));
-  const status = Math.ceil(dur / 100) * statusMul;
+  const statuses = sanitizeStatuses(c.statuses, c);
+  const status = statuses.reduce((sum, item) => {
+    const mul = item.type === 'slow' ? 1 : (item.type === 'bleed' || item.type === 'burn' ? 2 : (item.type === 'stun' ? 3 : (item.type === 'airborne' ? 4 : 0)));
+    return sum + Math.ceil(item.durationMs / 100) * mul;
+  }, 0);
+  const buff = sanitizeBuffs(c.buffs, kind).reduce((sum, item) => {
+    const duration = item.type === 'iframe' ? 0 : Math.ceil(item.durationMs / 1000) * 3;
+    if (item.type === 'damageUp' || item.type === 'skillGuard') return sum + item.value / 10 * 5 + duration;
+    if (item.type === 'moveSpeed') return sum + Math.round(item.value * 10) * 2 + duration;
+    if (item.type === 'shield') return sum + item.value / 10 * 2 + duration;
+    if (item.type === 'iframe') return sum + item.value * 3;
+    return sum + duration;
+  }, 0);
   const ultimate = Math.max(0, Math.round(((Number(c.ultimateGain) || 10) - 10) / 5) * 3);
   return isUltimate
-    ? Math.round(damage + (knockback + status) * BUDGET_COST_MULT)
-    : Math.round((damage + knockback + status + ultimate) * BUDGET_COST_MULT + cooldown);
+    ? Math.round(damage + (knockback + status + buff) * BUDGET_COST_MULT)
+    : Math.round((damage + knockback + status + buff + ultimate) * BUDGET_COST_MULT + cooldown);
 }
 export function statCostV2(weapon) {
   const w = weapon || {};
@@ -546,8 +608,8 @@ export function enforceBudgetV2(weapon) {
   let guard = 0;
   while ((baseStatsCost(w.baseStats) > POINT_BUDGET || statCostV2(w) > POINT_BUDGET) && guard++ < 4000) {
     if (baseStatsCost(w.baseStats) > POINT_BUDGET) {
-      if (w.baseStats.moveSpeed > 1) { w.baseStats.moveSpeed = Math.round((w.baseStats.moveSpeed - 0.01) * 100) / 100; continue; }
-      if (w.baseStats.maxHp > 100) { w.baseStats.maxHp -= 1; continue; }
+      if (w.baseStats.moveSpeed > 0.7) { w.baseStats.moveSpeed = Math.max(0.7, Math.round((w.baseStats.moveSpeed - 0.01) * 100) / 100); continue; }
+      if (w.baseStats.maxHp > 70) { w.baseStats.maxHp -= 1; continue; }
     }
     let best = null, bestCost = -1;
     for (const key of PRIMARY_PRESET_KEYS) {
@@ -562,6 +624,8 @@ export function enforceBudgetV2(weapon) {
         if (cost > POINT_BUDGET && cost > bestCost) { best = c; bestCost = cost; }
       }
     }
+    if (best && Array.isArray(best.combat.buffs) && best.combat.buffs.length) { best.combat.buffs.pop(); continue; }
+    if (best && Array.isArray(best.combat.statuses) && best.combat.statuses.length) { best.combat.statuses.pop(); continue; }
     if (best && best.combat.statusDurationMs > 0) { best.combat.statusDurationMs = Math.max(0, best.combat.statusDurationMs - 100); continue; }
     if (best && best.combat.ultimateGain > 10) { best.combat.ultimateGain = Math.max(10, best.combat.ultimateGain - 5); continue; }
     if (best && best.kind !== 'ultimate' && best.combat.cooldownMs < ENVELOPE.cooldownMs[1]) { best.combat.cooldownMs = Math.min(ENVELOPE.cooldownMs[1], best.combat.cooldownMs + COOLDOWN_BUDGET_REFUND_STEP_MS); continue; }
@@ -632,7 +696,7 @@ export function clampWorkshopWeaponV2(raw) {
     layer: ['behindPlayer', 'overPlayer', 'overWeapon'].includes(h.layer) ? h.layer : 'overPlayer',
     showHandles: h.showHandles !== false,
     followHead: !!h.followHead,
-    keys: Array.isArray(h.keys) ? h.keys.slice(0, 64).map(k => ({
+    keys: Array.isArray(h.keys) ? h.keys.map(k => ({
       t: clampNum(k && k.t, [0, 1], 0),
       offsetX: clampNum(k && k.offsetX, [-120, 120], 0),
       offsetY: clampNum(k && k.offsetY, [-120, 120], -18),

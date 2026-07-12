@@ -96,6 +96,7 @@ export class Game extends GameSim {
     this._hasQuit = false;
     this.lastInputSentAt = 0;
     this.lastInputSignature = '';
+    this._positionCorrectionBudget = 18;
     this.visualSettings = this._loadVisualSettings();
     this._visualSettingsCleanup = null;
 
@@ -304,6 +305,7 @@ export class Game extends GameSim {
 
     const deltaTime = Math.min((timestamp - this.lastFrameTime) / 1000, 0.1); // Cap deltaTime to prevent quantum tunneling on lags
     this.lastFrameTime = timestamp;
+    this._positionCorrectionBudget = 18;
 
     const now = this.now();
 
@@ -752,21 +754,26 @@ export class Game extends GameSim {
       this._tickMagicCooldowns(p, deltaTime);
     });
 
-    // Smoothly drag and interpolate positions
+    // Follow the newest authoritative target. The target is projected by the
+    // measured one-way delay, while each visual-frame correction stays bounded.
     Object.keys(this.players).forEach(id => {
       const p = this.players[id];
-      if (p.isDead || id === this.localPlayerId) return; // Wait, allow server correction directly, except local player has prediction
-
-      // Frame-rate-INDEPENDENT smoothing: the fraction is derived from the real
-      // elapsed time, so remote players converge in the same wall-clock time at
-      // 144fps or 25fps. (The old fixed 0.3/frame made low FPS rubber-band.)
-      if (p.targetX !== undefined) {
-        const posT = 1 - Math.exp(-22 * deltaTime); // ≈0.30 per frame at 60fps
-        const angT = 1 - Math.exp(-26 * deltaTime);
-        p.x += (p.targetX - p.x) * posT;
-        p.y += (p.targetY - p.y) * posT;
-        p.angle = lerpAngle(p.angle, p.targetAngle, angT);
-      }
+      if (p.isDead || p.targetX === undefined) return;
+      const localMoving = id === this.localPlayerId && !!(
+        this.input.keys.a || this.input.keys.d || this.input.keys.ArrowLeft || this.input.keys.ArrowRight
+      );
+      const oneWayMs = Math.max(0, Math.min(200, (Number(this.networkManager.latency) || 0) * 0.5 + (1000 / 30)));
+      const target = projectSnapshotTarget(
+        p.targetX, p.targetY, p.vx, p.vy,
+        now - (p.targetReceivedAt || now) + oneWayMs,
+        localMoving ? 1500 : 250,
+        250
+      );
+      target.x = Math.max(p.radius || 14, Math.min(this.mapWidth - (p.radius || 14), target.x));
+      const next = moveTowardSnapshot(p.x, p.y, target.x, target.y, deltaTime, p.vx, p.vy);
+      p.x = next.x;
+      p.y = next.y;
+      if (id !== this.localPlayerId) p.angle = lerpAngle(p.angle, p.targetAngle, 1 - Math.exp(-26 * deltaTime));
     });
 
     // Client ticks local projectile moves
@@ -1650,6 +1657,7 @@ export class Game extends GameSim {
             p.pendingIcicles = Math.max(0, Math.floor(snap.pendingIcicles || 0));
             p.magicCooldowns = deserializeMagicCooldowns(snap.magicCdMs);
             p.wsSkillCd = deserializeWorkshopCooldowns(snap.wsSkillCdMs);
+            p.applyWorkshopBuffSnapshot(snap.wsBuff);
             p.burnTimeLeft = Math.max(0, (snap.burnMs || 0) / 1000);
             p.bleedTimeLeft = Math.max(0, (snap.bleedMs || 0) / 1000);
             p.slowTimeLeft = Math.max(0, (snap.slowMs || 0) / 1000);
@@ -1661,8 +1669,8 @@ export class Game extends GameSim {
             p.costumeEffect = snap.costumeEffect || null;
             p.motionLockUntil = snap.motionLockMs > 0 ? Date.now() + Math.max(0, Math.round(snap.motionLockMs || 0)) : 0;
             p.motionRootUntil = snap.rootMotionMs > 0 ? Date.now() + Math.max(0, Math.round(snap.rootMotionMs || 0)) : 0;
-            p.activeHitboxes = Array.isArray(snap.activeHitboxes) ? snap.activeHitboxes.slice(0, 64) : [];
-            if (snap.wsw) {
+            p.activeHitboxes = Array.isArray(snap.activeHitboxes) ? snap.activeHitboxes : [];
+            if (Object.prototype.hasOwnProperty.call(snap, 'wsw') && snap.wsw) {
               const motionSetSig = (() => { try { return JSON.stringify(snap.wsw.motionSet || {}).length; } catch { return 0; } })();
               const visualSig = (() => { try { return JSON.stringify(snap.wsw.weaponVisual || {}).length; } catch { return 0; } })();
               const hatSig = Array.isArray(snap.wsw.hatImages) ? snap.wsw.hatImages.map(h => `${h?.id || ''}:${h?.src?.length || 0}`).join('|') : '';
@@ -1672,55 +1680,31 @@ export class Game extends GameSim {
                 p._applyWorkshopWeapon(snap.wsw);
                 p._wsSnapshotKey = nextWsKey;
               }
-            } else if (p.workshopWeapon) {
+            } else if (Object.prototype.hasOwnProperty.call(snap, 'wsw') && p.workshopWeapon) {
               p.workshopWeapon = null;
               p.blockVM = null;
               p._wsSnapshotKey = '';
             }
             p.applyCosmeticsSnapshot(snap.cos);
 
-            if (!isLocalSnapshot) {
-              // Soft buffer coordinates for smooth client interpolation
-              p.targetX = snap.x;
-              p.targetY = snap.y;
-              p.targetAngle = snap.angle;
-            } else {
-              // The snapshot is roughly half an RTT old when it arrives. Compare
-              // local prediction against a short velocity projection instead of
-              // dragging the player back to that stale position every packet.
-              const projected = projectServerSnapshot(snap, this.networkManager.latency);
-              const correctionDistance = localCorrectDist(p.x, p.y, projected.x, projected.y);
-              const respawned = wasDead && !p.isDead;
-              const snapRevision = Number.isSafeInteger(snap.posRev) && snap.posRev >= 0 ? snap.posRev : 0;
-              const positionDiscontinuity = p._serverPositionRevision !== undefined
-                && p._serverPositionRevision !== snapRevision;
-              p._serverPositionRevision = snapRevision;
-              if (p.isDead || respawned || positionDiscontinuity) {
-                p.x = snap.x;
-                p.y = snap.y;
-                if (Number.isFinite(snap.vx)) p.vx = snap.vx;
-                if (Number.isFinite(snap.vy)) p.vy = snap.vy;
-                p.grounded = Boolean(snap.grounded);
-              } else {
-                if (correctionDistance > 8) {
-                  const correction = correctionDistance > 90 ? 0.18 : 0.08;
-                  const step = boundedPositionCorrection(
-                    projected.x - p.x,
-                    projected.y - p.y,
-                    correction,
-                    18
-                  );
-                  p.x += step.x;
-                  p.y += step.y;
-                }
-                if (Number.isFinite(snap.vx)) p.vx += (snap.vx - p.vx) * 0.12;
-                if (Number.isFinite(snap.vy)) p.vy += (snap.vy - p.vy) * 0.12;
-                if (!snap.grounded) p.grounded = false;
-                else if (Math.abs(p.y - snap.y) < 14) p.grounded = true;
-              }
-              if (p.isDead && Number.isFinite(snap.angle)) {
-                p.angle = snap.angle;
-              }
+            const respawned = wasDead && !p.isDead;
+            const snapRevision = Number.isSafeInteger(snap.posRev) && snap.posRev >= 0 ? snap.posRev : 0;
+            const positionDiscontinuity = p._serverPositionRevision !== undefined
+              && p._serverPositionRevision !== snapRevision;
+            p._serverPositionRevision = snapRevision;
+            p.targetX = Number.isFinite(snap.x) ? snap.x : p.x;
+            p.targetY = Number.isFinite(snap.y) ? snap.y : p.y;
+            p.targetReceivedAt = this.now();
+            p.targetAngle = Number.isFinite(snap.angle) ? snap.angle : p.angle;
+            if (Number.isFinite(snap.vx)) p.vx = snap.vx;
+            if (Number.isFinite(snap.vy)) p.vy = snap.vy;
+            p.grounded = Boolean(snap.grounded);
+            if (p.isDead || respawned || positionDiscontinuity) {
+              p.x = p.targetX;
+              p.y = p.targetY;
+              if (!isLocalSnapshot && Number.isFinite(snap.angle)) p.angle = snap.angle;
+            } else if (isLocalSnapshot) {
+              p.angle = this.input.aimAngle;
             }
           });
 
@@ -1870,6 +1854,36 @@ function localCorrectDist(ax, ay, bx, by) {
 }
 
 
+export function projectSnapshotTarget(x, y, vx, vy, ageMs, maxX = 250, maxY = maxX) {
+  const xAge = Math.max(0, Math.min(Number(maxX) || 0, Number(ageMs) || 0));
+  const yAge = Math.max(0, Math.min(Number(maxY) || 0, Number(ageMs) || 0));
+  return {
+    x: (Number(x) || 0) + (Number(vx) || 0) * xAge / 1000,
+    y: (Number(y) || 0) + (Number(vy) || 0) * yAge / 1000,
+  };
+}
+
+
+export function moveTowardSnapshot(currentX, currentY, targetX, targetY, dt, vx = 0, vy = 0) {
+  const x = Number(currentX) || 0;
+  const y = Number(currentY) || 0;
+  const tx = Number.isFinite(Number(targetX)) ? Number(targetX) : x;
+  const ty = Number.isFinite(Number(targetY)) ? Number(targetY) : y;
+  const dx = tx - x;
+  const dy = ty - y;
+  const distance = Math.hypot(dx, dy);
+  if (distance <= 1e-3) return { x: tx, y: ty, moved: 0 };
+  const safeDt = Math.max(0, Math.min(0.05, Number(dt) || 0));
+  const speed = Math.hypot(Number(vx) || 0, Number(vy) || 0);
+  const correctionSpeed = Math.max(PHYS.runSpeed * 1.5, Math.min(PHYS.grappleSpeed * 1.5, speed * 1.35 + 120));
+  const eased = distance * (1 - Math.exp(-24 * safeDt));
+  const capped = Math.min(24, correctionSpeed * safeDt);
+  const moved = Math.min(distance, eased, capped);
+  if (moved <= 0) return { x, y, moved: 0 };
+  return { x: x + dx / distance * moved, y: y + dy / distance * moved, moved };
+}
+
+
 export function projectServerSnapshot(snapshot, roundTripMs = 0) {
   const oneWayMs = Math.max(0, Math.min(120, (Number(roundTripMs) || 0) * 0.5 + (1000 / 60)));
   const seconds = oneWayMs / 1000;
@@ -1890,6 +1904,16 @@ export function boundedPositionCorrection(dx, dy, factor = 0.08, maxStep = 18) {
   const requested = Math.max(0, distance * Math.max(0, Number(factor) || 0));
   const scale = Math.min(requested, Math.max(0, Number(maxStep) || 0)) / distance;
   return { x: x * scale, y: y * scale };
+}
+
+
+export function consumePositionCorrectionBudget(dx, dy, factor = 0.08, budget = 18) {
+  const available = Math.max(0, Number(budget) || 0);
+  const step = boundedPositionCorrection(dx, dy, factor, available);
+  return {
+    ...step,
+    remaining: Math.max(0, available - Math.hypot(step.x, step.y))
+  };
 }
 
 
